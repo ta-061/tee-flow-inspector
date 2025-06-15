@@ -1,3 +1,4 @@
+#/docker/entrypoint.sh
 #!/usr/bin/env bash
 # entrypoint for latte-dev container
 set -e
