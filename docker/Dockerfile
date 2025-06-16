@@ -4,7 +4,7 @@ FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
-    LLVM_VERSION=14
+    LLVM_VERSION=17
 
 # ========= 基本ツール =========
 RUN apt-get update && apt-get install -y --no-install-recommends \
