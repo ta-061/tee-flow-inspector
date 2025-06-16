@@ -1,30 +1,52 @@
-# TARGETPLATFORM は buildx が自動で
-#   linux/amd64  or  linux/arm64/v8
-FROM ubuntu:22.04
+# syntax=docker/dockerfile:1
+
+###############################################################################
+# ベース ─ マルチアーキ対応                                                     #
+###############################################################################
+# VS Code / buildx から渡ってくる TARGETPLATFORM に合わせて自動切替
+ARG TARGETPLATFORM
+FROM --platform=${TARGETPLATFORM} ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    LANG=C.UTF-8 \
-    LLVM_VERSION=17
+    LANG=C.UTF-8
 
-# ========= 基本ツール =========
+###############################################################################
+# LLVM 18 リポジトリの追加（apt-key 非推奨対策として signed-by を使用）        #
+###############################################################################
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        curl gnupg ca-certificates lsb-release && \
+    curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+      | gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] \
+      http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-18 main" \
+      > /etc/apt/sources.list.d/llvm18.list
+
+###############################################################################
+# 基本ツール & LLVM 18                                                          #
+###############################################################################
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential git curl ca-certificates \
-    python3 python3-venv python3-pip \
-    clang-${LLVM_VERSION} clang-tools-${LLVM_VERSION} llvm-${LLVM_VERSION}-dev lld-${LLVM_VERSION} \
- && apt-get clean && rm -rf /var/lib/apt/lists/*
+        build-essential git ca-certificates curl bash-completion \
+        python3 python3-venv python3-pip \
+        clang-18 clang-tools-18 llvm-18-dev lld-18 \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# ========= Python deps =========
+###############################################################################
+# Python 依存ライブラリ                                                         #
+# ※ libclang の公式バインディングは 2025-06 現在 v17 が最新のため未インストール#
+###############################################################################
 RUN python3 -m pip install --no-cache-dir \
-    clang==${LLVM_VERSION}.0.6 llvmlite networkx pytest rich
+        llvmlite networkx pytest rich
 
-# ========= ワークスペース =========
+###############################################################################
+# 作業ディレクトリ & エントリポイント                                           #
+###############################################################################
 WORKDIR /workspace
 
-# ----- ここが “即終了” の犯人なので修正 -----
-# 1. ENTRYPOINT → CMD へ移動
-# 2. シェルラッパーとの衝突を回避
+# 独自スクリプトで初期化したい場合は /docker/entrypoint.sh を用意
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint
 RUN chmod +x /usr/local/bin/entrypoint
 
 ENTRYPOINT ["/usr/local/bin/entrypoint"]
+# DevContainer が停止しないようデフォルトは無限スリープ
 CMD ["sleep", "infinity"]
