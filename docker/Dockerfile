@@ -29,15 +29,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential git ca-certificates curl bash-completion \
         python3 python3-venv python3-pip \
         clang-18 clang-tools-18 llvm-18-dev lld-18 \
+        libclang-18-dev python3-clang-18 \
+        cmake \
+        bear \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# libclang のバージョンリネーム対応
+RUN ln -sf /usr/lib/llvm-18/lib/libclang-18.so /usr/lib/llvm-18/lib/libclang.so || true
+RUN echo /usr/lib/llvm-18/lib > /etc/ld.so.conf.d/llvm18.conf \
+ && ldconfig
+
+ENV LD_LIBRARY_PATH=/usr/lib/llvm-18/lib:$LD_LIBRARY_PATH
 
 ###############################################################################
 # Python 依存ライブラリ                                                         #
 # ※ libclang の公式バインディングは 2025-06 現在 v17 が最新のため未インストール#
 ###############################################################################
 RUN python3 -m pip install --no-cache-dir \
-        llvmlite networkx pytest rich
-
+    llvmlite networkx pytest rich
 ###############################################################################
 # 作業ディレクトリ & エントリポイント                                           #
 ###############################################################################
