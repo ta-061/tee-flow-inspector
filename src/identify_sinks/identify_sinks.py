@@ -1,31 +1,41 @@
 #!/usr/bin/env python3
-# src/identify_sinks/identify_sinks.py
+"""
+フェーズ3: フェーズ1-2の結果を読み込んでシンク候補をLLMに聞き、結果を出力する
+使い方: 
+  python identify_sinks.py -i /path/to/ta_phase12.json -o /path/to/ta_sinks.json
+"""
 
+import sys
 import json
 import re
+import argparse
 from pathlib import Path
-from openai import OpenAI
+import openai
 
-# ── API キーの読み込み ──
-# プロジェクトルート/src/api_key.json に
-# { "api_key": "YOUR_KEY_HERE" } がある想定
-api_conf_path = Path(__file__).parent.parent / "src" / "api_key.json"
-api_conf = json.loads(api_conf_path.read_text(encoding="utf-8"))
-client = OpenAI(api_key=api_conf["api_key"])
-
-# ── フェーズ1・2 の結果読み込み ──
-phase12_path = Path("results") / "aes_ta_phase12.json"
-phase12 = json.loads(phase12_path.read_text(encoding="utf-8"))
-project_root = Path(phase12["project_root"])
-
-def extract_function_code(func: dict) -> str:
+def init_client():
     """
-    func['file'] のソースから、
-    func['line'] 行目の関数定義開始位置から
-    最初に対応する '}' が閉じるまでを抜き出す
+    src/api_key.json から API キーを読み込み、openai.api_key にセットします
     """
-    src_path = Path(func["file"])
-    lines = src_path.read_text(encoding="utf-8").splitlines()
+    # このスクリプトが src/identify_sinks/identify_sinks.py にあるので、
+    # parent.parent が src ディレクトリを指します
+    keyfile = Path(__file__).resolve().parent.parent / "api_key.json"
+    if not keyfile.exists():
+        print(f"Error: API キー設定ファイルが見つかりません ({keyfile})", file=sys.stderr)
+        sys.exit(1)
+    cfg = json.loads(keyfile.read_text(encoding="utf-8"))
+    openai.api_key = cfg.get("api_key", "")
+    if not openai.api_key:
+        print("Error: api_key.json に api_key が設定されていません。", file=sys.stderr)
+        sys.exit(1)
+    return openai
+
+def extract_function_code(func):
+    """
+    フェーズ1-2で得られた関数情報から、実装部分のスニペットを
+    {line}行目から対応する閉じ括弧まで抜き出します
+    """
+    path = Path(func["file"])
+    lines = path.read_text(encoding="utf-8").splitlines()
     start = func["line"] - 1
     snippet = []
     brace = 0
@@ -36,64 +46,63 @@ def extract_function_code(func: dict) -> str:
             break
     return "\n".join(snippet)
 
-def ask_llm(prompt: str) -> str:
+def ask_llm(client, prompt):
     """
-    ChatCompletion を呼び出し、回答テキストを返す
+    OpenAI ChatCompletion API を呼び出して応答を返します
     """
-    resp = client.chat.completions.create(
+    resp = openai.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.0
+        temperature=0.0,
     )
-    return resp.choices[0].message["content"]
+    return resp.choices[0].message.content
 
-# ── シンク候補格納リスト ──
-sinks = []
-
-# 1) ユーザ定義関数のシンク判定
-for func in phase12["user_defined_functions"]:
-    code = extract_function_code(func)
-    prompt = (
-        f"As a program analyst, when performing taint analysis, "
-        f"is it possible to use the following C function as a sink? "
-        f"If so, which parameter(s) need to be checked for taint? "
-        f"Please answer Yes or No without any additional explanation. "
-        f"If Yes, indicate the corresponding parameters in the format (function_name; param_index).\n"
-        f"Function name: {func['name']}\n"
-        f"Code:\n```c\n{code}\n```"
+def main():
+    parser = argparse.ArgumentParser(description="フェーズ3: シンク特定")
+    parser.add_argument(
+        "-i", "--input", required=True,
+        help="フェーズ1-2の結果ファイル (JSON)"
     )
-    ans = ask_llm(prompt)
-    if re.match(r"^\s*Yes", ans, re.I):
-        sinks.append({
-            "kind": "function",
-            "name": func["name"],
-            "reason": ans.strip()
-        })
-
-# 2) 外部宣言関数／マクロのシンク判定
-for decl in phase12["external_declarations"]:
-    kind = decl["kind"]
-    name = decl["name"]
-    prompt = (
-        f"As a program analyst, when performing taint analysis, "
-        f"is it possible to use a call to '{name}' as a sink? "
-        f"If so, which parameter(s) need to be checked for taint? "
-        f"Please answer Yes or No without any additional explanation. "
-        f"If Yes, indicate the corresponding parameters in the format ({name}; param_index)."
+    parser.add_argument(
+        "-o", "--output", required=True,
+        help="出力シンク候補ファイル (JSON)"
     )
-    ans = ask_llm(prompt)
-    if re.match(r"^\s*Yes", ans, re.I):
-        sinks.append({
-            "kind": kind,
-            "name": name,
-            "reason": ans.strip()
-        })
+    args = parser.parse_args()
 
-# 3) 結果を JSON に保存
-out_dir = Path("results")
-out_dir.mkdir(exist_ok=True)
-out_path = out_dir / "aes_ta_sinks.json"
-with open(out_path, "w", encoding="utf-8") as f:
-    json.dump({"sinks": sinks}, f, ensure_ascii=False, indent=2)
+    client = init_client()
+    phase12 = json.loads(Path(args.input).read_text(encoding="utf-8"))
+    sinks = []
 
-print(f"[identify_sinks] シンク候補を {len(sinks)} 件検出し、{out_path} に保存しました。")
+    # ユーザ定義関数を順に確認
+    for func in phase12["user_defined_functions"]:
+        code = extract_function_code(func)
+        prompt = (
+            f"As a program analyst, when performing taint analysis, "
+            f"can the function `{func['name']}` be used as a sink? "
+            "If yes, indicate parameter positions to check in the form `(function_name; param_index)`. "
+            "Answer `no` if not.\n\n"
+            "Function implementation:\n```c\n"
+            f"{code}\n```"
+        )
+        resp = ask_llm(client, prompt)
+        # 回答から "(func; idx)" 形式を抽出
+        for fn, idx in re.findall(r"\(([^;]+);\s*(\d+)\)", resp):
+            sinks.append({
+                "kind": "function",
+                "name": fn.strip(),
+                "param_index": int(idx)
+            })
+
+    # 外部宣言関数やマクロの処理も同様に入れたい場合はここに追加
+
+    # 結果を書き出し
+    out_path = Path(args.output)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        json.dumps({"sinks": sinks}, ensure_ascii=False, indent=2),
+        encoding="utf-8"
+    )
+    print(f"[identify_sinks] {len(sinks)} 個のシンク候補を {args.output} に出力しました。")
+
+if __name__ == "__main__":
+    main()
