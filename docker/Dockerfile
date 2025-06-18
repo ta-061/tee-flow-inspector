@@ -23,7 +23,7 @@ RUN apt-get update && \
       > /etc/apt/sources.list.d/llvm18.list
 
 ###############################################################################
-# 基本ツール & LLVM 18                                                          #
+# 基本ツール & LLVM 18
 ###############################################################################
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential git ca-certificates curl bash-completion \
@@ -42,11 +42,14 @@ RUN echo /usr/lib/llvm-18/lib > /etc/ld.so.conf.d/llvm18.conf \
 ENV LD_LIBRARY_PATH=/usr/lib/llvm-18/lib:$LD_LIBRARY_PATH
 
 ###############################################################################
-# Python 依存ライブラリ                                                         #
-# ※ libclang の公式バインディングは 2025-06 現在 v17 が最新のため未インストール#
+# Python 依存ライブラリ
 ###############################################################################
 RUN python3 -m pip install --no-cache-dir \
-    llvmlite networkx pytest rich
+    llvmlite \
+    networkx \
+    pytest \
+    rich
+
 ###############################################################################
 # 作業ディレクトリ & エントリポイント                                           #
 ###############################################################################
