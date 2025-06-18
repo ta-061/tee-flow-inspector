@@ -59,7 +59,7 @@ WORKDIR /workspace
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint
 RUN chmod +x /usr/local/bin/entrypoint
 
-COPY requirements.txt .
+COPY docker/requirements.txt .
 RUN pip install -r requirements.txt
 
 ENTRYPOINT ["/usr/local/bin/entrypoint"]
