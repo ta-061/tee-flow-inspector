@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
-汎用ドライバ:
+汎用TA解析ドライバ (フェーズ1-3)
 - フェーズ1・2: 各TAで classify_functions を実行 -> results/<ta>_phase12.json
 - フェーズ3: identify_sinks.py を呼び出し -> results/<ta>_sinks.json
+
+Usage:
+  python main.py -b /path/to/benchmark/root [--only-ta]
 """
 import sys
 import json
@@ -50,8 +53,7 @@ def process_ta(ta_path: Path, results_dir: Path, identify_script: Path):
     name = ta_path.name
     print(f"--- Processing TA: {name} ---")
 
-    # --- フェーズ1・2: classify_functions を実行 ---
-    # compile_commands.json の準備
+    # フェーズ1-2: compile_commands.json の準備 & 関数分類
     compile_db = ta_path / "compile_commands.json"
     if not compile_db.exists():
         generate_compile_commands(ta_path)
@@ -68,14 +70,14 @@ def process_ta(ta_path: Path, results_dir: Path, identify_script: Path):
         "external_declarations": externals,
     }
 
-    # 結果出力
+    # フェーズ1-2結果出力
     results_dir.mkdir(parents=True, exist_ok=True)
     out12 = results_dir / f"{name}_phase12.json"
     out12.write_text(json.dumps(phase12, ensure_ascii=False, indent=2),
                      encoding="utf-8")
     print(f"[phase1-2] -> {out12}")
 
-    # --- フェーズ3: identify_sinks.py を呼び出し ---
+    # フェーズ3: identify_sinks.py を呼び出し
     out3 = results_dir / f"{name}_sinks.json"
     subprocess.run([
         sys.executable, str(identify_script),
@@ -88,14 +90,19 @@ def main():
     p = argparse.ArgumentParser(description="汎用TA解析ドライバ (フェーズ1-3)")
     p.add_argument("-b", "--benchmark-root", type=Path, required=True,
                    help="TAプロジェクト群を格納したディレクトリ")
+    p.add_argument("--only-ta", action="store_true",
+                   help="‘host’ディレクトリをスキップしてTAフォルダだけ解析する")
     args = p.parse_args()
 
     bench = args.benchmark_root.resolve()
-    # identify_sinks.py はこの main.py と同じツリーの src/identify_sinks にある想定
     identify_script = Path(__file__).resolve().parent / "identify_sinks" / "identify_sinks.py"
     results_dir = bench / "results"
 
     for sub in bench.iterdir():
+        # only-ta が指定されていれば 'host' ディレクトリはスキップ
+        if args.only_ta and sub.name.lower() == "host":
+            continue
+        # .c ファイルを含むディレクトリのみ処理
         if sub.is_dir() and any(sub.glob("*.c")):
             process_ta(sub, results_dir, identify_script)
 

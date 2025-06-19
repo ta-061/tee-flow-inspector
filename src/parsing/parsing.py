@@ -13,7 +13,7 @@ def load_compile_commands(path: str) -> list[dict]:
     with open(path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
-def parse_sources(entries: list[dict]) -> list[tuple[str, cindex.TranslationUnit]]:
+def parse_sources(entries: list[dict]) -> list[tuple[str, TranslationUnit]]:
     """
     clang.cindex を使って各ソースファイルとヘッダの AST を
     TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD オプション付きで生成
@@ -85,32 +85,45 @@ def parse_sources(entries: list[dict]) -> list[tuple[str, cindex.TranslationUnit
 
     return asts
 
-def extract_functions(tu: cindex.TranslationUnit) -> list[dict]:
+def extract_functions(tu: TranslationUnit) -> list[dict]:
     """
     TranslationUnit から
       - 関数宣言／定義 (FUNCTION_DECL)
-      - マクロ定義       (MACRO_DEFINITION)
+      - 関数ライクマクロ定義 (MACRO_DEFINITION with parameters)
     を抽出し、辞書リストで返す。
     """
     decls: list[dict] = []
 
     def visit(node):
         for child in node.get_children():
+            # 通常の関数宣言／定義を抽出
             if child.kind == CursorKind.FUNCTION_DECL:
                 decls.append({
-                    'kind': 'function',
-                    'name': child.spelling,
-                    'file': child.location.file.name if child.location.file else None,
-                    'line': child.location.line,
+                    'kind':          'function',
+                    'name':          child.spelling,
+                    'file':          child.location.file.name if child.location.file else None,
+                    'line':          child.location.line,
                     'is_definition': child.is_definition(),
                 })
+
+            # 関数ライクマクロを抽出（マクロ名の直後に '(' があれば関数ライクと判断）
             elif child.kind == CursorKind.MACRO_DEFINITION:
-                decls.append({
-                    'kind': 'macro',
-                    'name': child.spelling,
-                    'file': child.location.file.name if child.location.file else None,
-                    'line': child.location.line,
-                })
+                tokens = list(child.get_tokens())
+                if len(tokens) > 1 and tokens[1].spelling == '(':
+                    # パラメータ名を拾う（単純に識別子トークンを抽出）
+                    params = [
+                        t.spelling for t in tokens[2:]
+                        if t.spelling.isidentifier()
+                    ]
+                    decls.append({
+                        'kind': 'macro',
+                        'name': child.spelling,
+                        'file': child.location.file.name if child.location.file else None,
+                        'line': child.location.line,
+                        'params': params,
+                    })
+
+            # 再帰的に子ノードを探索
             visit(child)
 
     visit(tu.cursor)
