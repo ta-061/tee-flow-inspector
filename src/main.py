@@ -1,3 +1,4 @@
+### main.py
 #!/usr/bin/env python3
 """
 汎用TA解析ドライバ (フェーズ1-3)
@@ -31,7 +32,7 @@ def generate_compile_commands(root: Path):
         cm.write_text("""
 cmake_minimum_required(VERSION 3.5)
 project(ta_project C)
-file(GLOB TA_SRCS "${CMAKE_CURRENT_SOURCE_DIR}/*.c")
+file(GLOB_RECURSE TA_SRCS "${CMAKE_CURRENT_SOURCE_DIR}/*.c")
 add_library(ta_lib STATIC ${TA_SRCS})
 target_include_directories(ta_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 """.strip(), encoding="utf-8")
@@ -40,10 +41,8 @@ target_include_directories(ta_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
         bld = root / "build"
         shutil.rmtree(bld, ignore_errors=True)
         bld.mkdir()
-        subprocess.run(["cmake", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON", ".."],
-                       cwd=str(bld), check=True)
-        subprocess.run(["cp", "compile_commands.json", str(root)],
-                       cwd=str(bld), check=True)
+        subprocess.run(["cmake", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON", ".."], cwd=str(bld), check=True)
+        subprocess.run(["cp", "compile_commands.json", str(root)], cwd=str(bld), check=True)
     elif mf.exists() and shutil.which("bear"):
         subprocess.run(["bear", "--", "make"], cwd=str(root), check=True)
     else:
@@ -73,8 +72,7 @@ def process_ta(ta_path: Path, results_dir: Path, identify_script: Path):
     # フェーズ1-2結果出力
     results_dir.mkdir(parents=True, exist_ok=True)
     out12 = results_dir / f"{name}_phase12.json"
-    out12.write_text(json.dumps(phase12, ensure_ascii=False, indent=2),
-                     encoding="utf-8")
+    out12.write_text(json.dumps(phase12, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[phase1-2] -> {out12}")
 
     # フェーズ3: identify_sinks.py を呼び出し
@@ -102,8 +100,7 @@ def main():
         # only-ta が指定されていれば 'host' ディレクトリはスキップ
         if args.only_ta and sub.name.lower() == "host":
             continue
-        # .c ファイルを含むディレクトリのみ処理
-        if sub.is_dir() and any(sub.glob("*.c")):
+        if sub.is_dir() and any(sub.rglob("*.c")):
             process_ta(sub, results_dir, identify_script)
 
 if __name__ == "__main__":
