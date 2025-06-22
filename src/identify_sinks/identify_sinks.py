@@ -12,12 +12,11 @@ import argparse
 from pathlib import Path
 import openai
 
+
 def init_client():
     """
     src/api_key.json から API キーを読み込み、openai.api_key にセットします
     """
-    # このスクリプトが src/identify_sinks/identify_sinks.py にあるので、
-    # parent.parent が src ディレクトリを指します
     keyfile = Path(__file__).resolve().parent.parent / "api_key.json"
     if not keyfile.exists():
         print(f"Error: API キー設定ファイルが見つかりません ({keyfile})", file=sys.stderr)
@@ -28,6 +27,7 @@ def init_client():
         print("Error: api_key.json に api_key が設定されていません。", file=sys.stderr)
         sys.exit(1)
     return openai
+
 
 def extract_function_code(func):
     """
@@ -46,16 +46,18 @@ def extract_function_code(func):
             break
     return "\n".join(snippet)
 
+
 def ask_llm(client, prompt):
     """
     OpenAI ChatCompletion API を呼び出して応答を返します
     """
-    resp = openai.chat.completions.create(
+    resp = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.0,
     )
     return resp.choices[0].message.content
+
 
 def main():
     parser = argparse.ArgumentParser(description="フェーズ3: シンク特定")
@@ -69,12 +71,16 @@ def main():
     )
     args = parser.parse_args()
 
+    out_path = Path(args.output)
+    out_dir = out_path.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+    log_file = out_dir / "prompts_and_responses.txt"
+
     client = init_client()
     phase12 = json.loads(Path(args.input).read_text(encoding="utf-8"))
     sinks = []
 
-    # ユーザ定義関数を順に確認
-    for func in phase12["user_defined_functions"]:
+    for func in phase12.get("user_defined_functions", []):
         code = extract_function_code(func)
         prompt = (
             f"As a program analyst, when performing taint analysis, "
@@ -84,8 +90,18 @@ def main():
             "Function implementation:\n```c\n"
             f"{code}\n```"
         )
+        # プロンプトと応答をログに追記
+        with open(log_file, "a", encoding="utf-8") as lf:
+            lf.write(f"# Function: {func['name']}\n")
+            lf.write("## Prompt:\n")
+            lf.write(prompt + "\n\n")
+
         resp = ask_llm(client, prompt)
-        # 回答から "(func; idx)" 形式を抽出
+
+        with open(log_file, "a", encoding="utf-8") as lf:
+            lf.write("## Response:\n")
+            lf.write(resp + "\n\n")
+
         for fn, idx in re.findall(r"\(([^;]+);\s*(\d+)\)", resp):
             sinks.append({
                 "kind": "function",
@@ -93,16 +109,11 @@ def main():
                 "param_index": int(idx)
             })
 
-    # 外部宣言関数やマクロの処理も同様に入れたい場合はここに追加
-
-    # 結果を書き出し
-    out_path = Path(args.output)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(
         json.dumps({"sinks": sinks}, ensure_ascii=False, indent=2),
         encoding="utf-8"
     )
-    print(f"[identify_sinks] {len(sinks)} 個のシンク候補を {args.output} に出力しました。")
+    print(f"[identify_sinks] {len(sinks)} 個のシンク候補を {args.output} に出力しました。 ログは {log_file} に保存されています。")
 
 if __name__ == "__main__":
     main()
