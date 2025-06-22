@@ -30,8 +30,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-venv python3-pip \
         clang-18 clang-tools-18 llvm-18-dev lld-18 \
         libclang-18-dev python3-clang-18 \
-        cmake \
-        bear \
+        cmake bear \
+        # --- arm-hf クロス toolchain ---
+        gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
+        binutils-arm-linux-gnueabihf \
+        libc6-dev-armhf-cross libstdc++-11-dev-armhf-cross \
+        pkg-config \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # libclang のバージョンリネーム対応
