@@ -1,0 +1,318 @@
+# Function: hmac_sha1
+## Prompt:
+As a program analyst, when performing taint analysis, can the function `hmac_sha1` be used as a sink? If yes, indicate parameter positions to check in the form `(function_name; param_index)`. Answer `no` if not.
+
+Function implementation:
+```c
+static TEE_Result hmac_sha1(const uint8_t *key, const size_t keylen,
+			    const uint8_t *in, const size_t inlen,
+			    uint8_t *out, uint32_t *outlen)
+{
+	TEE_Attribute attr = { 0 };
+	TEE_ObjectHandle key_handle = TEE_HANDLE_NULL;
+	TEE_OperationHandle op_handle = TEE_HANDLE_NULL;
+	TEE_Result res = TEE_SUCCESS;
+
+	if (keylen < MIN_KEY_SIZE || keylen > MAX_KEY_SIZE)
+		return TEE_ERROR_BAD_PARAMETERS;
+
+	if (!in || !out || !outlen)
+		return TEE_ERROR_BAD_PARAMETERS;
+
+	/*
+	 * 1. Allocate cryptographic (operation) handle for the HMAC operation.
+	 *    Note that the expected size here is in bits (and therefore times
+	 *    8)!
+	 */
+	res = TEE_AllocateOperation(&op_handle, TEE_ALG_HMAC_SHA1, TEE_MODE_MAC,
+				    keylen * 8);
+	if (res != TEE_SUCCESS) {
+		EMSG("0x%08x", res);
+		goto exit;
+	}
+
+	/*
+	 * 2. Allocate a container (key handle) for the HMAC attributes. Note
+	 *    that the expected size here is in bits (and therefore times 8)!
+	 */
+	res = TEE_AllocateTransientObject(TEE_TYPE_HMAC_SHA1, keylen * 8,
+					  &key_handle);
+	if (res != TEE_SUCCESS) {
+		EMSG("0x%08x", res);
+		goto exit;
+	}
+
+	/*
+	 * 3. Initialize the attributes, i.e., point to the actual HMAC key.
+	 *    Here, the expected size is in bytes and not bits as above!
+	 */
+	TEE_InitRefAttribute(&attr, TEE_ATTR_SECRET_VALUE, key, keylen);
+
+	/* 4. Populate/assign the attributes with the key object */
+	res = TEE_PopulateTransientObject(key_handle, &attr, 1);
+	if (res != TEE_SUCCESS) {
+		EMSG("0x%08x", res);
+		goto exit;
+	}
+
+	/* 5. Associate the key (object) with the operation */
+	res = TEE_SetOperationKey(op_handle, key_handle);
+	if (res != TEE_SUCCESS) {
+		EMSG("0x%08x", res);
+		goto exit;
+	}
+
+	/* 6. Do the HMAC operations */
+	TEE_MACInit(op_handle, NULL, 0);
+	TEE_MACUpdate(op_handle, in, inlen);
+	res = TEE_MACComputeFinal(op_handle, NULL, 0, out, outlen);
+exit:
+	if (op_handle != TEE_HANDLE_NULL)
+		TEE_FreeOperation(op_handle);
+
+	/* It is OK to call this when key_handle is TEE_HANDLE_NULL */
+	TEE_FreeTransientObject(key_handle);
+
+	return res;
+}
+```
+
+## Response:
+Yes, the function `hmac_sha1` can be used as a sink in taint analysis. The parameters that should be checked are:
+
+1. The `key` parameter (position 0) is sensitive as it is used as the HMAC key.
+2. The `in` parameter (position 2) is also sensitive as it is the input data for the HMAC operation.
+3. The `out` parameter (position 4) is where the output of the HMAC operation is written, which can also be considered sensitive.
+
+Thus, the parameter positions to check are:
+
+- `(hmac_sha1; 0)` for `key`
+- `(hmac_sha1; 2)` for `in`
+- `(hmac_sha1; 4)` for `out`
+
+# Function: truncate
+## Prompt:
+As a program analyst, when performing taint analysis, can the function `truncate` be used as a sink? If yes, indicate parameter positions to check in the form `(function_name; param_index)`. Answer `no` if not.
+
+Function implementation:
+```c
+static void truncate(uint8_t *hmac_result, uint32_t *bin_code)
+{
+	int offset = hmac_result[19] & 0xf;
+
+	*bin_code = (hmac_result[offset] & 0x7f) << 24 |
+		(hmac_result[offset+1] & 0xff) << 16 |
+		(hmac_result[offset+2] & 0xff) <<  8 |
+		(hmac_result[offset+3] & 0xff);
+
+	*bin_code %= DBC2_MODULO;
+}
+```
+
+## Response:
+Yes, the function `truncate` can be used as a sink in taint analysis. The parameter positions to check are:
+
+- `(truncate; 0)` for the `hmac_result` parameter, which is a pointer to a potentially tainted input.
+- `(truncate; 1)` for the `bin_code` parameter, which is a pointer to an output that is being modified based on the input. 
+
+Thus, both parameters can be considered in the context of taint analysis.
+
+# Function: register_shared_key
+## Prompt:
+As a program analyst, when performing taint analysis, can the function `register_shared_key` be used as a sink? If yes, indicate parameter positions to check in the form `(function_name; param_index)`. Answer `no` if not.
+
+Function implementation:
+```c
+static TEE_Result register_shared_key(struct hotp_key *state, 
+					uint32_t param_types, TEE_Param params[4])
+{
+	TEE_Result res = TEE_SUCCESS;
+
+	uint32_t exp_param_types = TEE_PARAM_TYPES(TEE_PARAM_TYPE_MEMREF_INPUT,
+						   TEE_PARAM_TYPE_NONE,
+						   TEE_PARAM_TYPE_NONE,
+						   TEE_PARAM_TYPE_NONE);
+
+	if (param_types != exp_param_types) {
+		EMSG("Expected: 0x%x, got: 0x%x", exp_param_types, param_types);
+		return TEE_ERROR_BAD_PARAMETERS;
+	}
+
+	if (params[0].memref.size > sizeof(state->K))
+		return TEE_ERROR_BAD_PARAMETERS;
+
+	memset(state->K, 0, sizeof(state->K));
+	memcpy(state->K, params[0].memref.buffer, params[0].memref.size);
+
+	state->K_len = params[0].memref.size;
+	DMSG("Got shared key %s (%u bytes).", state->K, params[0].memref.size);
+
+	return res;
+}
+```
+
+## Response:
+Yes, the function `register_shared_key` can be used as a sink in taint analysis. The parameter positions to check are:
+
+- `(register_shared_key; 0)`
+
+This is because the first parameter `params[0]` is a memory reference input that can potentially contain tainted data, which is then copied into the `state->K` buffer.
+
+# Function: get_hotp
+## Prompt:
+As a program analyst, when performing taint analysis, can the function `get_hotp` be used as a sink? If yes, indicate parameter positions to check in the form `(function_name; param_index)`. Answer `no` if not.
+
+Function implementation:
+```c
+static TEE_Result get_hotp(struct hotp_key *state, 
+					uint32_t param_types, TEE_Param params[4])
+{
+	TEE_Result res = TEE_SUCCESS;
+	uint32_t hotp_val;
+	uint8_t mac[SHA1_HASH_SIZE];
+	uint32_t mac_len = sizeof(mac);
+	int i;
+
+	uint32_t exp_param_types = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_OUTPUT,
+						   TEE_PARAM_TYPE_NONE,
+						   TEE_PARAM_TYPE_NONE,
+						   TEE_PARAM_TYPE_NONE);
+
+	if (param_types != exp_param_types) {
+		EMSG("Expected: 0x%x, got: 0x%x", exp_param_types, param_types);
+		return TEE_ERROR_BAD_PARAMETERS;
+	}
+
+	res = hmac_sha1(state->K, state->K_len, state->counter, 
+			sizeof(state->counter), mac, &mac_len);
+
+	/* Increment the counter. */
+	for (i = sizeof(state->counter) - 1; i >= 0; i--) {
+		if (++(state->counter)[i])
+			break;
+	}
+
+	truncate(mac, &hotp_val);
+	DMSG("HOTP is: %d", hotp_val);
+	params[0].value.a = hotp_val;
+
+	return res;
+}
+```
+
+## Response:
+Yes, the function `get_hotp` can be used as a sink. The parameter position to check is `(get_hotp; 0)`, as the first parameter `params[0]` is being assigned a value derived from the computation within the function, which could potentially be influenced by tainted data.
+
+# Function: TA_CreateEntryPoint
+## Prompt:
+As a program analyst, when performing taint analysis, can the function `TA_CreateEntryPoint` be used as a sink? If yes, indicate parameter positions to check in the form `(function_name; param_index)`. Answer `no` if not.
+
+Function implementation:
+```c
+TEE_Result TA_CreateEntryPoint(void)
+{
+	return TEE_SUCCESS;
+}
+```
+
+## Response:
+No.
+
+# Function: TA_DestroyEntryPoint
+## Prompt:
+As a program analyst, when performing taint analysis, can the function `TA_DestroyEntryPoint` be used as a sink? If yes, indicate parameter positions to check in the form `(function_name; param_index)`. Answer `no` if not.
+
+Function implementation:
+```c
+void TA_DestroyEntryPoint(void)
+{
+}
+```
+
+## Response:
+No.
+
+# Function: TA_OpenSessionEntryPoint
+## Prompt:
+As a program analyst, when performing taint analysis, can the function `TA_OpenSessionEntryPoint` be used as a sink? If yes, indicate parameter positions to check in the form `(function_name; param_index)`. Answer `no` if not.
+
+Function implementation:
+```c
+TEE_Result TA_OpenSessionEntryPoint(uint32_t param_types,
+				    TEE_Param __unused params[4],
+				    void **sess_ctx)
+{
+	struct hotp_key *state = NULL;
+
+	uint32_t exp_param_types = TEE_PARAM_TYPES(TEE_PARAM_TYPE_NONE,
+						   TEE_PARAM_TYPE_NONE,
+						   TEE_PARAM_TYPE_NONE,
+						   TEE_PARAM_TYPE_NONE);
+	if (param_types != exp_param_types)
+		return TEE_ERROR_BAD_PARAMETERS;
+
+	/*
+	 * Allocate and init state for the session.
+	 */
+	state = TEE_Malloc(sizeof(*state), 0);
+	if (!state)
+		return TEE_ERROR_OUT_OF_MEMORY;
+
+	*sess_ctx = state;
+
+	return TEE_SUCCESS;
+}
+```
+
+## Response:
+Yes, the function `TA_OpenSessionEntryPoint` can be used as a sink in taint analysis. The parameter positions to check are as follows:
+
+- `(TA_OpenSessionEntryPoint; 2)`
+
+This indicates that the third parameter (`sess_ctx`) is where tainted data could potentially flow into, as it is a pointer that is being assigned a value derived from the function's internal logic.
+
+# Function: TA_CloseSessionEntryPoint
+## Prompt:
+As a program analyst, when performing taint analysis, can the function `TA_CloseSessionEntryPoint` be used as a sink? If yes, indicate parameter positions to check in the form `(function_name; param_index)`. Answer `no` if not.
+
+Function implementation:
+```c
+void TA_CloseSessionEntryPoint(void *sess_ctx)
+{
+	TEE_Free(sess_ctx);
+	sess_ctx = NULL;
+}
+```
+
+## Response:
+Yes, the function `TA_CloseSessionEntryPoint` can be used as a sink in taint analysis. The parameter `sess_ctx` is a pointer that is passed to the function and is subsequently freed using `TEE_Free`. This indicates that the data pointed to by `sess_ctx` is being released, which can be a point of interest for taint analysis.
+
+The parameter position to check would be:
+
+`(TA_CloseSessionEntryPoint; 0)` 
+
+This indicates that the first parameter (index 0) of the function `TA_CloseSessionEntryPoint` should be analyzed for taint.
+
+# Function: TA_InvokeCommandEntryPoint
+## Prompt:
+As a program analyst, when performing taint analysis, can the function `TA_InvokeCommandEntryPoint` be used as a sink? If yes, indicate parameter positions to check in the form `(function_name; param_index)`. Answer `no` if not.
+
+Function implementation:
+```c
+TEE_Result TA_InvokeCommandEntryPoint(void *sess_ctx,
+				      uint32_t cmd_id,
+				      uint32_t param_types, TEE_Param params[4])
+{
+	switch (cmd_id) {
+	case TA_HOTP_CMD_REGISTER_SHARED_KEY:
+		return register_shared_key(sess_ctx, param_types, params);
+
+	case TA_HOTP_CMD_GET_HOTP:
+		return get_hotp(sess_ctx, param_types, params);
+
+	default:
+		return TEE_ERROR_BAD_PARAMETERS;
+	}
+}
+```
+

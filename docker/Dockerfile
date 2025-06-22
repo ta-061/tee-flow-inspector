@@ -38,14 +38,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         pkg-config \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+ENV TA_DEV_KIT_DIR=/workspace/optee_os/out/arm/export-ta_arm32
+ENV CROSS_COMPILE=arm-linux-gnueabihf-
+ENV CC=${CROSS_COMPILE}gcc
+
 # libclang のバージョンリネーム対応
 RUN ln -sf /usr/lib/llvm-18/lib/libclang-18.so /usr/lib/llvm-18/lib/libclang.so || true
 RUN echo /usr/lib/llvm-18/lib > /etc/ld.so.conf.d/llvm18.conf \
  && ldconfig
 
 ENV LD_LIBRARY_PATH=/usr/lib/llvm-18/lib:$LD_LIBRARY_PATH
-
-ENV TA_DEV_KIT_DIR=/workspace/optee_os/out/arm/export-ta_arm32
 ###############################################################################
 # Python 依存ライブラリ
 ###############################################################################
