@@ -1,6 +1,5 @@
 ### src/parsing/parsing.py
-import json
-import os
+import json, os, shlex
 from clang import cindex
 from clang.cindex import TranslationUnitLoadError, CursorKind, TranslationUnit
 from pathlib import Path
@@ -18,7 +17,11 @@ def parse_sources(entries: list[dict]) -> list[tuple[str, TranslationUnit]]:
     for entry in entries:
         source = entry['file']
         parsed_files.add(source)
-        raw = entry.get('arguments') or entry.get('command', '').split()[1:]
+        raw = entry.get('arguments') or shlex.split(entry.get('command', ''))
+
+        # 先頭がコンパイラなら落とす
+        if raw and Path(raw[0]).name.startswith(('clang', 'gcc', 'cc')):
+            raw = raw[1:]
 
         args = []
         skip = False

@@ -1,127 +1,190 @@
 #!/usr/bin/env python3
 """
-汎用TA解析ドライバ (フェーズ1-3)
-- フェーズ1-2: 各TAで classify_functions を実行 -> <ta_dir>/results/<ta_name>_phase12.json
-- フェーズ3: identify_sinks.py を呼び出し -> <ta_dir>/results/<ta_name>_sinks.json
+汎用 TA 解析ドライバ (フェーズ1‑3)
+=================================
+* **Step 1** : ルートを 1 回ビルド (`bear`, `make`, `cmake …`)。
+* **Step 2** : 失敗したら `ta/` 直下をビルド。最後は **ダミー DB** 生成。
+* **Step 3** : `compile_commands.json` から **TA 配下エントリのみ抽出**。空なら即ダミーへ。
+* **Step 4** : 関数分類 → LLM でシンク特定。
 
-Usage:
-  python main.py -p /path/to/project1 -p /path/to/project2 ...
+追加機能 (v6 2025‑06‑22)
+----------------------
+1. Dev‑Kit 自動検出 (`export-ta_*` or env)。  
+2. 空 DB も TA‑entries 0 も **強制ダミー再生成**。  
+3. `make -C ta` を必ずトライ。  
+4. ダミー DB は `-I{devkit}/include` 付き (先頭トークンにコンパイラ名を入れない)。  
+5. `--skip` で darknetz/basicAlg_use 等を除外。
 """
-import sys
-import argparse
+from __future__ import annotations
+import sys, argparse, json, shutil, subprocess, os
 from pathlib import Path
-import subprocess
-import shutil
+from typing import List
 
-# classify と parsing モジュールを src の下に置いている想定
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+SRC_DIR = Path(__file__).parent / "src"
+sys.path.insert(0, str(SRC_DIR))
+from classify.classifier import classify_functions            # type: ignore
+from parsing.parsing import load_compile_commands             # type: ignore
 
-from classify.classifier import classify_functions
-from parsing.parsing import load_compile_commands
+# ---------------------------------------------------------------------------
+# Dev‑Kit auto‑detect
+# ---------------------------------------------------------------------------
+
+def find_devkit() -> Path | None:
+    env = os.getenv("TA_DEV_KIT_DIR")
+    if env:
+        return Path(env)
+    for p in Path.cwd().rglob("export-ta_*/include"):
+        return p.parent
+    return None
+
+DEVKIT = find_devkit()
+if DEVKIT:
+    os.environ["TA_DEV_KIT_DIR"] = str(DEVKIT)
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+def run(cmd: List[str], cwd: Path, v: bool) -> bool:
+    if v:
+        print(f"[INFO] $ {' '.join(cmd)} (cwd={cwd})")
+    try:
+        res = subprocess.run(cmd, cwd=cwd, check=False)
+        if res.returncode and v:
+            print(f"[WARN]   ↳ rc={res.returncode}")
+        return res.returncode == 0
+    except FileNotFoundError as e:
+        if v:
+            print(f"[WARN]   ↳ {e}")
+        return False
 
 
-def generate_compile_commands(root: Path, verbose: bool = False):
-    """
-    root: TA フォルダへのパス (…/project/ta)
-    ビルド候補を順に試し、成功した compile_commands.json を TA フォルダに配置
-    """
-    proj_root = root.parent.resolve()
-    target_db = root / "compile_commands.json"
-    if target_db.exists():
+def valid_db(p: Path) -> bool:
+    if not p.is_file():
+        return False
+    try:
+        data = json.loads(p.read_text())
+        return bool(data)
+    except json.JSONDecodeError:
+        return False
+
+# ---------------------------------------------------------------------------
+# build helpers
+# ---------------------------------------------------------------------------
+
+def build_once(base: Path, verbose: bool) -> Path | None:
+    cmds: List[List[str]] = []
+    if (base/"build.sh").is_file():
+        cmds.append(["bear","--",str(base/"build.sh")])
+    if (base/"ndk_build.sh").is_file():
+        cmds.append(["bear","--",str(base/"ndk_build.sh")])
+    if (base/"Makefile").is_file():
+        cmds.append(["bear","--","make"])
+    if (base/"ta"/"Makefile").is_file():
+        cmds.append(["bear","--","make","-C","ta"])
+    if (base/"CMakeLists.txt").is_file():
+        cmds.extend([
+            ["cmake","-DCMAKE_EXPORT_COMPILE_COMMANDS=ON","-Bbuild","-H."],
+            ["cmake","--build","build"],
+        ])
+    for cmd in cmds:
+        if run(cmd, base, verbose):
+            for db in (base/"compile_commands.json", base/"build"/"compile_commands.json"):
+                if valid_db(db):
+                    return db
+    return None
+
+# ---------------------------------------------------------------------------
+# dummy DB
+# ---------------------------------------------------------------------------
+
+def generate_dummy_db(ta_dir: Path, target: Path, verbose: bool):
+    incs = [f"-I{ta_dir}", f"-I{ta_dir}/include"]
+    if DEVKIT:
+        incs.append(f"-I{DEVKIT}/include")
+    entries = [{
+        "directory": str(ta_dir),
+        "file": str(c),
+        "arguments": [*incs, "-c", str(c)]
+    } for c in ta_dir.rglob("*.c")]
+    target.write_text(json.dumps(entries, indent=2), encoding="utf-8")
+    if verbose:
+        print(f"[INFO] ★ dummy DB {len(entries)} entries → {target}")
+
+# ---------------------------------------------------------------------------
+# project processing
+# ---------------------------------------------------------------------------
+
+def ensure_ta_db(ta_dir: Path, root: Path, verbose: bool) -> Path:
+    """build or fallback to dummy until TA entries > 0"""
+    # 1) try existing or built db
+    db_path = build_once(root, verbose) or build_once(ta_dir, verbose)
+    if not db_path or not valid_db(db_path):
         if verbose:
-            print(f"[INFO] Existing compile_commands.json removed: {target_db}")
-        target_db.unlink()
+            print("[WARN] build failed/empty → dummy DB")
+        db_path = ta_dir/"compile_commands_full.json"
+        generate_dummy_db(ta_dir, db_path, verbose)
 
-    # ビルド候補：(実行dir, コマンドリスト)
-    candidates = [
-        (proj_root, ["bear", "--", str(proj_root / 'ndk_build.sh')]),
-        (proj_root, ["bear", "--", "ndk-build",
-                     f"NDK_PROJECT_PATH={proj_root}", "APP_BUILD_SCRIPT=Android.mk"]),
-        (proj_root, ["bear", "--", "make"]),
-        (proj_root, ["cmake", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON", "-Bbuild", "-H." ]),
-        (proj_root, ["cmake", "--build", "build"]),
-        (root,     ["bear", "--", "ndk-build",
-                     f"NDK_PROJECT_PATH={root}", "APP_BUILD_SCRIPT=Android.mk"]),
-        (root,     ["bear", "--", "make"]),
-        (root,     ["cmake", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON", "-Bbuild", "-H." ]),
-        (root,     ["cmake", "--build", "build"]),
-    ]
+    # 2) filter TA-only entries; if none, force dummy
+    entries_full = load_compile_commands(str(db_path))
+    ta_entries = [e for e in entries_full if Path(e["file"]).resolve().is_relative_to(ta_dir)]
+    if not ta_entries:
+        if verbose:
+            print("[WARN] TA entries 0 → regenerate dummy DB")
+        db_path = ta_dir/"compile_commands_full.json"
+        generate_dummy_db(ta_dir, db_path, verbose)
+        ta_entries = load_compile_commands(str(db_path))
 
-    for build_dir, cmd in candidates:
-        try:
-            if verbose:
-                print(f"[INFO] Running build: {' '.join(cmd)} in {build_dir}")
-            subprocess.run(cmd, cwd=str(build_dir), check=True)
-            # 構築後、compile_commands.json を検索
-            for candidate in [build_dir / 'compile_commands.json', build_dir / 'build' / 'compile_commands.json']:
-                if candidate.exists():
-                    shutil.copy(candidate, target_db)
-                    if verbose:
-                        print(f"[INFO] compile_commands.json generated and copied to {target_db}")
-                    return
-        except (subprocess.CalledProcessError, FileNotFoundError) as e:
-            if verbose:
-                print(f"[WARN] Build failed: {' '.join(cmd)} -> {e}")
-            continue
-
-    raise RuntimeError(f"どのビルドシステムでも compile_commands.json が生成できませんでした: {root}")
+    # save TA-only db (might be same as dummy)
+    ta_db = ta_dir/"compile_commands.json"
+    ta_db.write_text(json.dumps(ta_entries, indent=2), encoding="utf-8")
+    if verbose:
+        print(f"[INFO] TA DB saved: {ta_db}  entries={len(ta_entries)}")
+    return ta_db
 
 
-def process_ta(ta_path: Path, identify_script: Path, verbose: bool = False):
-    name = ta_path.name
-    print(f"--- Processing TA: {name} ---")
+def process_project(root: Path, identify_py: Path, skip: set[str], verbose: bool):
+    root = root.resolve()
+    name = root.name
+    if name in skip:
+        print(f"[INFO] {name}: skipped by --skip option")
+        return
 
-    results_dir = ta_path / "results"
-    results_dir.mkdir(parents=True, exist_ok=True)
+    ta_dir = root/"ta"
+    if not ta_dir.is_dir():
+        print(f"[WARN] {name}: 'ta/' missing → skip")
+        return
 
-    compile_db = ta_path / "compile_commands.json"
-    if not compile_db.exists():
-        generate_compile_commands(ta_path, verbose)
-    entries = load_compile_commands(str(compile_db))
-    if not entries:
-        # 空の場合は再生成
-        generate_compile_commands(ta_path, verbose)
-        entries = load_compile_commands(str(compile_db))
+    print(f"\n=== Project: {name} / TA: {ta_dir.name} ===")
 
-    # フェーズ1-2: 関数分類
-    users, externals = classify_functions(ta_path, compile_db)
-    phase12 = {
-        "project_root": str(ta_path),
+    # ensure db
+    ta_db = ensure_ta_db(ta_dir, root, verbose)
+
+    # Phase 1‑2
+    users, externals = classify_functions(ta_dir, ta_db)
+    results = ta_dir/"results"; results.mkdir(exist_ok=True)
+    phase12 = results/f"{ta_dir.name}_phase12.json"
+    phase12.write_text(json.dumps({
+        "project_root": str(ta_dir),
         "user_defined_functions": users,
         "external_declarations": externals,
-    }
+    }, indent=2, ensure_ascii=False))
+    print(f"[phase1-2] → {phase12}")
 
-    out12 = results_dir / f"{name}_phase12.json"
-    out12.write_text(json.dumps(phase12, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[phase1-2] -> {out12}")
+    # Phase 3
+    sinks = results/f"{ta_dir.name}_sinks.json"
+    run([sys.executable, str(identify_py), "-i", str(phase12), "-o", str(sinks)], ta_dir, verbose)
+    print(f"[phase3 ] → {sinks}\n")
 
-    # フェーズ3: シンク特定
-    out3 = results_dir / f"{name}_sinks.json"
-    subprocess.run([
-        sys.executable, str(identify_script),
-        "-i", str(out12),
-        "-o", str(out3)
-    ], check=True)
-    print(f"[phase3] -> {out3}")
-
-
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="フェーズ1-3: TAプロジェクト一括解析")
-    parser.add_argument(
-        "-p", "--project", type=Path, action='append', required=True,
-        help="解析対象のTAプロジェクトルートディレクトリ（複数指定可、'ta/'を含むルートも可）"
-    )
-    parser.add_argument(
-        "--verbose", action='store_true',
-        help="詳細ログを出力"
-    )
-    args = parser.parse_args()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("-p", "--project", type=Path, action="append", required=True)
+    ap.add_argument("--skip", nargs="*", default=[], help="ディレクトリ名をスキップ")
+    ap.add_argument("--verbose", action="store_true")
+    args = ap.parse_args()
 
-    identify_script = Path(__file__).resolve().parent / "identify_sinks" / "identify_sinks.py"
-
+    identify_py = Path(__file__).resolve().parent/"identify_sinks"/"identify_sinks.py"
+    skip_set = set(args.skip)
     for proj in args.project:
-        ta_dir = (proj / "ta") if (proj / "ta").is_dir() else proj
-        if not ta_dir.is_dir():
-            print(f"Warning: {proj} に 'ta/' フォルダが見つかりません。スキップします。")
-            continue
-        process_ta(ta_dir, identify_script, args.verbose)
+        process_project(proj, identify_py, skip_set, args.verbose)
