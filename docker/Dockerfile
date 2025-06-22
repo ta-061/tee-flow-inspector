@@ -41,6 +41,7 @@ RUN echo /usr/lib/llvm-18/lib > /etc/ld.so.conf.d/llvm18.conf \
 
 ENV LD_LIBRARY_PATH=/usr/lib/llvm-18/lib:$LD_LIBRARY_PATH
 
+ENV TA_DEV_KIT_DIR=/workspace/optee_os/out/arm/export-ta_arm32
 ###############################################################################
 # Python 依存ライブラリ
 ###############################################################################
@@ -49,27 +50,6 @@ RUN python3 -m pip install --no-cache-dir \
     networkx \
     pytest \
     rich
-
-###############################################################################
-# 追加: クロスツールチェイン & OP-TEE ビルド依存
-###############################################################################
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi \
-        libfdt-dev python3-serial python3-pyelftools \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-###############################################################################
-# OP-TEE OS (Dev-Kit) clone & build
-###############################################################################
-RUN mkdir -p /opt && \
-    git -C /opt clone --depth 1 https://github.com/OP-TEE/optee_os.git && \
-    make -C /opt/optee_os -j$(nproc) \
-         CROSS_COMPILE=arm-linux-gnueabi- \
-         PLATFORM=arm-plat-vexpress \
-         O=out/arm-plat-vexpress \
-         CFG_TEE_TA_LOG_LEVEL=0 && \
-    echo "export TA_DEV_KIT_DIR=/opt/optee_os/out/arm-plat-vexpress/export-ta_arm32" \
-         >> /etc/profile.d/optee.sh
 
 ###############################################################################
 # 作業ディレクトリ & エントリポイント                                           #

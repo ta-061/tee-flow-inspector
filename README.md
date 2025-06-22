@@ -3,6 +3,8 @@
 1. chmod +x docker/entrypoint.sh
 2. docker compose -f .devcontainer/docker-compose.yml build
 
+python3 ./src/main.py -p benchmark/acipher
+
 python3 ./src/main.py \
   -p benchmark/acipher \
   -p benchmark/aes \
@@ -12,6 +14,8 @@ python3 ./src/main.py \
   -p benchmark/secure_storage \
   -p benchmark/optee-fiovb \
   -p benchmark/optee-sdp \
+  -p benchmark/basicAlg_use \
+  -p benchmark/Lenet5_in_OPTEE \
   --verbose 2>&1 | tee log.txt
 
 
