@@ -1,12 +1,13 @@
-### main.py
 #!/usr/bin/env python3
 """
 汎用TA解析ドライバ (フェーズ1-3)
-- フェーズ1・2: 各TAで classify_functions を実行 -> results/<ta>_phase12.json
-- フェーズ3: identify_sinks.py を呼び出し -> results/<ta>_sinks.json
+- フェーズ1-2: 各TAで classify_functions を実行 -> <ta_dir>/results/<ta_name>_phase12.json
+- フェーズ3: identify_sinks.py を呼び出し -> <ta_dir>/results/<ta_name>_sinks.json
 
 Usage:
-  python main.py -b /path/to/benchmark/root [--only-ta]
+  python main.py -p /path/to/project1 -p /path/to/project2 ...
+  プロジェクトルートを -p で個別指定すると、そのサブの 'ta/' フォルダを解析対象とします。
+  各TAプロジェクトディレクトリ内に results/ が作成され、結果ファイルが出力されます。
 """
 import sys
 import json
@@ -21,44 +22,61 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 from classify.classifier import classify_functions
 from parsing.parsing import load_compile_commands
 
-def generate_compile_commands(root: Path):
-    mf = root / "Makefile"
-    cm = root / "CMakeLists.txt"
-    db = root / "compile_commands.json"
-    if db.exists():
-        db.unlink()
-    # CMakeLists.txt がなければ自動生成
-    if not cm.exists() and shutil.which("cmake"):
-        cm.write_text("""
-cmake_minimum_required(VERSION 3.5)
-project(ta_project C)
-file(GLOB_RECURSE TA_SRCS "${CMAKE_CURRENT_SOURCE_DIR}/*.c")
-add_library(ta_lib STATIC ${TA_SRCS})
-target_include_directories(ta_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-""".strip(), encoding="utf-8")
-    # CMake or bear+make
-    if cm.exists() and shutil.which("cmake"):
-        bld = root / "build"
-        shutil.rmtree(bld, ignore_errors=True)
-        bld.mkdir()
-        subprocess.run(["cmake", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON", ".."], cwd=str(bld), check=True)
-        subprocess.run(["cp", "compile_commands.json", str(root)], cwd=str(bld), check=True)
-    elif mf.exists() and shutil.which("bear"):
-        subprocess.run(["bear", "--", "make"], cwd=str(root), check=True)
-    else:
-        raise RuntimeError(f"No CMakeLists or Makefile+bear in {root}")
 
-def process_ta(ta_path: Path, results_dir: Path, identify_script: Path):
+def generate_compile_commands(root: Path):
+    """
+    root: TA フォルダへのパス (…/project/ta)
+    1) プロジェクトルート (root.parent) でビルドコマンドを試し、
+    2) 成功した compile_commands.json を TA フォルダにコピー
+    3) 失敗したら順次フォールバック
+    """
+    proj_root = root.parent
+    target_db = root / "compile_commands.json"
+    if target_db.exists():
+        target_db.unlink()
+
+    # ビルド候補：(実行dir, コマンドリスト)
+    candidates = [
+        (proj_root, ["bear", "--", "./ndk_build.sh"]),
+        (proj_root, ["bear", "--", "ndk-build",
+                     f"NDK_PROJECT_PATH={proj_root}", "APP_BUILD_SCRIPT=Android.mk"]),
+        (proj_root, ["bear", "--", "make"]),
+        # CMakeは in-place で出力する場合
+        (proj_root, ["cmake", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON", "."], True),
+        # 次に TA フォルダ自身
+        (root,     ["bear", "--", "ndk-build",
+                     f"NDK_PROJECT_PATH={root}", "APP_BUILD_SCRIPT=Android.mk"]),
+        (root,     ["bear", "--", "make"]),
+        (root,     ["cmake", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON", "."], True),
+    ]
+
+    for entry in candidates:
+        build_dir, cmd = entry[0], entry[1]
+        try:
+            subprocess.run(cmd, cwd=str(build_dir), check=True)
+            # 成功したら build_dir/compile_commands.json をコピー
+            src = build_dir / "compile_commands.json"
+            if src.exists():
+                shutil.copy(src, target_db)
+                return
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            continue
+
+    raise RuntimeError(f"どのビルドシステムでも compile_commands.json が生成できませんでした: {root}")
+
+
+def process_ta(ta_path: Path, identify_script: Path):
     name = ta_path.name
     print(f"--- Processing TA: {name} ---")
 
-    # フェーズ1-2: compile_commands.json の準備 & 関数分類
+    results_dir = ta_path / "results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+
     compile_db = ta_path / "compile_commands.json"
     if not compile_db.exists():
         generate_compile_commands(ta_path)
     entries = load_compile_commands(str(compile_db))
     if not entries:
-        # 再生成
         generate_compile_commands(ta_path)
         entries = load_compile_commands(str(compile_db))
 
@@ -69,13 +87,10 @@ def process_ta(ta_path: Path, results_dir: Path, identify_script: Path):
         "external_declarations": externals,
     }
 
-    # フェーズ1-2結果出力
-    results_dir.mkdir(parents=True, exist_ok=True)
     out12 = results_dir / f"{name}_phase12.json"
     out12.write_text(json.dumps(phase12, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[phase1-2] -> {out12}")
 
-    # フェーズ3: identify_sinks.py を呼び出し
     out3 = results_dir / f"{name}_sinks.json"
     subprocess.run([
         sys.executable, str(identify_script),
@@ -84,24 +99,23 @@ def process_ta(ta_path: Path, results_dir: Path, identify_script: Path):
     ], check=True)
     print(f"[phase3] -> {out3}")
 
+
 def main():
-    p = argparse.ArgumentParser(description="汎用TA解析ドライバ (フェーズ1-3)")
-    p.add_argument("-b", "--benchmark-root", type=Path, required=True,
-                   help="TAプロジェクト群を格納したディレクトリ")
-    p.add_argument("--only-ta", action="store_true",
-                   help="‘host’ディレクトリをスキップしてTAフォルダだけ解析する")
-    args = p.parse_args()
+    parser = argparse.ArgumentParser(description="フェーズ3: TAプロジェクト個別解析")
+    parser.add_argument(
+        "-p", "--project", type=Path, action='append', required=True,
+        help="解析対象のTAプロジェクトルートディレクトリ（複数指定可）"
+    )
+    args = parser.parse_args()
 
-    bench = args.benchmark_root.resolve()
     identify_script = Path(__file__).resolve().parent / "identify_sinks" / "identify_sinks.py"
-    results_dir = bench / "results"
 
-    for sub in bench.iterdir():
-        # only-ta が指定されていれば 'host' ディレクトリはスキップ
-        if args.only_ta and sub.name.lower() == "host":
+    for proj in args.project:
+        ta_dir = proj / "ta"
+        if not ta_dir.is_dir():
+            print(f"Warning: {proj} に 'ta/' ディレクトリが見つかりません。スキップします。")
             continue
-        if sub.is_dir() and any(sub.rglob("*.c")):
-            process_ta(sub, results_dir, identify_script)
+        process_ta(ta_dir, identify_script)
 
 if __name__ == "__main__":
     main()

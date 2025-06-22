@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 フェーズ3: フェーズ1-2の結果を読み込んでシンク候補をLLMに聞き、結果を出力する
-使い方: 
+使い方:
   python identify_sinks.py -i /path/to/ta_phase12.json -o /path/to/ta_sinks.json
 """
 
@@ -31,19 +32,31 @@ def init_client():
 
 def extract_function_code(func):
     """
-    フェーズ1-2で得られた関数情報から、実装部分のスニペットを
-    {line}行目から対応する閉じ括弧まで抜き出します
+    フェーズ1-2で得られた関数情報から、
+    関数シグネチャから対応する閉じ括弧までを抜き出します。
     """
-    path = Path(func["file"])
+    project_root = Path(func.get("project_root", ""))
+    rel = Path(func["file"])
+    path = (project_root / rel) if project_root and not rel.is_absolute() else rel
+
     lines = path.read_text(encoding="utf-8").splitlines()
     start = func["line"] - 1
     snippet = []
     brace = 0
+    recording = False
+
     for l in lines[start:]:
         snippet.append(l)
-        brace += l.count("{") - l.count("}")
-        if brace <= 0:
-            break
+        if "{" in l and not recording:
+            recording = True
+            brace += l.count("{")
+            continue
+        if recording:
+            brace += l.count("{")
+            brace -= l.count("}")
+            if brace <= 0:
+                break
+
     return "\n".join(snippet)
 
 
@@ -61,14 +74,10 @@ def ask_llm(client, prompt):
 
 def main():
     parser = argparse.ArgumentParser(description="フェーズ3: シンク特定")
-    parser.add_argument(
-        "-i", "--input", required=True,
-        help="フェーズ1-2の結果ファイル (JSON)"
-    )
-    parser.add_argument(
-        "-o", "--output", required=True,
-        help="出力シンク候補ファイル (JSON)"
-    )
+    parser.add_argument("-i", "--input", required=True,
+                        help="フェーズ1-2の結果ファイル (JSON)")
+    parser.add_argument("-o", "--output", required=True,
+                        help="出力シンク候補ファイル (JSON)")
     args = parser.parse_args()
 
     out_path = Path(args.output)
@@ -76,11 +85,19 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     log_file = out_dir / "prompts_and_responses.txt"
 
+    # 既存ログがあれば上書き（空ファイルで初期化）
+    log_file.write_text("", encoding="utf-8")
+
     client = init_client()
     phase12 = json.loads(Path(args.input).read_text(encoding="utf-8"))
+    project_root = Path(phase12["project_root"])
     sinks = []
 
+    # 関数名だけをマッチする正規表現
+    pattern = re.compile(r"\(([A-Za-z_][A-Za-z0-9_]*);\s*(\d+)\)")
+
     for func in phase12.get("user_defined_functions", []):
+        func["project_root"] = str(project_root)
         code = extract_function_code(func)
         prompt = (
             f"As a program analyst, when performing taint analysis, "
@@ -90,7 +107,8 @@ def main():
             "Function implementation:\n```c\n"
             f"{code}\n```"
         )
-        # プロンプトと応答をログに追記
+
+        # プロンプトをログに追記
         with open(log_file, "a", encoding="utf-8") as lf:
             lf.write(f"# Function: {func['name']}\n")
             lf.write("## Prompt:\n")
@@ -98,22 +116,26 @@ def main():
 
         resp = ask_llm(client, prompt)
 
+        # 応答をログに追記
         with open(log_file, "a", encoding="utf-8") as lf:
             lf.write("## Response:\n")
             lf.write(resp + "\n\n")
 
-        for fn, idx in re.findall(r"\(([^;]+);\s*(\d+)\)", resp):
+        # 関数名とインデックスのペアだけを抽出
+        for fn, idx in pattern.findall(resp):
             sinks.append({
                 "kind": "function",
-                "name": fn.strip(),
+                "name": fn,
                 "param_index": int(idx)
             })
 
+    # JSON 出力
     out_path.write_text(
         json.dumps({"sinks": sinks}, ensure_ascii=False, indent=2),
         encoding="utf-8"
     )
     print(f"[identify_sinks] {len(sinks)} 個のシンク候補を {args.output} に出力しました。 ログは {log_file} に保存されています。")
+
 
 if __name__ == "__main__":
     main()

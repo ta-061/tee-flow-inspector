@@ -1,4 +1,4 @@
-### parsing.py（修正版）
+### src/parsing/parsing.py
 import json
 import os
 from clang import cindex
