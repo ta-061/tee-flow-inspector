@@ -28,6 +28,7 @@ RUN apt-get update && \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential git ca-certificates curl bash-completion \
         python3 python3-venv python3-pip \
+        python-is-python3 \
         clang-18 clang-tools-18 llvm-18-dev lld-18 \
         libclang-18-dev python3-clang-18 \
         cmake bear \
