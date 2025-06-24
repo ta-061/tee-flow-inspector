@@ -1,3 +1,4 @@
+# src/main.py
 #!/usr/bin/env python3
 """
 汎用 TA 解析ドライバ (フェーズ1‑3)
@@ -149,8 +150,7 @@ def process_project(root: Path, identify_py: Path, skip: set[str], verbose: bool
     if name in skip:
         print(f"[INFO] {name}: skipped by --skip option")
         return
-
-    ta_dir = root/"ta"
+    ta_dir = root / "ta"
     if not ta_dir.is_dir():
         print(f"[WARN] {name}: 'ta/' missing → skip")
         return
@@ -162,8 +162,10 @@ def process_project(root: Path, identify_py: Path, skip: set[str], verbose: bool
 
     # Phase 1‑2
     users, externals = classify_functions(ta_dir, ta_db)
-    results = ta_dir/"results"; results.mkdir(exist_ok=True)
-    phase12 = results/f"{ta_dir.name}_phase12.json"
+    results = ta_dir / "results"
+    results.mkdir(exist_ok=True)
+
+    phase12 = results / f"{ta_dir.name}_phase12.json"
     phase12.write_text(json.dumps({
         "project_root": str(ta_dir),
         "user_defined_functions": users,
@@ -171,10 +173,50 @@ def process_project(root: Path, identify_py: Path, skip: set[str], verbose: bool
     }, indent=2, ensure_ascii=False))
     print(f"[phase1-2] → {phase12}")
 
-    # Phase 3
-    sinks = results/f"{ta_dir.name}_sinks.json"
-    run([sys.executable, str(identify_py), "-i", str(phase12), "-o", str(sinks)], ta_dir, verbose)
+    # Phase 3: LLM でシンク候補抽出
+    sinks = results / f"{ta_dir.name}_sinks.json"
+    run([sys.executable, str(identify_py),
+         "-i", str(phase12), "-o", str(sinks)], ta_dir, verbose)
     print(f"[phase3 ] → {sinks}\n")
+    # Phase 3.4: シンク呼び出し箇所 (vd) を抽出
+    find_py = Path(__file__).parent / "identify_sinks" / "find_sink_calls.py"
+    vd_raw  = results / f"{ta_dir.name}_vulnerable_destinations.json"
+    run([sys.executable, str(find_py),
+         "--compile-db", str(ta_db),
+         "--sinks",      str(sinks),
+         "--output",     str(vd_raw),
+         "--devkit",     os.environ.get("TA_DEV_KIT_DIR", "")],
+        ta_dir, verbose)
+    print(f"[phase3.4] → {vd_raw}\n")
+    # Phase 3.5: 関数呼び出しグラフ生成
+    graph_py   = Path(__file__).parent / "identify_sinks" / "generate_call_graph.py"
+    call_graph = results / f"{ta_dir.name}_call_graph.json"
+    run([sys.executable, str(graph_py),
+         "--compile-db", str(ta_db),
+         "--output",     str(call_graph),
+         "--devkit",     os.environ.get("TA_DEV_KIT_DIR", "")],
+        ta_dir, verbose)
+    print(f"[phase3.5] → {call_graph}\n")
+    # Phase 3.6: チェイン生成
+    fcc_py     = Path(__file__).parent / "identify_sinks" / "function_call_chains.py"
+    chains_out = results / f"{ta_dir.name}_chains.json"
+    run([sys.executable, str(fcc_py),
+         "--call-graph", str(call_graph),
+         "--vd-list",    str(vd_raw),
+         "--output",     str(chains_out)],
+        ta_dir, verbose)
+    print(f"[phase3.6] → {chains_out}\n")
+    # Phase 3.7: vd とチェインをマージ（最終 vd 完成）
+    merge_py  = Path(__file__).parent / "identify_sinks" / "extract_sink_calls.py"
+    vd_final  = results / f"{ta_dir.name}_vulnerable_destinations.json"  # 上書き
+    run([sys.executable, str(merge_py),
+         "--compile-db", str(ta_db),
+         "--sinks",      str(sinks),
+         "--output",     str(vd_final),
+         "--devkit",     os.environ.get("TA_DEV_KIT_DIR", "")],
+        ta_dir, verbose)
+    print(f"[phase3.7] → {vd_final}\n")
+
 
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
