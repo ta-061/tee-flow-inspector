@@ -15,38 +15,34 @@ from typing import List
 # public API
 # ---------------------------------------------------------------------------
 
-def ensure_ta_db(ta_dir: Path, project_root: Path, devkit: Path | None = None,
-                 verbose: bool = False) -> Path:
-    """ビルドを試行し、最終的に ta/compile_commands.json を返す"""
+def ensure_ta_db(ta_dir: Path, project_root: Path,
+                 devkit: Path | None = None, verbose: bool=False) -> Path:
     db_path = _try_build(project_root, verbose) or _try_build(ta_dir, verbose)
     if not _valid(db_path):
-        if verbose:
-            print("[WARN] build failed/empty → dummy DB")
+        if verbose: print("[WARN] build failed/empty → dummy DB")
         db_path = ta_dir / "compile_commands_full.json"
         _gen_dummy(ta_dir, db_path, devkit, verbose)
 
-    # TA 下だけ抽出
+    # ---------- TA-only 抽出 ----------
     entries_all = _load(db_path)
     ta_entries  = [e for e in entries_all
                    if Path(e["file"]).resolve().is_relative_to(ta_dir)]
 
-    # *.c の総数より capture が少ないときは dummy で補完
+    # *.c の総数より少なければ dummy で上書き
     if len(list(ta_dir.rglob("*.c"))) > len(ta_entries):
-        if verbose:
-            print("[WARN] bear が拾えなかった .c がある → dummy で補完")
+        if verbose: print("[WARN] bear が拾えなかった .c がある → dummy 補完")
         _gen_dummy(ta_dir, db_path, devkit, verbose)
-        ta_entries = _load(db_path)          # 生成し直した DB を再読込
-    if not ta_entries:
-        if verbose:
-            print("[WARN] TA entries 0 → regenerate dummy DB")
-        db_path = ta_dir / "compile_commands_full.json"
+        ta_entries = _load(db_path)     # 生成し直し
+
+    if not ta_entries:                 # 念押し
         _gen_dummy(ta_dir, db_path, devkit, verbose)
         ta_entries = _load(db_path)
 
     ta_db = ta_dir / "compile_commands.json"
     ta_db.write_text(json.dumps(ta_entries, indent=2), encoding="utf-8")
-    if verbose:
-        print(f"[INFO] TA DB saved: {ta_db}  entries={len(ta_entries)}")
+    if verbose: print(f"[INFO] TA DB saved: {ta_db}  entries={len(ta_entries)}")
+    if devkit:
+        dummy_ok = True 
     return ta_db
 
 # ---------------------------------------------------------------------------

@@ -2,59 +2,34 @@
 #!/usr/bin/env python3
 """libclang ベースの AST 抽出ユーティリティ（ホワイトリスト方式）"""
 from __future__ import annotations
-import json, os
+import json
 from pathlib import Path
 from clang import cindex
-from clang.cindex import TranslationUnitLoadError, CursorKind, TranslationUnit
+from clang.cindex import CursorKind, TranslationUnit
 
-KEEP_PREFIX = ("-I", "-D", "-include")  # 必須フラグのみ保持
-TARGET_TRIPLE = "--target=armv7a-none-eabi"  # ARM マクロが必要なら
+# 新しい統一されたパースユーティリティを使用
+from .parse_utils import load_compile_db as _load_compile_db
+from .parse_utils import parse_sources_unified
 
-# ------------------------------------------------------------
-
+# 既存のインターフェースを維持
 def load_compile_commands(path: str) -> list[dict]:
-    with open(path, "r", encoding="utf-8") as fp:
-        return json.load(fp)
+    return _load_compile_db(Path(path))
 
-# ------------------------------------------------------------
 
 def parse_sources(entries: list[dict]) -> list[tuple[str, TranslationUnit]]:
-    idx = cindex.Index.create()
-    asts: list[tuple[str, TranslationUnit]] = []
-    opt = TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD
-    seen: set[str] = set()
+    """既存のインターフェースを維持しつつ、新しい実装を使用"""
+    # 環境変数からdevkitを取得
+    import os
+    devkit = os.environ.get("TA_DEV_KIT_DIR")
+    
+    # 統一されたパース関数を使用
+    return parse_sources_unified(entries, devkit, verbose=True)
 
-    for ent in entries:
-        src = ent["file"]
-        seen.add(src)
-
-        raw = ent.get("arguments", [])
-        # ホワイトリストに合致するものだけ残す
-        args = [a for a in raw if a.startswith(KEEP_PREFIX)]
-        if TARGET_TRIPLE not in " ".join(args):
-            args.append(TARGET_TRIPLE)
-
-        if os.environ.get("TA_DEV_KIT_DIR"):
-            args.append(f"-I{os.environ['TA_DEV_KIT_DIR']}/include")
-
-        print(f"[DEBUG] parse C source {src} with args: {args}")
-        try:
-            tu = idx.parse(src, args=args, options=opt)
-        except TranslationUnitLoadError as e:
-            print(f"[ERROR] failed to parse {src}: {e}")
-            continue
-
-        for d in tu.diagnostics:
-            print(f"  [diag {d.severity}] {d.spelling}")
-        asts.append((src, tu))
-
-    # 追加 .c / ヘッダ処理（省略。元の実装を必要に応じ移植）
-    return asts
-
-# ------------------------------------------------------------
 
 def extract_functions(tu: TranslationUnit) -> list[dict]:
+    """関数定義と宣言、マクロを抽出"""
     decls: list[dict] = []
+    
     def walk(node):
         for ch in node.get_children():
             if ch.kind == CursorKind.FUNCTION_DECL:
@@ -77,5 +52,6 @@ def extract_functions(tu: TranslationUnit) -> list[dict]:
                         "params": params,
                     })
             walk(ch)
+    
     walk(tu.cursor)
     return decls
