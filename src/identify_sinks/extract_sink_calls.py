@@ -33,7 +33,11 @@ def main():
     # --- 1) compile_commands.json の読み込み＆AST解析 ---
     compile_db = Path(args.compile_db)
     entries = load_compile_db(compile_db)
-    tus = parse_sources_unified(entries, args.devkit, verbose=True)
+    
+    # TAディレクトリを推定
+    ta_dir = compile_db.parent
+    
+    tus = parse_sources_unified(entries, args.devkit, verbose=True, ta_dir=ta_dir)
 
     # --- 2) sinks.json の読み込み ---
     raw = json.loads(Path(args.sinks).read_text(encoding="utf-8"))

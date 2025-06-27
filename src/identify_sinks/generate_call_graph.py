@@ -54,10 +54,14 @@ def main():
     args = p.parse_args()
 
     # compile_commands.jsonを読み込み
-    entries = load_compile_db(Path(args.compile_db))
+    compile_db_path = Path(args.compile_db)
+    entries = load_compile_db(compile_db_path)
+    
+    # TAディレクトリを推定
+    ta_dir = compile_db_path.parent
     
     # ソースファイルをパース
-    tus = parse_sources_unified(entries, args.devkit, verbose=True)
+    tus = parse_sources_unified(entries, args.devkit, verbose=True, ta_dir=ta_dir)
     
     # 各TUからグラフを構築
     all_edges = []

@@ -28,10 +28,14 @@ def main():
     a = ap.parse_args()
 
     # compile_commands.jsonを読み込み
-    entries = load_compile_db(Path(a.compile_db))
+    compile_db_path = Path(a.compile_db)
+    entries = load_compile_db(compile_db_path)
+    
+    # TAディレクトリを推定（compile_commands.jsonの親ディレクトリ）
+    ta_dir = compile_db_path.parent
     
     # ソースファイルをパース
-    tus = parse_sources_unified(entries, a.devkit, verbose=True)
+    tus = parse_sources_unified(entries, a.devkit, verbose=True, ta_dir=ta_dir)
     
     # sinks.jsonを読み込み
     raw = json.loads(Path(a.sinks).read_text())

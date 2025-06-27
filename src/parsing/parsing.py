@@ -22,8 +22,18 @@ def parse_sources(entries: list[dict]) -> list[tuple[str, TranslationUnit]]:
     import os
     devkit = os.environ.get("TA_DEV_KIT_DIR")
     
+    # TAディレクトリを推定（最初のエントリから）
+    ta_dir = None
+    if entries and "directory" in entries[0]:
+        dir_path = Path(entries[0]["directory"])
+        # ta/を含むパスを探す
+        for parent in [dir_path] + list(dir_path.parents):
+            if parent.name == "ta":
+                ta_dir = parent
+                break
+    
     # 統一されたパース関数を使用
-    return parse_sources_unified(entries, devkit, verbose=True)
+    return parse_sources_unified(entries, devkit, verbose=True, ta_dir=ta_dir)
 
 
 def extract_functions(tu: TranslationUnit) -> list[dict]:
