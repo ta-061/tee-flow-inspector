@@ -104,6 +104,37 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool):
         ta_dir, v)
     print(f"[phase3.7] → {vd_final}\n")
 
+    # Phase5: 危険なフロー（候補）生成
+    flows_py = Path(__file__).parent / "identify_flows" / "generate_candidate_flows.py"
+    candidate_flows = res_dir / f"{ta_dir.name}_candidate_flows.json"
+    run([sys.executable, str(flows_py),
+         "--chains", str(chains_out),
+         "--sources", "TA_InvokeCommandEntryPoint",
+         "--output", str(candidate_flows)],
+        ta_dir, v)
+    print(f"[phase5 ] → {candidate_flows}\n")
+
+    # Phase6: テイント解析と脆弱性検査
+    taint_py = Path(__file__).parent / "analyze_vulnerabilities" / "taint_analyzer.py"
+    vulnerabilities = res_dir / f"{ta_dir.name}_vulnerabilities.json"
+    run([sys.executable, str(taint_py),
+         "--flows", str(candidate_flows),
+         "--phase12", str(phase12),
+         "--output", str(vulnerabilities)],
+        ta_dir, v)
+    print(f"[phase6 ] → {vulnerabilities}\n")
+
+    # Phase7: HTMLレポート生成
+    report_py = Path(__file__).parent / "report" / "generate_report.py"
+    report_html = res_dir / f"{ta_dir.name}_vulnerability_report.html"
+    run([sys.executable, str(report_py),
+         "--vulnerabilities", str(vulnerabilities),
+         "--phase12", str(phase12),
+         "--project-name", proj.name,
+         "--output", str(report_html)],
+        ta_dir, v)
+    print(f"[phase7 ] → {report_html}\n")
+
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
