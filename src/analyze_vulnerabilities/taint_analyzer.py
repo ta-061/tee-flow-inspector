@@ -1,5 +1,4 @@
-# src/analyze_vulnerabilities/taint_analyzer.py
-# !/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 フェーズ6: LLMによるテイント解析と脆弱性検査
@@ -76,11 +75,11 @@ def extract_function_code(func_name: str, phase12_data: dict) -> str:
     return f"// Function {func_name} not found in phase12 data"
 
 
-def ask_llm(client, prompt: str) -> str:
-    """OpenAI ChatCompletion APIを呼び出して応答を返す"""
+def ask_llm(client, messages: list) -> str:
+    """OpenAI ChatCompletion APIを呼び出して応答を返す（会話履歴を保持）"""
     resp = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
+        messages=messages,
         temperature=0.0,
     )
     return resp.choices[0].message.content
@@ -96,6 +95,9 @@ def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict, l
         "taint_analysis": [],
         "vulnerability": None
     }
+    
+    # 会話履歴を保持するリスト
+    conversation_history = []
     
     # ログに解析開始を記録
     with open(log_file, "a", encoding="utf-8") as lf:
@@ -123,14 +125,20 @@ def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict, l
             param_name = f"arg{vd['param_index']}" if i == len(chain) - 1 else "params"
             prompt = get_middle_prompt(func_name, param_name, code)
         
+        # 会話履歴にユーザーメッセージを追加
+        conversation_history.append({"role": "user", "content": prompt})
+        
         # ログにプロンプトを記録
         with open(log_file, "a", encoding="utf-8") as lf:
             lf.write(f"## Function {i+1}: {func_name}\n")
             lf.write("### Prompt:\n")
             lf.write(prompt + "\n\n")
         
-        # LLMに問い合わせ
-        response = ask_llm(client, prompt)
+        # LLMに問い合わせ（会話履歴全体を送信）
+        response = ask_llm(client, conversation_history)
+        
+        # 会話履歴にアシスタントの応答を追加
+        conversation_history.append({"role": "assistant", "content": response})
         
         # ログに応答を記録
         with open(log_file, "a", encoding="utf-8") as lf:
@@ -148,19 +156,23 @@ def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict, l
     taint_summary = "\n\n".join(taint_summaries)
     end_prompt = get_end_prompt(taint_summary)
     
+    # 会話履歴にエンドプロンプトを追加
+    conversation_history.append({"role": "user", "content": end_prompt})
+    
     # ログにエンドプロンプトを記録
     with open(log_file, "a", encoding="utf-8") as lf:
         lf.write("## Vulnerability Analysis\n")
         lf.write("### Prompt:\n")
         lf.write(end_prompt + "\n\n")
     
-    # LLMに脆弱性判定を依頼
-    vuln_response = ask_llm(client, end_prompt)
+    # LLMに脆弱性判定を依頼（会話履歴全体を送信）
+    vuln_response = ask_llm(client, conversation_history)
     
     # ログに応答を記録
     with open(log_file, "a", encoding="utf-8") as lf:
         lf.write("### Response:\n")
         lf.write(vuln_response + "\n\n")
+        lf.write(f"### Conversation turns: {len(conversation_history)}\n")
     
     results["vulnerability"] = vuln_response
     
