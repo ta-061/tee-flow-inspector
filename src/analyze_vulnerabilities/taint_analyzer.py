@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+# src/analyze_vulnerabilities/taint_analyzer.py
+# !/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 フェーズ6: LLMによるテイント解析と脆弱性検査
@@ -35,6 +36,7 @@ def init_client():
 def extract_function_code(func_name: str, phase12_data: dict) -> str:
     """
     フェーズ1-2の結果から関数のソースコードを抽出
+    外部関数の場合は、関数シグネチャと説明を生成
     """
     project_root = Path(phase12_data.get("project_root", ""))
     
@@ -45,7 +47,7 @@ def extract_function_code(func_name: str, phase12_data: dict) -> str:
             abs_path = (project_root / rel_path) if project_root else rel_path
             
             if not abs_path.exists():
-                return f"// Function {func_name} source not found"
+                return f"// Function {func_name} source file not found"
             
             # 関数の開始行から終了まで抽出
             lines = abs_path.read_text(encoding="utf-8").splitlines()
@@ -72,7 +74,46 @@ def extract_function_code(func_name: str, phase12_data: dict) -> str:
             
             return "\n".join(code_lines)
     
+    # 外部関数の場合は、その情報を提供
+    for func in phase12_data.get("external_declarations", []):
+        if func["name"] == func_name:
+            # 外部関数の場合は、関数の説明を生成
+            return f"""// External function: {func_name}
+// Declared in: {func.get('file', 'unknown')}
+// This is a TEE API function. Its implementation is not available in the source code.
+// 
+// Known behavior for {func_name}:
+{get_function_description(func_name)}
+"""
+    
     return f"// Function {func_name} not found in phase12 data"
+
+
+def get_function_description(func_name: str) -> str:
+    """
+    既知のTEE API関数の説明を提供
+    """
+    descriptions = {
+        "TEE_Malloc": """// TEE_Malloc(size_t size, uint32_t hint)
+// Allocates 'size' bytes of memory from the heap.
+// Returns: pointer to allocated memory or NULL if allocation fails.
+// Security consideration: If size is from untrusted input, it could lead to excessive memory allocation.""",
+        
+        "TEE_Free": """// TEE_Free(void *buffer)
+// Frees previously allocated memory.
+// Security consideration: Double-free or use-after-free vulnerabilities if not properly managed.""",
+        
+        "TEE_MemMove": """// TEE_MemMove(void *dest, const void *src, size_t size)
+// Copies 'size' bytes from 'src' to 'dest'. Handles overlapping memory regions.
+// Security consideration: Buffer overflow if size is larger than destination buffer.""",
+        
+        "TEE_GenerateRandom": """// TEE_GenerateRandom(void *randomBuffer, size_t randomBufferLen)
+// Generates cryptographically secure random data.
+// Security consideration: If randomBufferLen exceeds the buffer size, it could cause buffer overflow.""",
+    }
+    
+    return descriptions.get(func_name, f"// No detailed description available for {func_name}")
+
 
 
 def ask_llm(client, messages: list) -> str:
