@@ -17,7 +17,6 @@ from pathlib import Path
 from datetime import datetime
 import html
 import re
-import ast
 
 # -----------------------------------------------------------------------------
 # 1) 外部テンプレートを読み込む
@@ -97,7 +96,7 @@ def format_chat_history(conv: list[dict]) -> str:
 # -----------------------------------------------------------------------------
 # 3) taint_analysis_log.txt を解析
 # -----------------------------------------------------------------------------
-def parse_taint_log(path: Path) -> dict:
+def parse_taint_log(path: Path, debug: bool = False) -> dict:
     """taint_analysis_log.txtから対話履歴を解析"""
     if not path.exists():
         return {}
@@ -111,34 +110,44 @@ def parse_taint_log(path: Path) -> dict:
     lines = log_content.split('\n')
     i = 0
     
+    if debug:
+        print(f"[DEBUG] Total lines: {len(lines)}")
+    
     while i < len(lines):
         line = lines[i]
         
-        # チェーンの開始を検出
+        # チェーンの開始を検出 (コロン直後にスペースの有無を問わずマッチ)
         if line.startswith("Analyzing chain:"):
-            # まず前のチェーンを保存
             if current_chain and current_conversation:
                 conversations[current_chain] = current_conversation
-            # 生文字列をリストに変換してから " -> " で連結
-            raw = line.replace("Analyzing chain:", "").strip()
-            try:
-                funcs = ast.literal_eval(raw)
-                current_chain = " -> ".join(funcs)
-            except Exception:
-                # 万が一パースできなければ生文字列をキーに
-                current_chain = raw
+                if debug:
+                    print(f"[DEBUG] Saved chain: {current_chain} with {len(current_conversation)} messages")
+            # コロン以降を取り出して余白を除去
+            current_chain = line[len("Analyzing chain:"):].strip()
             current_conversation = []
             current_function = None
+            if debug:
+                print(f"[DEBUG] New chain: {current_chain}")
         
         # 関数の解析開始
         elif line.startswith("## Function"):
-            current_function = line.replace("##", "").strip()
+            current_function = line.replace("##", "").replace("Function", "Function").strip()
+            if debug:
+                print(f"[DEBUG] Function: {current_function}")
+        
+        # 脆弱性解析セクション
+        elif line == "## Vulnerability Analysis":
+            current_function = "Vulnerability Analysis"
+            if debug:
+                print(f"[DEBUG] Vulnerability Analysis section")
         
         # プロンプトの開始
         elif line == "### Prompt:":
             i += 1
             prompt_lines = []
-            while i < len(lines) and not lines[i].startswith("### Response:"):
+            while i < len(lines) and lines[i] != "### Response:":
+                if lines[i].startswith("Analyzing chain:"):
+                    break
                 if lines[i].strip():
                     prompt_lines.append(lines[i])
                 i += 1
@@ -149,15 +158,28 @@ def parse_taint_log(path: Path) -> dict:
                     "function": current_function,
                     "message": "\n".join(prompt_lines)
                 })
+                if debug:
+                    print(f"[DEBUG] Added user message: {len(prompt_lines)} lines")
+            continue  # i is already incremented
         
         # レスポンスの開始
         elif line == "### Response:":
             i += 1
             response_lines = []
-            while i < len(lines) and not lines[i].startswith("##") and not lines[i].startswith("==="):
-                if lines[i].strip() and not lines[i].startswith("### Conversation turns:"):
-                    response_lines.append(lines[i])
+            # レスポンスの終了条件を改善
+            while i < len(lines):
+                next_line = lines[i]
+                # 次のセクションの開始を検出
+                if (next_line.startswith("## Function") or 
+                    next_line.startswith("Analyzing chain:")):
+                    break
+                # 空行も含める（レスポンス内の段落区切りのため）
+                response_lines.append(next_line)
                 i += 1
+            
+            # 末尾の空行を除去
+            while response_lines and not response_lines[-1].strip():
+                response_lines.pop()
             
             if response_lines:
                 current_conversation.append({
@@ -165,17 +187,22 @@ def parse_taint_log(path: Path) -> dict:
                     "function": current_function,
                     "message": "\n".join(response_lines)
                 })
-            continue
-        
-        # 脆弱性解析セクション
-        elif line == "## Vulnerability Analysis":
-            current_function = "Vulnerability Analysis"
+                if debug:
+                    print(f"[DEBUG] Added assistant message: {len(response_lines)} lines")
+            continue  # i is already incremented
         
         i += 1
     
     # 最後のチェーンを保存
     if current_chain and current_conversation:
         conversations[current_chain] = current_conversation
+        if debug:
+            print(f"[DEBUG] Saved final chain: {current_chain} with {len(current_conversation)} messages")
+    
+    if debug:
+        print(f"[DEBUG] Total chains parsed: {len(conversations)}")
+        for chain, conv in conversations.items():
+            print(f"[DEBUG] Chain '{chain}': {len(conv)} messages")
     
     return conversations
 
@@ -226,16 +253,9 @@ def format_vulnerability(vuln: dict, idx: int, chat_hist: dict) -> str:
         parts.append('</div>')
     
     # AI対話履歴
-    key1 = " -> ".join(chain)
-    key2 = repr(chain)
-    conv = None
-    if chat_hist:
-        if key1 in chat_hist:
-            conv = chat_hist[key1]
-        elif key2 in chat_hist:
-            conv = chat_hist[key2]
-    if conv:
-        parts.append(format_chat_history(conv))
+    key = " -> ".join(chain)
+    if chat_hist and key in chat_hist:
+        parts.append(format_chat_history(chat_hist[key]))
     
     # メタ情報
     parts += [
@@ -291,12 +311,23 @@ def main():
     p.add_argument("--phase12", required=True, help="フェーズ1-2の結果JSON")
     p.add_argument("--project-name", required=True, help="プロジェクト名")
     p.add_argument("--output", required=True, help="出力HTMLファイル")
+    p.add_argument("--debug", action="store_true", help="デバッグ情報を表示")
     args = p.parse_args()
 
     vuln_data   = json.loads(Path(args.vulnerabilities).read_text("utf-8"))
     phase12_data= json.loads(Path(args.phase12).read_text("utf-8"))
     log_path    = Path(args.vulnerabilities).parent / "taint_analysis_log.txt"
-    chat_hist   = parse_taint_log(log_path) if log_path.exists() else {}
+    
+    if args.debug:
+        print(f"[DEBUG] Looking for log at: {log_path}")
+        print(f"[DEBUG] Log exists: {log_path.exists()}")
+    
+    chat_hist   = parse_taint_log(log_path, debug=args.debug) if log_path.exists() else {}
+    
+    if args.debug:
+        print(f"[DEBUG] Parsed conversations: {len(chat_hist)} chains")
+        for chain_name in chat_hist:
+            print(f"[DEBUG] Chain: {chain_name}")
 
     html_out = generate_report(vuln_data, phase12_data, args.project_name, chat_hist)
     out_path = Path(args.output)
@@ -307,6 +338,7 @@ def main():
     print(f"  検出脆弱性数: {len(vuln_data.get('vulnerabilities',[]))}")
     if log_path.exists():
         print(f"  AI対話履歴を含めました: {log_path}")
+        print(f"  対話チェーン数: {len(chat_hist)}")
 
 if __name__ == "__main__":
     main()
