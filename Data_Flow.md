@@ -1,96 +1,53 @@
 ```mermaid
 flowchart LR
-    subgraph "入力データ"
-        PROJ[プロジェクトディレクトリ]
-        SRC[*.c ソースファイル]
-        HDR[*.h ヘッダファイル]
-        DEVKIT[TA Dev Kit]
-        API[OpenAI API Key]
+    %% スタイル定義
+    classDef source fill:#bbdefb,stroke:#1565c0,stroke-width:2px
+    classDef phase fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px
+    classDef llm fill:#ffccbc,stroke:#d84315,stroke-width:2px
+    classDef output fill:#fff9c4,stroke:#f57f17,stroke-width:2px
+
+    %% ソースコード
+    SRC[ソースコード<br/>.c/.h]:::source
+
+    %% Phase 0-2
+    SRC --> P0[Phase 0<br/>ビルド]:::phase
+    P0 --> CCDB[compile_commands.json]
+    CCDB --> P12[Phase 1-2<br/>AST解析]:::phase
+    P12 --> P12JSON[ta_phase12.json]
+
+    %% Phase 3 (LLM)
+    P12JSON --> P3[Phase 3<br/>シンク特定]:::llm
+    P3 --> SINKS[ta_sinks.json]
+    P3 -.-> LOG1[prompts_and_responses.txt]
+
+    %% Phase 3.4-3.7
+    SINKS --> P34[Phase 3.4-3.7<br/>静的解析]:::phase
+    CCDB --> P34
+    P34 --> VD[vulnerable_destinations.json]
+    P34 --> CG[call_graph.json]
+    P34 --> CHAINS[chains.json]
+
+    %% Phase 5
+    CHAINS --> P5[Phase 5<br/>フロー抽出]:::phase
+    P5 --> FLOWS[candidate_flows.json]
+
+    %% Phase 6 (LLM)
+    FLOWS --> P6[Phase 6<br/>テイント解析]:::llm
+    P12JSON --> P6
+    P6 --> VULN[vulnerabilities.json]
+    P6 -.-> LOG2[taint_analysis_log.txt]
+
+    %% Phase 7
+    VULN --> P7[Phase 7<br/>レポート生成]:::phase
+    P12JSON --> P7
+    LOG2 --> P7
+    P7 --> REPORT[vulnerability_report.html]:::output
+
+    %% 凡例
+    subgraph " "
+        L1[ソース]:::source
+        L2[解析フェーズ]:::phase
+        L3[LLM使用]:::llm
+        L4[最終出力]:::output
     end
-    
-    subgraph "Phase 0"
-        CCDB[compile_commands.json]
-        PROJ --> CCDB
-        SRC --> CCDB
-    end
-    
-    subgraph "Phase 1-2"
-        P12[ta_phase12.json<br/>- user_defined_functions<br/>- external_declarations]
-        CCDB --> P12
-        SRC --> P12
-        HDR --> P12
-        DEVKIT --> P12
-    end
-    
-    subgraph "Phase 3"
-        SINKS[ta_sinks.json<br/>- name<br/>- param_index]
-        P12 --> SINKS
-        API --> SINKS
-        PLOG1[prompts_and_responses.txt]
-        P12 --> PLOG1
-    end
-    
-    subgraph "Phase 3.4"
-        VD1[ta_vulnerable_destinations.json<br/>初版]
-        CCDB --> VD1
-        SINKS --> VD1
-        SRC --> VD1
-    end
-    
-    subgraph "Phase 3.5"
-        CG[ta_call_graph.json<br/>- caller<br/>- callee]
-        CCDB --> CG
-        SRC --> CG
-    end
-    
-    subgraph "Phase 3.6"
-        CHAINS[ta_chains.json<br/>- vd<br/>- chains]
-        CG --> CHAINS
-        VD1 --> CHAINS
-    end
-    
-    subgraph "Phase 3.7"
-        VD2[ta_vulnerable_destinations.json<br/>最終版<br/>+ chains]
-        SINKS --> VD2
-        CHAINS --> VD2
-        CCDB --> VD2
-    end
-    
-    subgraph "Phase 5"
-        FLOWS[ta_candidate_flows.json<br/>TA_InvokeCommandEntryPoint<br/>起点のフローのみ]
-        CHAINS --> FLOWS
-    end
-    
-    subgraph "Phase 6"
-        VULN[ta_vulnerabilities.json<br/>- taint_analysis<br/>- vulnerability<br/>- CWE]
-        FLOWS --> VULN
-        P12 --> VULN
-        API --> VULN
-        PLOG2[taint_analysis_log.txt]
-        FLOWS --> PLOG2
-    end
-    
-    subgraph "Phase 7"
-        REPORT[ta_vulnerability_report.html]
-        VULN --> REPORT
-        P12 --> REPORT
-    end
-    
-    style PROJ fill:#ffe0b2
-    style SRC fill:#ffe0b2
-    style HDR fill:#ffe0b2
-    style DEVKIT fill:#ffe0b2
-    style API fill:#ffe0b2
-    style CCDB fill:#e1f5fe
-    style P12 fill:#e8f5e9
-    style SINKS fill:#fff3e0
-    style VD1 fill:#fce4ec
-    style CG fill:#f3e5f5
-    style CHAINS fill:#e8eaf6
-    style VD2 fill:#fce4ec
-    style FLOWS fill:#e0f2f1
-    style VULN fill:#ffebee
-    style REPORT fill:#f1f8e9
-    style PLOG1 fill:#fff9c4
-    style PLOG2 fill:#fff9c4
 ```

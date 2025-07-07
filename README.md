@@ -12,12 +12,28 @@ python3 ./src/main.py \
   -p benchmark/hotp \
   -p benchmark/random \
   -p benchmark/secure_storage \
+  -p benchmark/secvideo_demo \
   -p benchmark/optee-fiovb \
   -p benchmark/optee-sdp \
   -p benchmark/basicAlg_use \
   -p benchmark/Lenet5_in_OPTEE \
+  -p benchmark/darknetz \
   --verbose 2>&1 | tee log.txt
 
+.
+├── acipher
+├── aes
+├── bad-partitioning
+├── basicAlg_use
+├── darknetz
+├── external_rk_tee_user
+├── hotp
+├── Lenet5_in_OPTEE
+├── optee-fiovb
+├── optee-sdp
+├── random
+├── secure_storage
+└── secvideo_demo
 
 | ディレクトリ                                                                  | Makefile / build.sh                      | 依存ツールチェーン                        | 典型的に必要なもの                                   | ひとこと判定                       |
 | ----------------------------------------------------------------------- | ---------------------------------------- | -------------------------------- | ------------------------------------------- | ---------------------------- |

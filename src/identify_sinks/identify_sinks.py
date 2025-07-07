@@ -97,22 +97,8 @@ def analyze_external_function_as_sink(client, func_name: str, log_file: Path) ->
     prompt = f"""As a security analyst performing taint analysis on TEE (Trusted Execution Environment) code, 
 analyze if the function `{func_name}` can be used as a sink (a potentially dangerous operation where tainted data could cause security issues).
 
-Consider functions that:
-- Perform memory operations (copy, move, allocation)
-- Handle string operations
-- Perform I/O operations
-- Execute cryptographic operations
-- Access persistent storage
-- Execute system calls
-
 If `{func_name}` is a sink, specify which parameter positions should be checked for tainted data.
 Format: (function_name; param_index)
-
-Common dangerous patterns:
-- Size parameters in memory operations (potential buffer overflow)
-- Destination buffers in copy operations (potential overwrite)
-- Format strings in print functions (format string vulnerability)
-- File paths or object IDs (path traversal)
 
 Answer "no" if the function is not a security-sensitive sink.
 """
