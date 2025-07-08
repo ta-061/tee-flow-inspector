@@ -70,6 +70,17 @@ Output:
 - CWE classification: [relevant CWE-ID and name]
 - Severity assessment: [High/Medium/Low]
 - Exploitation scenario: [brief description of how this could be exploited]
+
+- If tainted **size/length** values reach memory-allocation or copy APIs
+  (e.g., malloc/calloc/realloc/memcpy/memmove/TEE_Malloc/TEE_MemMove)
+  **without any boundary check**, classify it as *Input Validation Weakness*.
+
+- If **params[i].memref.buffer** or other shared memory is accessed
+  **without first deep-copying into a local TA buffer**, classify it as
+  *Direct Usage of Shared Memory*.
+
+- If data leaves the TEE to the normal world **without encryption or MAC**,
+  classify it as *Unencrypted Data Output*.
 """
 
 def get_start_prompt(source_function: str, param_name: str, code: str) -> str:

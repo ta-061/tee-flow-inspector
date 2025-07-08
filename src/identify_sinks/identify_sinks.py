@@ -13,6 +13,12 @@ import argparse
 from pathlib import Path
 import openai
 
+# ❶ 追加インポート
+SIZE_KEYWORDS_RE = re.compile(r'\b(len|size|length|count)\b', re.I)
+SIZE_DEPENDENT_FUNCS_RE = re.compile(
+    r'(malloc|calloc|realloc|memcpy|memmove|snprintf|TEE_Malloc|TEE_MemMove)',
+    re.I,
+)
 
 def init_client():
     """
@@ -121,10 +127,15 @@ Answer "no" if the function is not a security-sensitive sink.
     sinks = []
     for fn, idx in pattern.findall(resp):
         if fn == func_name:  # 分析対象の関数のみ
+            tags = []
+            # ❷ ─────────  size-dependent 判定（外部関数名だけで粗く判断）
+            if SIZE_DEPENDENT_FUNCS_RE.search(func_name):
+                tags.append("size_dependent")
             sinks.append({
                 "kind": "function",
                 "name": fn,
-                "param_index": int(idx)
+                "param_index": int(idx),
+                "tags": tags  # ❷ ─────────  タグを追加
             })
     
     return sinks
@@ -176,13 +187,23 @@ Answer "no" if no sinks are found.
         lf.write(resp + "\n\n")
 
     # レスポンスから関数名とパラメータインデックスを抽出
-    pattern = re.compile(r"\(([A-Za-z_][A-Za-z0-9_]*);\s*(\d+)\)")
+    pattern = re.compile(r"[(-]?\s*([A-Za-z_][A-Za-z0-9_]*)\s*;\s*(\d+)\s*[)-]?")
     sinks = []
     for fn, idx in pattern.findall(resp):
+        code_has_shared = bool(re.search(r'params\[\d\]\.memref\.buffer', code))
+        tags = []
+        # ❷ size-dependent 判定（関数名で推測）
+        if SIZE_DEPENDENT_FUNCS_RE.search(fn):
+            tags.append("size_dependent")
+        # 共有メモリをそのまま扱っている場合
+        if code_has_shared:
+            tags.append("shared_ptr")
+
         sinks.append({
             "kind": "function",
             "name": fn,
-            "param_index": int(idx)
+            "param_index": int(idx),
+            "tags": tags
         })
     
     return sinks

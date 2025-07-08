@@ -13,6 +13,7 @@
 import sys
 import json
 import argparse
+import re
 from pathlib import Path
 import openai
 
@@ -88,31 +89,23 @@ def extract_function_code(func_name: str, phase12_data: dict) -> str:
     
     return f"// Function {func_name} not found in phase12 data"
 
+GENERIC_DESCS = {
+    "memory-operation": "// Generic memory operation that can overflow if size is unchecked.",
+    "crypto": "// Cryptographic API that provides confidentiality/integrity.",
+    "rng": "// Random generator; misuse may cause entropy issues.",
+}
 
-def get_function_description(func_name: str) -> str:
-    """
-    既知のTEE API関数の説明を提供
-    """
-    descriptions = {
-        "TEE_Malloc": """// TEE_Malloc(size_t size, uint32_t hint)
-// Allocates 'size' bytes of memory from the heap.
-// Returns: pointer to allocated memory or NULL if allocation fails.
-// Security consideration: If size is from untrusted input, it could lead to excessive memory allocation.""",
-        
-        "TEE_Free": """// TEE_Free(void *buffer)
-// Frees previously allocated memory.
-// Security consideration: Double-free or use-after-free vulnerabilities if not properly managed.""",
-        
-        "TEE_MemMove": """// TEE_MemMove(void *dest, const void *src, size_t size)
-// Copies 'size' bytes from 'src' to 'dest'. Handles overlapping memory regions.
-// Security consideration: Buffer overflow if size is larger than destination buffer.""",
-        
-        "TEE_GenerateRandom": """// TEE_GenerateRandom(void *randomBuffer, size_t randomBufferLen)
-// Generates cryptographically secure random data.
-// Security consideration: If randomBufferLen exceeds the buffer size, it could cause buffer overflow.""",
-    }
-    
-    return descriptions.get(func_name, f"// No detailed description available for {func_name}")
+API_CATEGORIES = {
+    r"TEE_(Malloc|MemMove|Memcpy|MemFill|MemSet)": "memory-operation",
+    r"TEE_(Encrypt|Decrypt|ComputeMAC)": "crypto",
+    r"TEE_GenerateRandom": "rng",
+}
+
+def get_function_description(fn):
+    for pat, cat in API_CATEGORIES.items():
+        if re.fullmatch(pat, fn):
+            return GENERIC_DESCS[cat]
+    return "// Unknown external TEE API (opaque call)"
 
 
 
@@ -194,7 +187,10 @@ def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict, l
         taint_summaries.append(f"Function {func_name}: {response}")
     
     # エンドプロンプトで脆弱性を判定
-    taint_summary = "\n\n".join(taint_summaries)
+    taint_summary = (
+        f"{len(chain)} functions analysed; sink={vd['sink']} "
+        f"param={vd['param_index']} (tags={','.join(vd.get('tags', []))})"
+    )
     end_prompt = get_end_prompt(taint_summary)
     
     # 会話履歴にエンドプロンプトを追加

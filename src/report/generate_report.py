@@ -136,8 +136,8 @@ def parse_taint_log(path: Path, debug: bool = False) -> dict:
                 print(f"[DEBUG] Function: {current_function}")
         
         # 脆弱性解析セクション
-        elif line == "## Vulnerability Analysis":
-            current_function = "Vulnerability Analysis"
+        elif line.startswith("## Vulnerability Analysis"):
+            current_function = line.replace("##", "").replace("Vulnerability Analysis", "Vulnerability Analysis").strip()
             if debug:
                 print(f"[DEBUG] Vulnerability Analysis section")
         
