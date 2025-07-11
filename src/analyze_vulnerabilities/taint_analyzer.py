@@ -13,7 +13,6 @@
 import sys
 import json
 import argparse
-import re
 from pathlib import Path
 import openai
 
@@ -78,34 +77,11 @@ def extract_function_code(func_name: str, phase12_data: dict) -> str:
     # 外部関数の場合は、その情報を提供
     for func in phase12_data.get("external_declarations", []):
         if func["name"] == func_name:
-            # 外部関数の場合は、関数の説明を生成
-            return f"""// External function: {func_name}
-// Declared in: {func.get('file', 'unknown')}
-// This is a TEE API function. Its implementation is not available in the source code.
-// 
-// Known behavior for {func_name}:
-{get_function_description(func_name)}
-"""
-    
-    return f"// Function {func_name} not found in phase12 data"
+            # LATTE オリジナルと同じく、関数名だけ残す
+            return f"// External function: {func_name} (implementation unavailable)"
 
-GENERIC_DESCS = {
-    "memory-operation": "// Generic memory operation that can overflow if size is unchecked.",
-    "crypto": "// Cryptographic API that provides confidentiality/integrity.",
-    "rng": "// Random generator; misuse may cause entropy issues.",
-}
 
-API_CATEGORIES = {
-    r"TEE_(Malloc|MemMove|Memcpy|MemFill|MemSet)": "memory-operation",
-    r"TEE_(Encrypt|Decrypt|ComputeMAC)": "crypto",
-    r"TEE_GenerateRandom": "rng",
-}
 
-def get_function_description(fn):
-    for pat, cat in API_CATEGORIES.items():
-        if re.fullmatch(pat, fn):
-            return GENERIC_DESCS[cat]
-    return "// Unknown external TEE API (opaque call)"
 
 
 
@@ -119,7 +95,7 @@ def ask_llm(client, messages: list) -> str:
     return resp.choices[0].message.content
 
 
-def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict, log_file: Path) -> dict:
+def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict, log_file: Path, source_params: list[str] | None = None) -> dict:
     """
     単一のコールチェーンに対してテイント解析を実行
     """
@@ -149,10 +125,15 @@ def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict, l
         
         # プロンプトを生成
         if i == 0:
-            # スタートプロンプト（エントリポイント）
-            # TA_InvokeCommandEntryPointの場合、param_bufferがテイントソース
-            param_name = "param_buffer" if func_name == "TA_InvokeCommandEntryPoint" else "params"
-            prompt = get_start_prompt(func_name, param_name, code)
+            # スタートプロンプト …
+            if source_params:
+                param_names = ", ".join(source_params)
+            elif func_name == "TA_InvokeCommandEntryPoint":
+                param_names = "param_types, params"
+            else:
+                param_names = "params"
+
+            prompt = get_start_prompt(func_name, param_names, code)
         else:
             # 中間プロンプト（チェーンの途中の関数）
             # 前の関数から渡されるパラメータを推定
@@ -215,6 +196,21 @@ def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict, l
     
     return results
 
+def parse_vuln_response(resp: str) -> tuple[bool, dict]:
+    """
+    resp: LLM から返ってきたテキスト全体
+    戻り値: (is_vulnerable, parsed_json)
+    """
+    first_line = resp.strip().splitlines()[0]
+    try:
+        data = json.loads(first_line)
+    except json.JSONDecodeError:
+        # JSON で来なければ判定不能 → 非脆弱扱い
+        return False, {}
+
+    flag = str(data.get("vulnerability_found", "")).lower()
+    return flag == "yes", data
+
 
 def main():
     parser = argparse.ArgumentParser(description="フェーズ6: テイント解析と脆弱性検査")
@@ -252,10 +248,12 @@ def main():
             print(f"  [{i+1}/{len(flows_data)}] チェーン: {' -> '.join(chain)}")
             
             # テイント解析を実行
-            result = analyze_taint_flow(client, chain, vd, phase12_data, log_file)
-            
+            result = analyze_taint_flow(client, chain, vd, phase12_data, log_file, flow.get("source_params"))
             # 脆弱性が見つかった場合のみ結果に追加
-            if "yes" in result["vulnerability"].lower() or "vulnerability found: yes" in result["vulnerability"].lower():
+            is_vuln, meta = parse_vuln_response(result["vulnerability"])
+            if is_vuln:
+                # LLM が付けてきた追加情報を持たせても便利
+                result["meta"] = meta
                 vulnerabilities.append(result)
     
     # 結果を出力

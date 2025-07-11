@@ -100,13 +100,9 @@ def analyze_external_function_as_sink(client, func_name: str, log_file: Path) ->
     """
     外部関数（低レイヤAPI）がシンクかどうかLLMに判定させる
     """
-    prompt = f"""As a security analyst performing taint analysis on TEE (Trusted Execution Environment) code, 
-analyze if the function `{func_name}` can be used as a sink (a potentially dangerous operation where tainted data could cause security issues).
-
-If `{func_name}` is a sink, specify which parameter positions should be checked for tainted data.
-Format: (function_name; param_index)
-
-Answer "no" if the function is not a security-sensitive sink.
+    prompt = f"""As a program analyst, is it possible to use a call {func_name} as a sink when performing taint analysis? 
+If so which parameters need to be checked for taint. Please answer yes or no without additional explanation. 
+If yes, please indicate the corresponding parameters. For example, the system function can be used as a sink, and the first parameter needs to be checked as (system; 1).
 """
 
     # プロンプトをログに記録
@@ -134,8 +130,7 @@ Answer "no" if the function is not a security-sensitive sink.
             sinks.append({
                 "kind": "function",
                 "name": fn,
-                "param_index": int(idx),
-                "tags": tags  # ❷ ─────────  タグを追加
+                "param_index": int(idx)
             })
     
     return sinks
@@ -153,24 +148,15 @@ def analyze_user_function_for_sinks(client, func, project_root, external_funcs, 
     
     # 呼び出されている外部関数を特定
     called_external_funcs = [f for f in called_functions if f in external_funcs]
-    
-    prompt = f"""As a security analyst performing taint analysis, analyze the function `{func['name']}`.
 
-This function calls the following external functions: {', '.join(called_external_funcs) if called_external_funcs else 'none'}
-
-Analyze which functions (including both this function itself and the functions it calls) can be sinks where tainted data could cause security vulnerabilities.
+    prompt = f"""As a program analyst, is it possible to use a call {func['name']} as a sink when performing taint analysis? 
+If so which parameters need to be checked for taint. Please answer yes or no without additional explanation. 
+If yes, please indicate the corresponding parameters. For example, the system function can be used as a sink, and the first parameter needs to be checked as (system; 1).
 
 Function implementation:
 ```c
 {code}
 ```
-
-For each sink, specify: (function_name; param_index)
-Include:
-1. If this function itself is a sink, specify its vulnerable parameters
-2. For each external function call that is a sink, specify which parameters are vulnerable
-
-Answer "no" if no sinks are found.
 """
 
     # プロンプトをログに記録
@@ -187,7 +173,8 @@ Answer "no" if no sinks are found.
         lf.write(resp + "\n\n")
 
     # レスポンスから関数名とパラメータインデックスを抽出
-    pattern = re.compile(r"[(-]?\s*([A-Za-z_][A-Za-z0-9_]*)\s*;\s*(\d+)\s*[)-]?")
+    pattern = re.compile(r"^\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*;\s*(\d+)\s*\)$", re.MULTILINE)
+
     sinks = []
     for fn, idx in pattern.findall(resp):
         code_has_shared = bool(re.search(r'params\[\d\]\.memref\.buffer', code))
@@ -233,20 +220,25 @@ def main():
     external_funcs = {func["name"] for func in phase12.get("external_declarations", [])}
     
     all_sinks = []
-
-    # ステップ1: ユーザ定義関数を分析（関数自体と、その中で呼ばれる外部関数）
-    print("[identify_sinks] ユーザ定義関数を分析中...")
+    # ユーザ定義関数を除外するためのセット
+    skip_user_funcs: set[str] = {
+        "TA_CreateEntryPoint",
+        "TA_DestroyEntryPoint",
+        "TA_InvokeCommandEntryPoint",
+        "TA_OpenSessionEntryPoint",
+        "TA_CloseSessionEntryPoint",
+    }
+    # ステップ1: ユーザ定義関数を「走査」して、呼び出されている外部 API だけを集める
+    print("[identify_sinks] ユーザ関数を走査して外部 API を収集中...")
+    called_external_funcs: set[str] = set()
     for func in phase12.get("user_defined_functions", []):
-        sinks = analyze_user_function_for_sinks(client, func, project_root, external_funcs, log_file)
-        all_sinks.extend(sinks)
-
-    # ステップ2: ユーザ定義関数から呼ばれている外部関数を収集
-    called_external_funcs = set()
-    for func in phase12.get("user_defined_functions", []):
+        if func["name"] in skip_user_funcs:
+            continue
         func["project_root"] = str(project_root)
         code = extract_function_code(func)
-        called_functions = extract_called_functions(code)
-        called_external_funcs.update(f for f in called_functions if f in external_funcs)
+        for callee in extract_called_functions(code):
+            if callee in external_funcs:
+                called_external_funcs.add(callee)
 
     # ステップ3: 呼ばれている外部関数を個別に分析
     print(f"[identify_sinks] {len(called_external_funcs)} 個の外部関数を分析中...")
@@ -261,6 +253,9 @@ def main():
     unique_sinks = []
     seen = set()
     for sink in all_sinks:
+        # 外部 API 以外は捨てる
+        if sink["name"] not in external_funcs:
+            continue
         key = (sink["name"], sink["param_index"])
         if key not in seen:
             seen.add(key)
