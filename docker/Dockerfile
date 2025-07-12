@@ -3,7 +3,6 @@
 ###############################################################################
 # ベース ─ マルチアーキ対応                                                     #
 ###############################################################################
-# VS Code / buildx から渡ってくる TARGETPLATFORM に合わせて自動切替
 ARG TARGETPLATFORM
 FROM --platform=${TARGETPLATFORM} ubuntu:22.04
 
@@ -11,7 +10,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8
 
 ###############################################################################
-# LLVM 18 リポジトリの追加（apt-key 非推奨対策として signed-by を使用）        #
+# LLVM 14 リポジトリの追加
 ###############################################################################
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -19,18 +18,18 @@ RUN apt-get update && \
     curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
       | gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg && \
     echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] \
-      http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-18 main" \
-      > /etc/apt/sources.list.d/llvm18.list
+      http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-14 main" \
+      > /etc/apt/sources.list.d/llvm14.list
 
 ###############################################################################
-# 基本ツール & LLVM 18
+# 基本ツール & LLVM 14
 ###############################################################################
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential git ca-certificates curl bash-completion \
         python3 python3-venv python3-pip \
         python-is-python3 \
-        clang-18 clang-tools-18 llvm-18-dev lld-18 \
-        libclang-18-dev python3-clang-18 \
+        clang-14 clang-tools-14 llvm-14-dev lld-14 \
+        libclang-14-dev python3-clang-14 \
         cmake bear \
         # --- arm-hf クロス toolchain ---
         gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
@@ -44,32 +43,34 @@ ENV CROSS_COMPILE=arm-linux-gnueabihf-
 ENV CC=${CROSS_COMPILE}gcc
 
 # libclang のバージョンリネーム対応
-RUN ln -sf /usr/lib/llvm-18/lib/libclang-18.so /usr/lib/llvm-18/lib/libclang.so || true
-RUN echo /usr/lib/llvm-18/lib > /etc/ld.so.conf.d/llvm18.conf \
+RUN ln -sf /usr/lib/llvm-14/lib/libclang-14.so /usr/lib/llvm-14/lib/libclang.so || true
+RUN echo /usr/lib/llvm-14/lib > /etc/ld.so.conf.d/llvm14.conf \
  && ldconfig
 
-ENV LD_LIBRARY_PATH=/usr/lib/llvm-18/lib:$LD_LIBRARY_PATH
-###############################################################################
-# Python 依存ライブラリ
-###############################################################################
-RUN python3 -m pip install --no-cache-dir \
-    llvmlite \
-    networkx \
-    pytest \
-    rich
+# clang のバージョンリネーム対応
+RUN ln -s /usr/bin/clang-14 /usr/bin/clang \
+ && ln -s /usr/bin/clang++-14 /usr/bin/clang++
+
+ENV LD_LIBRARY_PATH=/usr/lib/llvm-14/lib:$LD_LIBRARY_PATH
 
 ###############################################################################
-# 作業ディレクトリ & エントリポイント                                           #
+# Python 依存ライブラリ (LLVM 14対応版)
+###############################################################################
+RUN python3 -m pip install --no-cache-dir \
+    llvmlite==0.39.1 \
+    networkx \
+    pytest \
+    rich \
+    openai>=1.88.0 \
+    pycryptodome>=3.23.0
+
+###############################################################################
+# 作業ディレクトリ & エントリポイント
 ###############################################################################
 WORKDIR /workspace
 
-# 独自スクリプトで初期化したい場合は /docker/entrypoint.sh を用意
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint
 RUN chmod +x /usr/local/bin/entrypoint
 
-COPY docker/requirements.txt .
-RUN pip install -r requirements.txt
-
 ENTRYPOINT ["/usr/local/bin/entrypoint"]
-# DevContainer が停止しないようデフォルトは無限スリープ
 CMD ["sleep", "infinity"]

@@ -4,12 +4,61 @@
 build.py
 ========
 * OP‑TEE TA プロジェクトをビルドし、compile_commands.json を確保するユーティリティ。
-* 失敗しても dummy DB を生成して返すので、後段の解析が止まらない。
+* LLVM 14対応版
 """
 from __future__ import annotations
 import json, subprocess
 from pathlib import Path
 from typing import List
+import shlex
+# ---------------------------------------------------------------------------
+# LLVM-IR (.ll) 生成
+# ---------------------------------------------------------------------------
+# LLVM 14の場合はclang-14を使用
+CLANG = Path("/usr/bin/clang-14")
+
+def _clang_cmd(src: Path, out: Path, incs: List[str]) -> List[str]:
+    return [
+        str(CLANG), "-emit-llvm", "-S", "-g",
+        *(f"-I{inc}" for inc in incs),
+        "-o", str(out), str(src),
+    ]
+
+
+def generate_ll_files(db_path: Path, llvm_dir: Path,
+                      devkit: Path | None, verbose: bool):
+    llvm_dir.mkdir(exist_ok=True)
+    entries = json.loads(db_path.read_text())
+
+    # include パス収集
+    incs: set[str] = set()
+    for ent in entries:
+        for tok in shlex.split(" ".join(ent.get("arguments") or ent.get("command"))):
+            if tok.startswith("-I"):
+                incs.add(tok[2:])
+    if devkit:
+        incs.add(f"{devkit}/include")
+
+    for ent in entries:
+        src = Path(ent["file"])
+        ll  = llvm_dir / (src.stem + ".ll")
+        if ll.exists() and ll.stat().st_mtime >= src.stat().st_mtime:
+            continue            # up-to-date
+        cmd = _clang_cmd(src, ll, sorted(incs))
+        if verbose:
+            print("[LLVM] $", " ".join(cmd))
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"[LLVM] Error compiling {src.name}:")
+            print(f"  Command: {' '.join(cmd)}")
+            print(f"  stdout: {result.stdout}")
+            print(f"  stderr: {result.stderr}")
+            # エラーでも続行（後でフォールバック）
+        else:
+            if verbose:
+                print(f"[LLVM] Successfully generated {ll}")
+
+
 
 # ---------------------------------------------------------------------------
 # public API
@@ -41,8 +90,8 @@ def ensure_ta_db(ta_dir: Path, project_root: Path,
     ta_db = ta_dir / "compile_commands.json"
     ta_db.write_text(json.dumps(ta_entries, indent=2), encoding="utf-8")
     if verbose: print(f"[INFO] TA DB saved: {ta_db}  entries={len(ta_entries)}")
-    if devkit:
-        dummy_ok = True 
+    llvm_dir = ta_dir / "llvm_ir"
+    generate_ll_files(ta_db, llvm_dir, devkit, verbose)
     return ta_db
 
 # ---------------------------------------------------------------------------

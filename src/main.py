@@ -120,7 +120,8 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool):
     run([sys.executable, str(taint_py),
          "--flows", str(candidate_flows),
          "--phase12", str(phase12),
-         "--output", str(vulnerabilities)],
+         "--output", str(vulnerabilities),
+         "--llvm-dir", str(ta_dir / "llvm_ir")],
         ta_dir, v)
     print(f"[phase6 ] → {vulnerabilities}\n")
 

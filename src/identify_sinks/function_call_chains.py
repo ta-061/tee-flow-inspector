@@ -34,18 +34,22 @@ def build_reverse_graph(edges: list[dict]) -> dict[str, list[str]]:
             rev[callee].append(caller)
     return rev
 
+MAX_DEPTH = 10
+
 def get_chains(rev_graph: dict[str, list[str]], func: str) -> list[list[str]]:
     chains: list[list[str]] = []
     def dfs(current: str, path: list[str]):
+        # 深さチェック
+        if len(path) > MAX_DEPTH:
+            return
         callers = rev_graph.get(current, [])
         if not callers:
-            # エントリポイントまで到達
             chains.append(path.copy())
-        else:
-            for caller in callers:
-                if caller in path:
-                    continue  # 循環防止
-                dfs(caller, [caller] + path)
+            return
+        for caller in callers:
+            if caller in path:
+                continue
+            dfs(caller, [caller] + path)
     dfs(func, [func])
     return chains
 

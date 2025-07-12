@@ -171,7 +171,9 @@ def parse_taint_log(path: Path, debug: bool = False) -> dict:
                 next_line = lines[i]
                 # 次のセクションの開始を検出
                 if (next_line.startswith("## Function") or 
-                    next_line.startswith("Analyzing chain:")):
+                    next_line.startswith("Analyzing chain:") or
+                    next_line.startswith("### Prompt") or 
+                    next_line.startswith("## Vulnerability Analysis")):
                     break
                 # 空行も含める（レスポンス内の段落区切りのため）
                 response_lines.append(next_line)

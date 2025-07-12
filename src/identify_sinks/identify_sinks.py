@@ -1,3 +1,4 @@
+# identify_sinks/identify_sinks.py
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -72,16 +73,14 @@ def extract_called_functions(code: str) -> list[str]:
     """
     # 関数呼び出しパターン: 関数名(引数)
     # C言語の識別子: [A-Za-z_][A-Za-z0-9_]*
-    pattern = r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\('
+    pattern = re.compile(r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\(', re.MULTILINE)
     
     # コメントを除去（簡易的）
     code = re.sub(r'//.*$', '', code, flags=re.MULTILINE)  # 単一行コメント
     code = re.sub(r'/\*.*?\*/', '', code, flags=re.DOTALL)  # 複数行コメント
-    
-    matches = re.findall(pattern, code)
-    
+        
     # 重複を除去して返す
-    return list(set(matches))
+    return list(set(re.findall(pattern, code)))
 
 
 def ask_llm(client, prompt):
@@ -123,16 +122,11 @@ If yes, please indicate the corresponding parameters. For example, the system fu
     sinks = []
     for fn, idx in pattern.findall(resp):
         if fn == func_name:  # 分析対象の関数のみ
-            tags = []
-            # ❷ ─────────  size-dependent 判定（外部関数名だけで粗く判断）
-            if SIZE_DEPENDENT_FUNCS_RE.search(func_name):
-                tags.append("size_dependent")
             sinks.append({
                 "kind": "function",
                 "name": fn,
                 "param_index": int(idx)
             })
-    
     return sinks
 
 

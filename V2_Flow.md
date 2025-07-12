@@ -16,6 +16,7 @@ flowchart TB
     subgraph "Phase 0: ビルド準備"
         Phase0[build.py]:::phase --> TryBuild{ビルド試行<br/>bear -- make}
         TryBuild -->|成功| GenDB[compile_commands.json<br/>生成]
+        TryBuild -->|成功| llDB[プロジェクト名_example_ta.ll<br/>生成]
         TryBuild -->|失敗| GenDummy[ダミーDB生成<br/>全.cファイルから]
         GenDB --> DB[(compile_commands.json)]:::output
         GenDummy --> DB
@@ -80,6 +81,7 @@ flowchart TB
     P12JSON --> Phase6
     subgraph "Phase 6: LLMテイント解析"
         Phase6[taint_analyzer.py]:::phase --> InitChat[会話履歴初期化]
+        llDB --> Phase6
         
         InitChat --> StartPrompt[スタートプロンプト<br/>エントリポイント解析]
         StartPrompt --> LLM3{LLM対話<br/>GPT-4o-mini}:::llm
