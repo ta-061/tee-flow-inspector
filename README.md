@@ -46,3 +46,43 @@ python3 ./src/main.py \
 | **secvideo\_demo**                                                      | `ta/Makefile` のみ                         | dev-kit                          | 同上                                          | **◯**                        |
 | **optee-sdp**                                                           | `ta/Makefile` が **TA\_DEV\_KIT\_DIR 依存** | dev-kit を必ず指定                    | `export TA_DEV_KIT_DIR=...` → `make -C ta`  | **△** Dev-kit が無いと空ビルド       |
 | **external\_rk\_tee\_user**                                             | `ta/` に **ソース無し・prebuilt .bin**          | —                                | ―                                           | **✕** TA の再ビルド不可（署名済みバイナリのみ） |
+
+
+graph TD
+    A(TA_InvokeCommandEntryPoint) --> B1(input);
+    A --> B2(output)
+    A --> B3(shared_memory)
+
+    B1 --> C1(produce_i1)
+    B1 --> C2(produce_i0)
+
+    C1 --"24"--> D1(TEE_Malloc)
+    C2 --> D2(produce_i2)
+    D2 --"24"--> E1(TEE_Malloc)
+    D2 --"36"--> E2(TEE_MemMove)
+
+    B2 --> C3(produce_3)
+    B2 --> C4(produce)
+
+    C3 --"4"--> D3(strlen)
+    C3 --"34"--> D4(snprintf)
+    C3 --"36"--> D5(TEE_MemMove)
+    C4 --> D6(produce_2)
+    D6 --"4"--> E3(strlen)
+    D6 --"34"--> E4(snprintf)
+    D6 --"36"--> E5(TEE_MemMove)
+    
+    B3 --"2"--> C5(TEE_Wait)
+    B3 --> C6(produce_s3)
+    B3 --> C7(produce_s)
+
+    C6 --"26"--> D7(strcmp)
+    C6 --"27"--> D8(TEE_MemCompare)
+    C6 --"36"--> D9(TEE_MemMove)
+    C7 --"36" ---> D11(TEE_MemMove)
+    C7 --> D10(produce_s2)
+    D10 --"26"--> E6(strcmp)
+    D10 --"27"--> E7(TEE_MemCompare)
+
+
+    

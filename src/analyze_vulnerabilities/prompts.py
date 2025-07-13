@@ -18,7 +18,7 @@ MIDDLE_PROMPT_TEMPLATE = """Based on the above taint analysis results, continue 
 </Code to be analyzed>
 """
 
-END_PROMPT_TEMPLATE = """{taint_summary}
+END_PROMPT_TEMPLATE = """
 Based on the above taint analysis results, analyze whether the code has vulnerabilities. If it does, explain what kind of vulnerability it is based on CWE.
 **Output format**
 - 1st line: {{ "vulnerability_found": "yes" }} or {{ "vulnerability_found": "no" }}

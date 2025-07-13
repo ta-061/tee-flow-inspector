@@ -129,7 +129,7 @@ def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict, l
             if source_params:
                 param_names = ", ".join(source_params)
             elif func_name == "TA_InvokeCommandEntryPoint":
-                param_names = "param_types, params"
+                param_names = "param_types>, <params"
             else:
                 param_names = "params"
 
