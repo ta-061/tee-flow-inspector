@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+# /src/identify_sinks/identify_sinks.py
+# !/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 フェーズ3: フェーズ1-2の結果を読み込んで、呼び出されている外部 API だけをLLMに問い、シンク候補をJSON出力する
@@ -69,35 +70,53 @@ def ask_llm(client, prompt: str) -> str:
 def analyze_external_function_as_sink(client, func_name: str, log_file: Path) -> list[dict]:
     prompt = f"""You are an expert in static taint analysis for TA (Trusted Application) code running in a TEE (Trusted Execution Environment).
 
-We are specifically interested in identifying if the external API function `{func_name}` can be a sink based on these exact vulnerability patterns:
-① Unencrypted output to Normal World: data sent without encryption.
-② Missing input validation: inputs accepted without boundary or format checks.
-③ Shared memory shallow copy: direct use of shared buffers without performing a deep copy.
+We are specifically interested in identifying if the external API function `{func_name}` can be a sink based on these vulnerability patterns:
+
+① Unencrypted output to Normal World: Functions that could potentially write data to shared memory buffers or other interfaces accessible by the Normal World.
+
+② Missing input validation: Functions that accept size/length parameters or pointers that could be manipulated to cause buffer overflows, out-of-bounds access, or other memory corruption issues.
+
+③ Shared memory operations: Functions that copy data to/from memory regions, especially if the destination could be shared with the Normal World.
+
+Consider the function from a taint analysis perspective - if tainted data reaches this function, could it lead to security issues?
+
+Common sink functions in TEE context include:
+- Memory operations: memcpy, memmove, strcpy, strncpy, etc.
+- Output functions: printf family, write operations
+- Random number generation that writes to buffers
+- Any function that could expose data or be exploited with malicious input
 
 Perform a detailed analysis following these steps:
 1. Briefly explain the purpose of the function `{func_name}`.
-2. Consider each of the three vulnerability patterns individually and explicitly reason whether the function matches each pattern.
-3. Clearly state your reasoning for each pattern analysis step.
+2. Consider each of the three vulnerability patterns and reason whether the function could be exploited if it receives tainted data.
+3. Be practical - consider how the function is typically used in TEE applications.
 
-Finally, if you determine the function `{func_name}` is indeed a sink according to any of the vulnerability patterns, list each vulnerability separately in exactly the following format:
+Finally, if you determine the function `{func_name}` could be a sink, list each potential vulnerability in exactly the following format:
 (function: FUNCTION_NAME; param_index: PARAM_INDEX; reason: REASON)
 
+For functions with multiple parameters that could be problematic, list each separately.
+Common parameter indices:
+- For memory operations: 0 (destination), 1 (source), 2 (size)
+- For output functions: 0 (format string), 1+ (data parameters)
+
 If none of the vulnerability patterns apply, clearly state "no vulnerabilities found."
-
-Provide clear reasoning steps before giving your final formatted output.
-
 """
+    
     with open(log_file, "a", encoding="utf-8") as lf:
         lf.write(f"# External Function: {func_name}\n## Prompt:\n{prompt}\n")
+    
     resp = ask_llm(client, prompt)
     clean = re.sub(r"^```(?:json)?\s*|\s*```$", "", resp.strip(), flags=re.MULTILINE)
+    
     with open(log_file, "a", encoding="utf-8") as lf:
         lf.write(f"## Response:\n{resp}\n\n")
+    
     pattern = re.compile(
         r"\(\s*function:\s*([A-Za-z_][A-Za-z0-9_]*)\s*;\s*"
         r"param_index:\s*(\d+)\s*;\s*"
         r"reason:\s*([^)]*?)\s*\)"
     )
+    
     sinks = []
     for fn, idx, reason in pattern.findall(clean):
         if fn == func_name:
@@ -107,6 +126,7 @@ Provide clear reasoning steps before giving your final formatted output.
                 "param_index": int(idx),
                 "reason": reason
             })
+    
     return sinks
 
 
@@ -115,14 +135,17 @@ def main():
     parser.add_argument("-i", "--input", required=True, help="フェーズ1-2 JSON 結果ファイル")
     parser.add_argument("-o", "--output", required=True, help="出力 ta_sinks.json パス")
     args = parser.parse_args()
+    
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     log_file = out_path.parent / "prompts_and_responses.txt"
     log_file.write_text("", encoding="utf-8")
+    
     client = init_client()
     phase12 = json.loads(Path(args.input).read_text(encoding="utf-8"))
     project_root = Path(phase12.get("project_root", ""))
     external_funcs = {f["name"] for f in phase12.get("external_declarations", [])}
+    
     # ユーザ定義関数を除外するためのセット
     skip_user_funcs: set[str] = {
         "TA_CreateEntryPoint",
@@ -131,6 +154,7 @@ def main():
         "TA_OpenSessionEntryPoint",
         "TA_CloseSessionEntryPoint",
     }
+    
     # 呼び出し済み外部 API のみ抽出
     print("呼び出し済み外部 API を抽出中...")
     called_external_funcs = set()
@@ -141,7 +165,9 @@ def main():
         for callee in extract_called_functions(code):
             if callee in external_funcs:
                 called_external_funcs.add(callee)
+    
     print(f"外部 API 関数: {len(called_external_funcs)} 個")
+    
     # 解析
     print("外部 API 関数をシンクとして解析中...")
     all_sinks = []
@@ -150,6 +176,7 @@ def main():
         all_sinks.extend(sinks)
     
     print(f"抽出されたシンク候補: {len(all_sinks)} 個")
+    
     # 重複排除 & JSON出力
     unique = []
     seen = set()
@@ -158,6 +185,7 @@ def main():
         if key not in seen:
             seen.add(key)
             unique.append(s)
+    
     out_path.write_text(
         json.dumps({"sinks": unique}, ensure_ascii=False, indent=2),
         encoding="utf-8"

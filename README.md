@@ -17,23 +17,62 @@ python3 ./src/main.py \
   -p benchmark/optee-sdp \
   -p benchmark/basicAlg_use \
   -p benchmark/Lenet5_in_OPTEE \
-  -p benchmark/darknetz \
   --verbose 2>&1 | tee log.txt
 
+  -p benchmark/darknetz \
+
+tee-flow-inspector % tree -I "optee_client|optee_os|results|benchmark|answers"
 .
-├── acipher
-├── aes
-├── bad-partitioning
-├── basicAlg_use
-├── darknetz
-├── external_rk_tee_user
-├── hotp
-├── Lenet5_in_OPTEE
-├── optee-fiovb
-├── optee-sdp
-├── random
-├── secure_storage
-└── secvideo_demo
+├── config.mk
+├── Data_Flow.md
+├── docker
+│   ├── Dockerfile
+│   ├── entrypoint.sh
+│   └── requirements.txt
+├── LLM_Flow.md
+├── log.txt
+├── README.md
+├── src
+│   ├── __pycache__
+│   │   └── build.cpython-310.pyc
+│   ├── analyze_vulnerabilities
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   │   └── prompts.cpython-310.pyc
+│   │   ├── prompts.py
+│   │   └── taint_analyzer.py
+│   ├── build.py
+│   ├── classify
+│   │   ├── __pycache__
+│   │   │   └── classifier.cpython-310.pyc
+│   │   └── classifier.py
+│   ├── identify_flows
+│   │   └── generate_candidate_flows.py
+│   ├── identify_sinks
+│   │   ├── extract_sink_calls.py
+│   │   ├── find_sink_calls.py
+│   │   ├── function_call_chains.py
+│   │   ├── generate_call_graph.py
+│   │   └── identify_sinks.py
+│   ├── main.py
+│   ├── parsing
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   │   ├── __init__.cpython-310.pyc
+│   │   │   ├── parse_utils.cpython-310.pyc
+│   │   │   └── parsing.cpython-310.pyc
+│   │   ├── parse_utils.py
+│   │   └── parsing.py
+│   └── report
+│       ├── __init__.py
+│       ├── generate_report.py
+│       └── html_template.html
+├── V1_Flow.md
+├── V2_Flow.md
+└── V3_Flow.md
+
+13 directories, 35 files
+
 
 | ディレクトリ                                                                  | Makefile / build.sh                      | 依存ツールチェーン                        | 典型的に必要なもの                                   | ひとこと判定                       |
 | ----------------------------------------------------------------------- | ---------------------------------------- | -------------------------------- | ------------------------------------------- | ---------------------------- |
