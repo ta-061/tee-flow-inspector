@@ -81,18 +81,40 @@ def extract_function_code(func_name: str, phase12_data: dict) -> str:
             return f"// External function: {func_name} (implementation unavailable)"
 
 
-
-
-
-
-def ask_llm(client, messages: list) -> str:
-    """OpenAI ChatCompletion APIを呼び出して応答を返す（会話履歴を保持）"""
-    resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=messages,
-        temperature=0.0,
-    )
-    return resp.choices[0].message.content
+def ask_llm(client, messages: list, max_retries: int = 3) -> str:
+    """OpenAI ChatCompletion APIを呼び出して応答を返す（エラーハンドリング付き）"""
+    for attempt in range(max_retries):
+        try:
+            # トークン数をチェック（概算）
+            total_tokens = sum(len(msg["content"]) for msg in messages) // 4
+            if total_tokens > 100000:  # 安全マージンを設定
+                print(f"Warning: Conversation too long ({total_tokens} tokens), truncating...")
+                # 最初のメッセージ（システムプロンプト）と最後の数個だけ保持
+                messages = messages[:1] + messages[-5:]
+            
+            resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                temperature=0.0,
+                timeout=60  # タイムアウトを設定
+            )
+            
+            content = resp.choices[0].message.content
+            if not content or content.strip() == "":
+                raise ValueError("Empty response from LLM")
+                
+            return content
+            
+        except Exception as e:
+            print(f"API call failed (attempt {attempt + 1}/{max_retries}): {e}")
+            if attempt == max_retries - 1:
+                return f"[ERROR] Failed to get LLM response after {max_retries} attempts: {e}"
+            
+            # 指数バックオフで再試行
+            import time
+            time.sleep(2 ** attempt)
+    
+    return "[ERROR] Maximum retries exceeded"
 
 
 def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict, log_file: Path, source_params: list[str] | None = None) -> dict:
@@ -127,11 +149,11 @@ def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict, l
         if i == 0:
             # スタートプロンプト …
             if source_params:
-                param_names = ", ".join(source_params)
+                param_names = ", ".join(f"<{p}>" for p in source_params)
             elif func_name == "TA_InvokeCommandEntryPoint":
-                param_names = "param_types>, <params"
+                param_names = "<param_types>, <params>"
             else:
-                param_names = "params"
+                param_names = "<params>"
 
             prompt = get_start_prompt(func_name, param_names, code)
         else:
@@ -158,7 +180,10 @@ def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict, l
         # ログに応答を記録
         with open(log_file, "a", encoding="utf-8") as lf:
             lf.write("### Response:\n")
-            lf.write(response + "\n\n")
+            if response and response.strip():
+                lf.write(response + "\n\n")
+            else:
+                lf.write("[NO RESPONSE OR EMPTY RESPONSE]\n\n")
         
         # 結果を保存
         results["taint_analysis"].append({
@@ -167,12 +192,7 @@ def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict, l
         })
         taint_summaries.append(f"Function {func_name}: {response}")
     
-    # エンドプロンプトで脆弱性を判定
-    taint_summary = (
-        f"{len(chain)} functions analysed; sink={vd['sink']} "
-        f"param={vd['param_index']} (tags={','.join(vd.get('tags', []))})"
-    )
-    end_prompt = get_end_prompt(taint_summary)
+    end_prompt = get_end_prompt()
     
     # 会話履歴にエンドプロンプトを追加
     conversation_history.append({"role": "user", "content": end_prompt})

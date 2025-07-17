@@ -9,13 +9,11 @@ As a program analyst, I give you snippets of Trusted Application C code, using <
 Output in the form of data flows.
 </Code to be analyzed>
 {code}
-</Code to be analyzed>
 """
 
 MIDDLE_PROMPT_TEMPLATE = """Based on the above taint analysis results, continue analyzing the function. Note the data aliases and tainted data operations. (Note the new taint source, <{source_function}>, and the <{param_name}> parameter marked as a taint label.)
 </Code to be analyzed>
 {code}
-</Code to be analyzed>
 """
 
 END_PROMPT_TEMPLATE = """
@@ -42,8 +40,6 @@ def get_middle_prompt(source_function: str, param_name: str, code: str) -> str:
         code=code
     )
 
-def get_end_prompt(taint_summary: str) -> str:
+def get_end_prompt() -> str:
     """エンドプロンプトを生成"""
-    return END_PROMPT_TEMPLATE.format(
-        taint_summary=taint_summary
-    )
+    return END_PROMPT_TEMPLATE.format()
