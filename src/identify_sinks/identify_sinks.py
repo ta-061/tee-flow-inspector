@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-フェーズ3: フェーズ1-2の結果を読み込んでシンク候補をLLMに聞き、結果を出力する
+フェーズ3: フェーズ1-2の結果を読み込んで、呼び出されている外部 API だけをLLMに問い、シンク候補をJSON出力する
 使い方:
   python identify_sinks.py -i /path/to/ta_phase12.json -o /path/to/ta_sinks.json
 """
@@ -13,17 +13,8 @@ import argparse
 from pathlib import Path
 import openai
 
-# ❶ 追加インポート
-SIZE_KEYWORDS_RE = re.compile(r'\b(len|size|length|count)\b', re.I)
-SIZE_DEPENDENT_FUNCS_RE = re.compile(
-    r'(malloc|calloc|realloc|memcpy|memmove|snprintf|TEE_Malloc|TEE_MemMove)',
-    re.I,
-)
 
 def init_client():
-    """
-    src/api_key.json から API キーを読み込み、openai.api_key にセットします
-    """
     keyfile = Path(__file__).resolve().parent.parent / "api_key.json"
     if not keyfile.exists():
         print(f"Error: API キー設定ファイルが見つかりません ({keyfile})", file=sys.stderr)
@@ -37,20 +28,14 @@ def init_client():
 
 
 def extract_function_code(func):
-    """
-    フェーズ1-2で得られた関数情報から、
-    関数シグネチャから対応する閉じ括弧までを抜き出します。
-    """
     project_root = Path(func.get("project_root", ""))
     rel = Path(func["file"])
     path = (project_root / rel) if project_root and not rel.is_absolute() else rel
-
     lines = path.read_text(encoding="utf-8").splitlines()
     start = func["line"] - 1
     snippet = []
     brace = 0
     recording = False
-
     for l in lines[start:]:
         snippet.append(l)
         if "{" in l and not recording:
@@ -62,32 +47,17 @@ def extract_function_code(func):
             brace -= l.count("}")
             if brace <= 0:
                 break
-
     return "\n".join(snippet)
 
 
 def extract_called_functions(code: str) -> list[str]:
-    """
-    コードから呼び出されている関数名を抽出（簡易的な正規表現ベース）
-    """
-    # 関数呼び出しパターン: 関数名(引数)
-    # C言語の識別子: [A-Za-z_][A-Za-z0-9_]*
     pattern = r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\('
-    
-    # コメントを除去（簡易的）
-    code = re.sub(r'//.*$', '', code, flags=re.MULTILINE)  # 単一行コメント
-    code = re.sub(r'/\*.*?\*/', '', code, flags=re.DOTALL)  # 複数行コメント
-    
-    matches = re.findall(pattern, code)
-    
-    # 重複を除去して返す
-    return list(set(matches))
+    code = re.sub(r'//.*$', '', code, flags=re.MULTILINE)
+    code = re.sub(r'/\*.*?\*/', '', code, flags=re.DOTALL)
+    return list(set(re.findall(pattern, code)))
 
 
-def ask_llm(client, prompt):
-    """
-    OpenAI ChatCompletion API を呼び出して応答を返します
-    """
+def ask_llm(client, prompt: str) -> str:
     resp = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
@@ -97,129 +67,62 @@ def ask_llm(client, prompt):
 
 
 def analyze_external_function_as_sink(client, func_name: str, log_file: Path) -> list[dict]:
-    """
-    外部関数（低レイヤAPI）がシンクかどうかLLMに判定させる
-    """
-    prompt = f"""As a program analyst, is it possible to use a call {func_name} as a sink when performing taint analysis? 
-If so which parameters need to be checked for taint. Please answer yes or no without additional explanation. 
-If yes, please indicate the corresponding parameters. For example, the system function can be used as a sink, and the first parameter needs to be checked as (system; 1).
+    prompt = f"""You are an expert in static taint analysis for TA (Trusted Application) code running in a TEE (Trusted Execution Environment).
+
+We are specifically interested in identifying if the external API function `{func_name}` can be a sink based on these exact vulnerability patterns:
+① Unencrypted output to Normal World: data sent without encryption.
+② Missing input validation: inputs accepted without boundary or format checks.
+③ Shared memory shallow copy: direct use of shared buffers without performing a deep copy.
+
+Perform a detailed analysis following these steps:
+1. Briefly explain the purpose of the function `{func_name}`.
+2. Consider each of the three vulnerability patterns individually and explicitly reason whether the function matches each pattern.
+3. Clearly state your reasoning for each pattern analysis step.
+
+Finally, if you determine the function `{func_name}` is indeed a sink according to any of the vulnerability patterns, list each vulnerability separately in exactly the following format:
+(function: FUNCTION_NAME; param_index: PARAM_INDEX; reason: REASON)
+
+If none of the vulnerability patterns apply, clearly state "no vulnerabilities found."
+
+Provide clear reasoning steps before giving your final formatted output.
+
 """
-
-    # プロンプトをログに記録
     with open(log_file, "a", encoding="utf-8") as lf:
-        lf.write(f"# External Function: {func_name}\n")
-        lf.write("## Prompt:\n")
-        lf.write(prompt + "\n\n")
-
+        lf.write(f"# External Function: {func_name}\n## Prompt:\n{prompt}\n")
     resp = ask_llm(client, prompt)
-
-    # 応答をログに記録
+    clean = re.sub(r"^```(?:json)?\s*|\s*```$", "", resp.strip(), flags=re.MULTILINE)
     with open(log_file, "a", encoding="utf-8") as lf:
-        lf.write("## Response:\n")
-        lf.write(resp + "\n\n")
-
-    # レスポンスから関数名とパラメータインデックスを抽出
-    pattern = re.compile(r"\(([A-Za-z_][A-Za-z0-9_]*);\s*(\d+)\)")
+        lf.write(f"## Response:\n{resp}\n\n")
+    pattern = re.compile(
+        r"\(\s*function:\s*([A-Za-z_][A-Za-z0-9_]*)\s*;\s*"
+        r"param_index:\s*(\d+)\s*;\s*"
+        r"reason:\s*([^)]*?)\s*\)"
+    )
     sinks = []
-    for fn, idx in pattern.findall(resp):
-        if fn == func_name:  # 分析対象の関数のみ
-            tags = []
-            # ❷ ─────────  size-dependent 判定（外部関数名だけで粗く判断）
-            if SIZE_DEPENDENT_FUNCS_RE.search(func_name):
-                tags.append("size_dependent")
+    for fn, idx, reason in pattern.findall(clean):
+        if fn == func_name:
             sinks.append({
                 "kind": "function",
                 "name": fn,
-                "param_index": int(idx)
+                "param_index": int(idx),
+                "reason": reason
             })
-    
-    return sinks
-
-
-def analyze_user_function_for_sinks(client, func, project_root, external_funcs, log_file: Path) -> list[dict]:
-    """
-    ユーザ定義関数内で呼び出される関数をシンクとして分析
-    """
-    func["project_root"] = str(project_root)
-    code = extract_function_code(func)
-    
-    # コード内で呼び出されている関数を抽出
-    called_functions = extract_called_functions(code)
-    
-    # 呼び出されている外部関数を特定
-    called_external_funcs = [f for f in called_functions if f in external_funcs]
-
-    prompt = f"""As a program analyst, is it possible to use a call {func['name']} as a sink when performing taint analysis? 
-If so which parameters need to be checked for taint. Please answer yes or no without additional explanation. 
-If yes, please indicate the corresponding parameters. For example, the system function can be used as a sink, and the first parameter needs to be checked as (system; 1).
-
-Function implementation:
-```c
-{code}
-```
-"""
-
-    # プロンプトをログに記録
-    with open(log_file, "a", encoding="utf-8") as lf:
-        lf.write(f"# User Function: {func['name']}\n")
-        lf.write("## Prompt:\n")
-        lf.write(prompt + "\n\n")
-
-    resp = ask_llm(client, prompt)
-
-    # 応答をログに記録
-    with open(log_file, "a", encoding="utf-8") as lf:
-        lf.write("## Response:\n")
-        lf.write(resp + "\n\n")
-
-    # レスポンスから関数名とパラメータインデックスを抽出
-    pattern = re.compile(r"^\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*;\s*(\d+)\s*\)$", re.MULTILINE)
-
-    sinks = []
-    for fn, idx in pattern.findall(resp):
-        code_has_shared = bool(re.search(r'params\[\d\]\.memref\.buffer', code))
-        tags = []
-        # ❷ size-dependent 判定（関数名で推測）
-        if SIZE_DEPENDENT_FUNCS_RE.search(fn):
-            tags.append("size_dependent")
-        # 共有メモリをそのまま扱っている場合
-        if code_has_shared:
-            tags.append("shared_ptr")
-
-        sinks.append({
-            "kind": "function",
-            "name": fn,
-            "param_index": int(idx),
-            "tags": tags
-        })
-    
     return sinks
 
 
 def main():
     parser = argparse.ArgumentParser(description="フェーズ3: シンク特定")
-    parser.add_argument("-i", "--input", required=True,
-                        help="フェーズ1-2の結果ファイル (JSON)")
-    parser.add_argument("-o", "--output", required=True,
-                        help="出力シンク候補ファイル (JSON)")
+    parser.add_argument("-i", "--input", required=True, help="フェーズ1-2 JSON 結果ファイル")
+    parser.add_argument("-o", "--output", required=True, help="出力 ta_sinks.json パス")
     args = parser.parse_args()
-
     out_path = Path(args.output)
-    out_dir = out_path.parent
-    out_dir.mkdir(parents=True, exist_ok=True)
-    log_file = out_dir / "prompts_and_responses.txt"
-
-    # 既存ログがあれば上書き（空ファイルで初期化）
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    log_file = out_path.parent / "prompts_and_responses.txt"
     log_file.write_text("", encoding="utf-8")
-
     client = init_client()
     phase12 = json.loads(Path(args.input).read_text(encoding="utf-8"))
-    project_root = Path(phase12["project_root"])
-    
-    # 外部関数のセットを作成
-    external_funcs = {func["name"] for func in phase12.get("external_declarations", [])}
-    
-    all_sinks = []
+    project_root = Path(phase12.get("project_root", ""))
+    external_funcs = {f["name"] for f in phase12.get("external_declarations", [])}
     # ユーザ定義関数を除外するためのセット
     skip_user_funcs: set[str] = {
         "TA_CreateEntryPoint",
@@ -228,48 +131,38 @@ def main():
         "TA_OpenSessionEntryPoint",
         "TA_CloseSessionEntryPoint",
     }
-    # ステップ1: ユーザ定義関数を「走査」して、呼び出されている外部 API だけを集める
-    print("[identify_sinks] ユーザ関数を走査して外部 API を収集中...")
-    called_external_funcs: set[str] = set()
+    # 呼び出し済み外部 API のみ抽出
+    print("呼び出し済み外部 API を抽出中...")
+    called_external_funcs = set()
     for func in phase12.get("user_defined_functions", []):
         if func["name"] in skip_user_funcs:
             continue
-        func["project_root"] = str(project_root)
         code = extract_function_code(func)
         for callee in extract_called_functions(code):
             if callee in external_funcs:
                 called_external_funcs.add(callee)
-
-    # ステップ3: 呼ばれている外部関数を個別に分析
-    print(f"[identify_sinks] {len(called_external_funcs)} 個の外部関数を分析中...")
-    analyzed_external = set()
-    for func_name in called_external_funcs:
-        if func_name not in analyzed_external:
-            analyzed_external.add(func_name)
-            sinks = analyze_external_function_as_sink(client, func_name, log_file)
-            all_sinks.extend(sinks)
-
-    # 重複を除去（同じ関数・パラメータの組み合わせ）
-    unique_sinks = []
+    print(f"外部 API 関数: {len(called_external_funcs)} 個")
+    # 解析
+    print("外部 API 関数をシンクとして解析中...")
+    all_sinks = []
+    for func_name in sorted(called_external_funcs):
+        sinks = analyze_external_function_as_sink(client, func_name, log_file)
+        all_sinks.extend(sinks)
+    
+    print(f"抽出されたシンク候補: {len(all_sinks)} 個")
+    # 重複排除 & JSON出力
+    unique = []
     seen = set()
-    for sink in all_sinks:
-        # 外部 API 以外は捨てる
-        if sink["name"] not in external_funcs:
-            continue
-        key = (sink["name"], sink["param_index"])
+    for s in all_sinks:
+        key = (s['name'], s['param_index'])
         if key not in seen:
             seen.add(key)
-            unique_sinks.append(sink)
-
-    # JSON 出力
+            unique.append(s)
     out_path.write_text(
-        json.dumps({"sinks": unique_sinks}, ensure_ascii=False, indent=2),
+        json.dumps({"sinks": unique}, ensure_ascii=False, indent=2),
         encoding="utf-8"
     )
-    
-    print(f"[identify_sinks] {len(unique_sinks)} 個のシンク候補を {args.output} に出力しました。")
-    print(f"  ログは {log_file} に保存されています。")
-
+    print(f"結果を {out_path} に保存しました")
 
 if __name__ == "__main__":
     main()
