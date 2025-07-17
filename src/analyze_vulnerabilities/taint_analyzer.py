@@ -117,9 +117,11 @@ def ask_llm(client, messages: list, max_retries: int = 3) -> str:
     return "[ERROR] Maximum retries exceeded"
 
 
-def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict, log_file: Path, source_params: list[str] | None = None) -> dict:
+def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict, 
+                      log_file: Path, source_params: list[str] | None = None) -> dict:
     """
     単一のコールチェーンに対してテイント解析を実行
+    param_indicesが存在する場合は、統合された解析として扱う
     """
     results = {
         "chain": chain,
@@ -131,11 +133,15 @@ def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict, l
     # 会話履歴を保持するリスト
     conversation_history = []
     
+    # 複数のparam_indexを処理
+    param_indices = vd.get("param_indices", [vd.get("param_index")])
+    param_info = f"param {param_indices[0]}" if len(param_indices) == 1 else f"params {param_indices}"
+    
     # ログに解析開始を記録
     with open(log_file, "a", encoding="utf-8") as lf:
         lf.write(f"\n{'='*80}\n")
         lf.write(f"Analyzing chain: {' -> '.join(chain)}\n")
-        lf.write(f"Sink: {vd['sink']} (param {vd['param_index']}) at {vd['file']}:{vd['line']}\n")
+        lf.write(f"Sink: {vd['sink']} ({param_info}) at {vd['file']}:{vd['line']}\n")
         lf.write(f"{'='*80}\n\n")
     
     # チェーンの各関数に対してテイント解析を実行
@@ -147,7 +153,7 @@ def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict, l
         
         # プロンプトを生成
         if i == 0:
-            # スタートプロンプト …
+            # スタートプロンプト
             if source_params:
                 param_names = ", ".join(f"<{p}>" for p in source_params)
             elif func_name == "TA_InvokeCommandEntryPoint":
@@ -157,10 +163,15 @@ def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict, l
 
             prompt = get_start_prompt(func_name, param_names, code)
         else:
-            # 中間プロンプト（チェーンの途中の関数）
-            # 前の関数から渡されるパラメータを推定
-            param_name = f"arg{vd['param_index']}" if i == len(chain) - 1 else "params"
-            prompt = get_middle_prompt(func_name, param_name, code)
+            # 中間プロンプト
+            # 最後の関数で複数のparam_indexを考慮
+            if i == len(chain) - 1 and len(param_indices) > 1:
+                # 複数のパラメータについて言及
+                param_name = f"parameters {param_indices}"
+                prompt = get_middle_prompt_multi_params(func_name, param_name, code)
+            else:
+                param_name = f"arg{vd['param_index']}" if i == len(chain) - 1 else "params"
+                prompt = get_middle_prompt(func_name, param_name, code)
         
         # 会話履歴にユーザーメッセージを追加
         conversation_history.append({"role": "user", "content": prompt})
@@ -171,7 +182,7 @@ def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict, l
             lf.write("### Prompt:\n")
             lf.write(prompt + "\n\n")
         
-        # LLMに問い合わせ（会話履歴全体を送信）
+        # LLMに問い合わせ
         response = ask_llm(client, conversation_history)
         
         # 会話履歴にアシスタントの応答を追加
@@ -192,6 +203,7 @@ def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict, l
         })
         taint_summaries.append(f"Function {func_name}: {response}")
     
+    # 脆弱性解析プロンプト
     end_prompt = get_end_prompt()
     
     # 会話履歴にエンドプロンプトを追加
@@ -203,7 +215,7 @@ def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict, l
         lf.write("### Prompt:\n")
         lf.write(end_prompt + "\n\n")
     
-    # LLMに脆弱性判定を依頼（会話履歴全体を送信）
+    # LLMに脆弱性判定を依頼
     vuln_response = ask_llm(client, conversation_history)
     
     # ログに応答を記録
@@ -221,15 +233,42 @@ def parse_vuln_response(resp: str) -> tuple[bool, dict]:
     resp: LLM から返ってきたテキスト全体
     戻り値: (is_vulnerable, parsed_json)
     """
-    first_line = resp.strip().splitlines()[0]
-    try:
-        data = json.loads(first_line)
-    except json.JSONDecodeError:
-        # JSON で来なければ判定不能 → 非脆弱扱い
-        return False, {}
-
-    flag = str(data.get("vulnerability_found", "")).lower()
-    return flag == "yes", data
+    import re
+    
+    # 複数の形式に対応
+    # 1. マークダウンコードブロック内のJSON
+    json_match = re.search(r'```(?:json)?\s*\n?({[^}]+})\s*\n?```', resp, re.DOTALL)
+    if json_match:
+        try:
+            data = json.loads(json_match.group(1))
+            flag = str(data.get("vulnerability_found", "")).lower()
+            return flag == "yes", data
+        except json.JSONDecodeError:
+            pass
+    
+    # 2. 最初の行に直接JSON
+    lines = resp.strip().splitlines()
+    if lines:
+        first_line = lines[0].strip()
+        try:
+            data = json.loads(first_line)
+            flag = str(data.get("vulnerability_found", "")).lower()
+            return flag == "yes", data
+        except json.JSONDecodeError:
+            pass
+    
+    # 3. テキスト内のどこかにJSON風の文字列
+    json_pattern = re.search(r'{\s*"vulnerability_found"\s*:\s*"(yes|no)"\s*}', resp)
+    if json_pattern:
+        try:
+            data = json.loads(json_pattern.group(0))
+            flag = str(data.get("vulnerability_found", "")).lower()
+            return flag == "yes", data
+        except json.JSONDecodeError:
+            pass
+    
+    # JSON が見つからない、または解析できない場合は非脆弱扱い
+    return False, {}
 
 
 def main():

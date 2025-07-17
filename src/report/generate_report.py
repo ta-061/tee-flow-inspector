@@ -213,11 +213,15 @@ def parse_taint_log(path: Path, debug: bool = False) -> dict:
 # 4) 各脆弱性を HTML にフォーマット
 # -----------------------------------------------------------------------------
 def format_vulnerability(vuln: dict, idx: int, chat_hist: dict) -> str:
-    vd   = vuln["vd"]
+    vd = vuln["vd"]
     text = vuln.get("vulnerability","")
     chain = vuln.get("chain", [])
     sec = extract_severity(text)
     cwe = extract_cwe(text)
+    
+    # 複数のparam_indexの処理
+    param_indices = vd.get("param_indices", [vd.get("param_index")])
+    param_info = f"パラメータ {param_indices[0]}" if len(param_indices) == 1 else f"パラメータ {param_indices}"
     
     parts = [
         '<div class="vulnerability">',
@@ -225,7 +229,7 @@ def format_vulnerability(vuln: dict, idx: int, chat_hist: dict) -> str:
         '<div>',
         f'<h3>脆弱性 #{idx+1}: {html.escape(vd["sink"])} ({cwe})</h3>',
         f'<p style="margin-top: 0.5rem; font-size: 0.9rem;">',
-        f'場所: {html.escape(vd["file"])}:{vd["line"]} (パラメータ: {vd["param_index"]})',
+        f'場所: {html.escape(vd["file"])}:{vd["line"]} ({param_info})',
         '</p>',
         '</div>',
         '<div style="display: flex; align-items: center; gap: 1rem;">',
