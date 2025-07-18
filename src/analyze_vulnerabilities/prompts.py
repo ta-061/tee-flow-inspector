@@ -46,24 +46,41 @@ Code to be analyzed:
 """
 
 END_PROMPT_TEMPLATE = """
-Based on the taint analysis above, determine if there are ACTUAL vulnerabilities in the analyzed code path.
+Based on the taint analysis above, decide if there is an ACTUAL vulnerability in the analyzed code path.
 
-Consider:
+## Decision Criteria
 1. Does tainted data actually reach a dangerous sink?
-2. Are there any validation or sanitization steps that mitigate the risk?
-3. Is the vulnerability exploitable in practice, not just in theory?
+2. Are there validation / sanitization steps that stop exploitation?
+3. Is it practically exploitable (not just theoretical)?
 
-Common vulnerability patterns to check:
-- CWE-787: Out-of-bounds Write (tainted size used in memory operations without validation)
-- CWE-20: Improper Input Validation (tainted input used without validation)
-- CWE-200: Information Exposure (sensitive data sent to Normal World without encryption)
+## Common Patterns
+- CWE-787: Out-of-bounds Write (tainted size → unchecked memory op)
+- CWE-20: Improper Input Validation
+- CWE-200: Information Exposure (unencrypted Normal World output)
 
-Output format:
-- 1st line: { "vulnerability_found": "yes" } or { "vulnerability_found": "no" }
-- If yes, explain:
-  - The specific vulnerability type (CWE-XXX)
-  - The exact code path that triggers it
-  - Why existing checks (if any) are insufficient
+---
+
+## OUTPUT CONTRACT (STRICT - FOLLOW EXACTLY)
+
+**Line 1 MUST be EXACTLY one of the following (no code fences, no backticks, no leading spaces):**
+{"vulnerability_found":"yes"}
+{"vulnerability_found":"no"}
+
+No other text on line 1.
+
+**Starting from line 2**, provide an explanation *only* if needed:
+- If "yes": briefly state CWE-XXX, exact code path, and why mitigations fail.
+- If "no": briefly state why the flow is safe (validation, unreachable sink, etc.).
+
+## Correct Examples
+
+Vulnerable:
+{"vulnerability_found":"yes"}
+CWE-787: Tainted length `len` used in `memcpy(dst, src, len)` without bounds check in `foo()->bar()->TEE_MemMove`.
+
+Not Vulnerable:
+{"vulnerability_found":"no"}
+Length validated (`len <= sizeof(buf)`) before copy; data encrypted before leaving secure world.
 """
 
 def get_start_prompt(source_function: str, param_name: str, code: str) -> str:
