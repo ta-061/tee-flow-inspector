@@ -1,5 +1,5 @@
 # src/analyze_vulnerabilities/taint_analyzer.py
-# !/usr/bin/env python3
+#あ !/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 フェーズ6: LLMによるテイント解析と脆弱性検査
@@ -16,7 +16,7 @@ import argparse
 from pathlib import Path
 import openai
 
-from prompts import get_start_prompt, get_middle_prompt, get_end_prompt
+from prompts import get_start_prompt, get_middle_prompt, get_end_prompt, get_middle_prompt_multi_params
 
 
 def init_client():
@@ -132,14 +132,12 @@ def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict,
     # 会話履歴を保持するリスト
     conversation_history = []
     
-    # 複数のparam_indexを処理（修正箇所）
-    # param_indicesフィールドを優先的に使用
+    # 複数のparam_indexを処理
     if "param_indices" in vd:
         param_indices = vd["param_indices"]
     elif "param_index" in vd:
         param_indices = [vd["param_index"]]
     else:
-        # どちらもない場合はエラー
         print(f"Warning: No param_index or param_indices found in vd: {vd}")
         param_indices = []
     
@@ -174,10 +172,18 @@ def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict,
             # 中間プロンプト
             # 最後の関数で複数のparam_indexを考慮
             if i == len(chain) - 1 and len(param_indices) > 1:
-                # 複数のパラメータについて言及（修正箇所）
+                # 複数のパラメータについて言及
                 param_names_list = [f"arg{idx}" for idx in param_indices]
                 param_name = f"parameters {', '.join(param_names_list)} (indices: {param_indices})"
-                prompt = get_middle_prompt_multi_params(func_name, param_name, code)
+                
+                # get_middle_prompt_multi_paramsが存在しない場合の代替案
+                try:
+                    prompt = get_middle_prompt_multi_params(func_name, param_name, code)
+                except NameError:
+                    # 関数が存在しない場合は、通常のget_middle_promptを使用し、
+                    # 複数パラメータの情報を追加
+                    prompt = get_middle_prompt(func_name, param_name, code)
+                    prompt += f"\n\nNote: Multiple parameters {param_names_list} may be affected by tainted data."
             else:
                 # 単一パラメータの場合
                 if i == len(chain) - 1 and param_indices:
@@ -216,8 +222,7 @@ def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict,
         })
         taint_summaries.append(f"Function {func_name}: {response}")
     
-    # 脆弱性解析プロンプト（修正案）
-    # 複数パラメータの場合は、それぞれについて言及するようにプロンプトを調整
+    # 脆弱性解析プロンプト
     if len(param_indices) > 1:
         additional_context = f"\nNote: Multiple parameters (indices: {param_indices}) of the sink function '{vd['sink']}' are potentially tainted. Analyze if ANY of these parameters could lead to a vulnerability."
         end_prompt = get_end_prompt() + additional_context
