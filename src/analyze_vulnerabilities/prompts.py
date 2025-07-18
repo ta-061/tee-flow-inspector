@@ -4,66 +4,32 @@
 prompts.py - LLMプロンプトテンプレート
 """
 
-START_PROMPT_TEMPLATE = """As a Trusted Application program analyst, analyze the following Trusted Application C code for taint data flow.
-
-Function to analyze: {source_function}
-Tainted parameters: {param_name}
-
-Instructions:
-1. Track how the tainted parameters flow through the function
-2. Identify any data aliases (e.g., pointers, struct members)
-3. Note any operations that propagate taint to new variables
-4. Consider both explicit data flow (assignments) and implicit flow (control dependencies)
-
-Code to analyze:
+START_PROMPT_TEMPLATE = """
+As a program analyst, I give you snippets of Trusted Application C code, using <{source_function}> as the taint source, and the <{param_name}> parameter marked as the taint label to extract the taint data flow. Pay attention to the data alias and tainted data operations.
+Output in the form of data flows.
+</Code to be analyzed>
 {code}
-
-Output a clear data flow analysis showing how tainted data propagates through the function.
+</Code to be analyzed>
 """
 
-MIDDLE_PROMPT_TEMPLATE = """Continue the taint analysis for the next function in the call chain.
-
-Function to analyze: {source_function}
-Tainted input: {param_name} (from previous function)
-
-Instructions:
-1. Track how the tainted input flows through this function
-2. Note any new taint propagation
-3. Identify if tainted data reaches any sinks
-
-Code to analyze:
+MIDDLE_PROMPT_TEMPLATE = """Based on the above taint analysis results, continue analyzing the function. Note the data aliases and tainted data operations. (Note the new taint source, <{source_function}>, and the <{param_name}> parameter marked as a taint label.)
+</Code to be analyzed>
 {code}
-
-Output the taint flow analysis for this function.
-"""
-
-MIDDLE_PROMPT_MULTI_PARAMS_TEMPLATE = """Continue to analyze function according to the above taint analysis results. Pay attention to the data alias and tainted data operations. 
-
-Note that multiple parameters {param_name} may be affected by tainted data. Specifically track how tainted data could reach each of these parameters.
-
-Code to be analyzed:
-{code}
+</Code to be analyzed>
 """
 
 END_PROMPT_TEMPLATE = """
-Based on the taint analysis above, determine if there are ACTUAL vulnerabilities in the analyzed code path.
+Based on the above taint analysis results, analyze whether the code has vulnerabilities. If it does, explain what kind of vulnerability it is based on CWE.
+**Output format**
+- 1st line: {{ "vulnerability_found": "yes" }} or {{ "vulnerability_found": "no" }}
+- 2nd line onwards (optional only if yes)
+- Do not add code fences or unnecessary pre- or post-phrases
+"""
 
-Consider:
-1. Does tainted data actually reach a dangerous sink?
-2. Are there any validation or sanitization steps that mitigate the risk?
-3. Is the vulnerability exploitable in practice, not just in theory?
-
-Common vulnerability patterns to check:
-- CWE-787: Out-of-bounds Write (tainted size used in memory operations without validation)
-- CWE-20: Improper Input Validation (tainted input used without validation)
-- CWE-200: Information Exposure (sensitive data sent to Normal World without encryption)
-
-Output format:
-- 1st line: { "vulnerability_found": "yes" } or { "vulnerability_found": "no" }
-- If yes, explain:
-  - The specific vulnerability type (CWE-XXX)
-  - The exact code path that triggers it
-  - Why existing checks (if any) are insufficient
+MIDDLE_PROMPT_MULTI_PARAMS_TEMPLATE = """Based on the above taint analysis results, continue analyzing the function. Note the data aliases and tainted data operations. (Note the new taint source, <{source_function}>, and the <{param_name}> parameter marked as a taint label.)
+</Code to be analyzed>
+{code}
+</Code to be analyzed>
 """
 
 def get_start_prompt(source_function: str, param_name: str, code: str) -> str:

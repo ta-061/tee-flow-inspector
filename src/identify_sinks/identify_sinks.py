@@ -1,5 +1,4 @@
-# /src/identify_sinks/identify_sinks.py
-# !/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 フェーズ3: フェーズ1-2の結果を読み込んで、呼び出されている外部 API だけをLLMに問い、シンク候補をJSON出力する
@@ -68,38 +67,9 @@ def ask_llm(client, prompt: str) -> str:
 
 
 def analyze_external_function_as_sink(client, func_name: str, log_file: Path) -> list[dict]:
-    prompt = f"""You are an expert in static taint analysis for TA (Trusted Application) code running in a TEE (Trusted Execution Environment).
-
-We are specifically interested in identifying if the external API function `{func_name}` can be a sink based on these vulnerability patterns:
-
-① Unencrypted output to Normal World: Functions that could potentially write data to shared memory buffers or other interfaces accessible by the Normal World.
-
-② Missing input validation: Functions that accept size/length parameters or pointers that could be manipulated to cause buffer overflows, out-of-bounds access, or other memory corruption issues.
-
-③ Shared memory operations: Functions that copy data to/from memory regions, especially if the destination could be shared with the Normal World.
-
-Consider the function from a taint analysis perspective - if tainted data reaches this function, could it lead to security issues?
-
-Common sink functions in TEE context include:
-- Memory operations: memcpy, memmove, strcpy, strncpy, etc.
-- Output functions: printf family, write operations
-- Random number generation that writes to buffers
-- Any function that could expose data or be exploited with malicious input
-
-Perform a detailed analysis following these steps:
-1. Briefly explain the purpose of the function `{func_name}`.
-2. Consider each of the three vulnerability patterns and reason whether the function could be exploited if it receives tainted data.
-3. Be practical - consider how the function is typically used in TEE applications.
-
-Finally, if you determine the function `{func_name}` could be a sink, list each potential vulnerability in exactly the following format:
-(function: FUNCTION_NAME; param_index: PARAM_INDEX; reason: REASON)
-
-For functions with multiple parameters that could be problematic, list each separately.
-Common parameter indices:
-- For memory operations: 0 (destination), 1 (source), 2 (size)
-- For output functions: 0 (format string), 1+ (data parameters)
-
-If none of the vulnerability patterns apply, clearly state "no vulnerabilities found."
+    prompt = f"""As a program analyst, is it possible to use a call {func_name} as a sink when performing taint analysis? 
+If so which parameters need to be checked for taint. Please answer yes or no without additional explanation. 
+If yes, please indicate the corresponding parameters. For example, the system function can be used as a sink, and the first parameter needs to be checked as (system; 1).
 """
     
     with open(log_file, "a", encoding="utf-8") as lf:
@@ -111,20 +81,68 @@ If none of the vulnerability patterns apply, clearly state "no vulnerabilities f
     with open(log_file, "a", encoding="utf-8") as lf:
         lf.write(f"## Response:\n{resp}\n\n")
     
-    pattern = re.compile(
+    # 複数のパターンに対応
+    sinks = []
+    
+    # パターン1: (function_name; param_index) 形式
+    pattern1 = re.compile(r"\(([A-Za-z_][A-Za-z0-9_]*)\s*;\s*(\d+)\)")
+    for match in pattern1.findall(clean):
+        fn, idx = match
+        if fn == func_name:  # 関数名が一致する場合のみ追加
+            sinks.append({
+                "kind": "function",
+                "name": fn,
+                "param_index": int(idx),
+                "reason": "Identified as sink"
+            })
+    
+    # パターン2: 元のパターン (function: name; param_index: n; reason: text)
+    pattern2 = re.compile(
         r"\(\s*function:\s*([A-Za-z_][A-Za-z0-9_]*)\s*;\s*"
         r"param_index:\s*(\d+)\s*;\s*"
         r"reason:\s*([^)]*?)\s*\)"
     )
-    
-    sinks = []
-    for fn, idx, reason in pattern.findall(clean):
+    for fn, idx, reason in pattern2.findall(clean):
         if fn == func_name:
             sinks.append({
                 "kind": "function",
                 "name": fn,
                 "param_index": int(idx),
                 "reason": reason
+            })
+    
+    # パターン3: "Yes" の後に関数名とパラメータ番号が記載されている場合
+    if re.search(r"(?i)yes", clean):
+        # "parameter 1", "first parameter", "1st parameter" などの表現を探す
+        param_patterns = [
+            r"parameter\s+(\d+)",
+            r"(\d+)(?:st|nd|rd|th)\s+parameter",
+            r"first\s+parameter",  # これは1に変換
+            r"second\s+parameter", # これは2に変換
+            r"third\s+parameter",  # これは3に変換
+        ]
+        
+        param_index = None
+        for pattern in param_patterns:
+            match = re.search(pattern, clean, re.IGNORECASE)
+            if match:
+                if "first" in pattern:
+                    param_index = 1
+                elif "second" in pattern:
+                    param_index = 2
+                elif "third" in pattern:
+                    param_index = 3
+                else:
+                    param_index = int(match.group(1))
+                break
+        
+        # パターンに該当するシンクがまだ見つかっていない場合、デフォルトで追加
+        if param_index and not sinks:
+            sinks.append({
+                "kind": "function",
+                "name": func_name,
+                "param_index": param_index,
+                "reason": "Identified as sink based on response"
             })
     
     return sinks
