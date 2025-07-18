@@ -116,7 +116,6 @@ def ask_llm(client, messages: list, max_retries: int = 3) -> str:
     
     return "[ERROR] Maximum retries exceeded"
 
-
 def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict, 
                       log_file: Path, source_params: list[str] | None = None) -> dict:
     """
@@ -133,8 +132,17 @@ def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict,
     # 会話履歴を保持するリスト
     conversation_history = []
     
-    # 複数のparam_indexを処理
-    param_indices = vd.get("param_indices", [vd.get("param_index")])
+    # 複数のparam_indexを処理（修正箇所）
+    # param_indicesフィールドを優先的に使用
+    if "param_indices" in vd:
+        param_indices = vd["param_indices"]
+    elif "param_index" in vd:
+        param_indices = [vd["param_index"]]
+    else:
+        # どちらもない場合はエラー
+        print(f"Warning: No param_index or param_indices found in vd: {vd}")
+        param_indices = []
+    
     param_info = f"param {param_indices[0]}" if len(param_indices) == 1 else f"params {param_indices}"
     
     # ログに解析開始を記録
@@ -166,11 +174,16 @@ def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict,
             # 中間プロンプト
             # 最後の関数で複数のparam_indexを考慮
             if i == len(chain) - 1 and len(param_indices) > 1:
-                # 複数のパラメータについて言及
-                param_name = f"parameters {param_indices}"
+                # 複数のパラメータについて言及（修正箇所）
+                param_names_list = [f"arg{idx}" for idx in param_indices]
+                param_name = f"parameters {', '.join(param_names_list)} (indices: {param_indices})"
                 prompt = get_middle_prompt_multi_params(func_name, param_name, code)
             else:
-                param_name = f"arg{vd['param_index']}" if i == len(chain) - 1 else "params"
+                # 単一パラメータの場合
+                if i == len(chain) - 1 and param_indices:
+                    param_name = f"arg{param_indices[0]}"
+                else:
+                    param_name = "params"
                 prompt = get_middle_prompt(func_name, param_name, code)
         
         # 会話履歴にユーザーメッセージを追加
@@ -203,8 +216,13 @@ def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict,
         })
         taint_summaries.append(f"Function {func_name}: {response}")
     
-    # 脆弱性解析プロンプト
-    end_prompt = get_end_prompt()
+    # 脆弱性解析プロンプト（修正案）
+    # 複数パラメータの場合は、それぞれについて言及するようにプロンプトを調整
+    if len(param_indices) > 1:
+        additional_context = f"\nNote: Multiple parameters (indices: {param_indices}) of the sink function '{vd['sink']}' are potentially tainted. Analyze if ANY of these parameters could lead to a vulnerability."
+        end_prompt = get_end_prompt() + additional_context
+    else:
+        end_prompt = get_end_prompt()
     
     # 会話履歴にエンドプロンプトを追加
     conversation_history.append({"role": "user", "content": end_prompt})

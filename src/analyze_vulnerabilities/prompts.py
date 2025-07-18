@@ -37,7 +37,9 @@ Code to analyze:
 Output the taint flow analysis for this function.
 """
 
-MIDDLE_PROMPT_MULTI_PARAMS_TEMPLATE = """Continue to analyze function according to the above taint analysis results. Pay attention to the data alias and tainted data operations. Note that multiple {param_name} may be affected by tainted data.
+MIDDLE_PROMPT_MULTI_PARAMS_TEMPLATE = """Continue to analyze function according to the above taint analysis results. Pay attention to the data alias and tainted data operations. 
+
+Note that multiple parameters {param_name} may be affected by tainted data. Specifically track how tainted data could reach each of these parameters.
 
 Code to be analyzed:
 {code}

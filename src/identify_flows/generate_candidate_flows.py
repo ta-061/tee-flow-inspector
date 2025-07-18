@@ -115,31 +115,35 @@ def main():
         if not is_subchain:
             filtered_cdfs.append(cdf)
     
-    # ステップ4: 同じ脆弱性を表す可能性のあるCDFを統合（オプション）
+    # ステップ4: 同じ脆弱性を表す可能性のあるCDFを統合
     # グループ化のキー：(file, line, sink, chain)
     grouped = defaultdict(list)
     
     for cdf in filtered_cdfs:
         vd = cdf["vd"]
         chain_tuple = tuple(cdf["chains"][0]) if cdf["chains"] else ()
+        # param_indexを除外してグループ化（同じ場所・同じシンク・同じチェーンなら統合）
         key = (vd["file"], vd["line"], vd["sink"], chain_tuple)
         grouped[key].append(cdf)
     
     final_cdfs = []
     for key, group in grouped.items():
         if len(group) == 1:
-            # 単一のCDF
-            final_cdfs.append(group[0])
+            # 単一のCDF - param_indicesフィールドを追加して統一
+            cdf = group[0].copy()
+            if "param_indices" not in cdf["vd"]:
+                cdf["vd"]["param_indices"] = [cdf["vd"]["param_index"]]
+            final_cdfs.append(cdf)
         else:
             # 複数のparam_indexを持つ同じ脆弱性
-            # param_indicesをリストとして統合
             base_cdf = group[0].copy()
             param_indices = sorted(set(g["vd"]["param_index"] for g in group))
             
             # 統合されたVDを作成
             base_cdf["vd"]["param_indices"] = param_indices
-            # 元のparam_indexも保持（互換性のため）
-            base_cdf["vd"]["param_index"] = param_indices[0]
+            # param_indexフィールドは削除（混乱を避けるため）
+            if "param_index" in base_cdf["vd"]:
+                del base_cdf["vd"]["param_index"]
             
             final_cdfs.append(base_cdf)
     
