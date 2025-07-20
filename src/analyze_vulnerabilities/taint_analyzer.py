@@ -1,5 +1,5 @@
 # src/analyze_vulnerabilities/taint_analyzer.py
-#あ !/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 フェーズ6: LLMによるテイント解析と脆弱性検査
@@ -14,23 +14,18 @@ import sys
 import json
 import argparse
 from pathlib import Path
-import openai
+import time
+
+# 新しいLLM設定システムをインポート
+sys.path.append(str(Path(__file__).parent.parent))
+from llm_settings.config_manager import UnifiedLLMClient
 
 from prompts import get_start_prompt, get_middle_prompt, get_end_prompt, get_middle_prompt_multi_params
 
 
 def init_client():
-    """OpenAI APIクライアントを初期化"""
-    keyfile = Path(__file__).resolve().parent.parent / "api_key.json"
-    if not keyfile.exists():
-        print(f"Error: API キー設定ファイルが見つかりません ({keyfile})", file=sys.stderr)
-        sys.exit(1)
-    cfg = json.loads(keyfile.read_text(encoding="utf-8"))
-    openai.api_key = cfg.get("api_key", "")
-    if not openai.api_key:
-        print("Error: api_key.json に api_key が設定されていません。", file=sys.stderr)
-        sys.exit(1)
-    return openai
+    """新しいLLM設定システムを使用したクライアント初期化"""
+    return UnifiedLLMClient()
 
 
 def extract_function_code(func_name: str, phase12_data: dict) -> str:
@@ -81,8 +76,8 @@ def extract_function_code(func_name: str, phase12_data: dict) -> str:
             return f"// External function: {func_name} (implementation unavailable)"
 
 
-def ask_llm(client, messages: list, max_retries: int = 3) -> str:
-    """OpenAI ChatCompletion APIを呼び出して応答を返す（エラーハンドリング付き）"""
+def ask_llm(client: UnifiedLLMClient, messages: list, max_retries: int = 3) -> str:
+    """新しいLLM設定システムを使用したLLM呼び出し（エラーハンドリング付き）"""
     for attempt in range(max_retries):
         try:
             # トークン数をチェック（概算）
@@ -92,18 +87,13 @@ def ask_llm(client, messages: list, max_retries: int = 3) -> str:
                 # 最初のメッセージ（システムプロンプト）と最後の数個だけ保持
                 messages = messages[:1] + messages[-5:]
             
-            resp = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=messages,
-                temperature=0.0,
-                timeout=60  # タイムアウトを設定
-            )
+            # UnifiedLLMClientは内部でリトライを処理するので、ここでは単純に呼び出す
+            response = client.chat_completion(messages)
             
-            content = resp.choices[0].message.content
-            if not content or content.strip() == "":
+            if not response or response.strip() == "":
                 raise ValueError("Empty response from LLM")
                 
-            return content
+            return response
             
         except Exception as e:
             print(f"API call failed (attempt {attempt + 1}/{max_retries}): {e}")
@@ -111,12 +101,12 @@ def ask_llm(client, messages: list, max_retries: int = 3) -> str:
                 return f"[ERROR] Failed to get LLM response after {max_retries} attempts: {e}"
             
             # 指数バックオフで再試行
-            import time
             time.sleep(2 ** attempt)
     
     return "[ERROR] Maximum retries exceeded"
 
-def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict, 
+
+def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict, phase12_data: dict, 
                       log_file: Path, source_params: list[str] | None = None) -> dict:
     """
     単一のコールチェーンに対してテイント解析を実行
@@ -251,6 +241,7 @@ def analyze_taint_flow(client, chain: list[str], vd: dict, phase12_data: dict,
     
     return results
 
+
 def parse_vuln_response(resp: str) -> tuple[bool, dict]:
     """
     resp: LLM から返ってきたテキスト全体
@@ -299,6 +290,7 @@ def main():
     parser.add_argument("--flows", required=True, help="フェーズ5の候補フローJSON")
     parser.add_argument("--phase12", required=True, help="フェーズ1-2の結果JSON")
     parser.add_argument("--output", required=True, help="出力脆弱性レポートJSON")
+    parser.add_argument("--provider", help="使用するLLMプロバイダー (openai, claude, deepseek, local)")
     args = parser.parse_args()
     
     # 出力ディレクトリを準備
@@ -310,8 +302,16 @@ def main():
     log_file = out_dir / "taint_analysis_log.txt"
     log_file.write_text("", encoding="utf-8")  # 既存ログをクリア
     
-    # OpenAIクライアントを初期化
+    # 新しいLLMクライアントを初期化
     client = init_client()
+    
+    # プロバイダーが指定されていれば切り替え
+    if args.provider:
+        print(f"LLMプロバイダーを {args.provider} に切り替えます...")
+        client.switch_provider(args.provider)
+    
+    # 現在のプロバイダーを表示
+    print(f"使用中のLLMプロバイダー: {client.get_current_provider()}")
     
     # 入力データを読み込み
     flows_data = json.loads(Path(args.flows).read_text(encoding="utf-8"))
@@ -331,6 +331,7 @@ def main():
             
             # テイント解析を実行
             result = analyze_taint_flow(client, chain, vd, phase12_data, log_file, flow.get("source_params"))
+            
             # 脆弱性が見つかった場合のみ結果に追加
             is_vuln, meta = parse_vuln_response(result["vulnerability"])
             if is_vuln:

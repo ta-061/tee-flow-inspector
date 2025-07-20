@@ -34,7 +34,7 @@ This warning is for project developers.  Use -Wno-dev to suppress it.
 呼び出し済み外部 API を抽出中...
 外部 API 関数: 8 個
 外部 API 関数をシンクとして解析中...
-抽出されたシンク候補: 16 個
+抽出されたシンク候補: 9 個
 結果を /workspace/benchmark/acipher/ta/results/ta_sinks.json に保存しました
 [DEBUG] Include paths:
   ✓ /workspace/benchmark/acipher/ta
@@ -61,29 +61,46 @@ This warning is for project developers.  Use -Wno-dev to suppress it.
   Args: -I/workspace/benchmark/acipher/ta -I/workspace/benchmark/acipher/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
 [extract_sink_calls] 9 entries → /workspace/benchmark/acipher/ta/results/ta_vulnerable_destinations.json
-[generate_candidate_flows] 3 件 → /workspace/benchmark/acipher/ta/results/ta_candidate_flows.json
-[taint_analyzer] 3 個の候補フローを解析中...
-  [1/3] チェーン: TA_InvokeCommandEntryPoint -> cmd_gen_key -> TEE_AllocateTransientObject
-  [2/3] チェーン: TA_InvokeCommandEntryPoint -> cmd_enc -> TEE_SetOperationKey
-  [3/3] チェーン: TA_InvokeCommandEntryPoint -> cmd_enc -> TEE_FreeOperation
-[taint_analyzer] 解析完了: 3 件の脆弱性を検出
+[DEBUG] 入力チェーン数: 9
+[DEBUG] ソース関数: ['TA_InvokeCommandEntryPoint']
+[DEBUG] ステップ1後: 9 CDFs
+[DEBUG] ユニークなVD数: 9
+[DEBUG] ステップ2後: 9 CDFs（最長チェーンのみ）
+[DEBUG] ステップ3後: 9 CDFs（0 個のサブチェーンを削除）
+[DEBUG] ステップ4: 5 グループ
+[DEBUG] ステップ4後: 5 CDFs（3 グループがマージされた）
+[DEBUG] 最終的な危険フロー:
+  - TEE_AllocateTransientObject at line 33, params=[1]: TA_InvokeCommandEntryPoint -> cmd_gen_key -> TEE_AllocateTransientObject
+  - TEE_GenerateKey at line 39, params=[0, 1]: TA_InvokeCommandEntryPoint -> cmd_gen_key -> TEE_GenerateKey
+  - TEE_AllocateOperation at line 84, params=[0, 1]: TA_InvokeCommandEntryPoint -> cmd_enc -> TEE_AllocateOperation
+  - TEE_SetOperationKey at line 91, params=[1]: TA_InvokeCommandEntryPoint -> cmd_enc -> TEE_SetOperationKey
+  - TEE_AsymmetricEncrypt at line 97, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> cmd_enc -> TEE_AsymmetricEncrypt
+
+[generate_candidate_flows] 5 件 → /workspace/benchmark/acipher/ta/results/ta_candidate_flows.json
+[taint_analyzer] 5 個の候補フローを解析中...
+  [1/5] チェーン: TA_InvokeCommandEntryPoint -> cmd_gen_key -> TEE_AllocateTransientObject
+  [2/5] チェーン: TA_InvokeCommandEntryPoint -> cmd_gen_key -> TEE_GenerateKey
+  [3/5] チェーン: TA_InvokeCommandEntryPoint -> cmd_enc -> TEE_AllocateOperation
+  [4/5] チェーン: TA_InvokeCommandEntryPoint -> cmd_enc -> TEE_SetOperationKey
+  [5/5] チェーン: TA_InvokeCommandEntryPoint -> cmd_enc -> TEE_AsymmetricEncrypt
+[taint_analyzer] 解析完了: 2 件の脆弱性を検出
   結果: /workspace/benchmark/acipher/ta/results/ta_vulnerabilities.json
   ログ: /workspace/benchmark/acipher/ta/results/taint_analysis_log.txt
 [generate_report] HTMLレポートを生成しました: /workspace/benchmark/acipher/ta/results/ta_vulnerability_report.html
-  検出脆弱性数: 3
+  検出脆弱性数: 2
   AI対話履歴を含めました: /workspace/benchmark/acipher/ta/results/taint_analysis_log.txt
-  対話チェーン数: 3
+  対話チェーン数: 5
 make -C host CROSS_COMPILE="arm-linux-gnueabihf-" --no-builtin-variables \
 	TEEC_EXPORT=/workspace/benchmark/aes/../../optee_client/out/export
 make[1]: Entering directory '/workspace/benchmark/aes/host'
-make[1]: Nothing to be done for 'all'.
+arm-linux-gnueabihf-gcc  -o optee_example_aes main.o -lteec -L/workspace/benchmark/aes/../../optee_client/out/export/lib
+/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: main.o: relocation R_ARM_THM_MOVW_ABS_NC against `a local symbol' can not be used when making a shared object; recompile with -fPIC
+/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: main.o(.text+0x20): unresolvable R_ARM_THM_CALL relocation against symbol `TEEC_InitializeContext'
+/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: final link failed
+collect2: error: ld returned 1 exit status
+make[1]: *** [Makefile:21: optee_example_aes] Error 1
 make[1]: Leaving directory '/workspace/benchmark/aes/host'
-make -C ta CROSS_COMPILE="arm-linux-gnueabihf-" LDFLAGS="" \
-	TA_DEV_KIT_DIR=/workspace/benchmark/aes/../../optee_os/out/arm/export-ta_arm32
-make[1]: Entering directory '/workspace/benchmark/aes/ta'
-make[1]: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'aes_ta.o'.  Stop.
-make[1]: Leaving directory '/workspace/benchmark/aes/ta'
-make: *** [Makefile:14: all] Error 2
+make: *** [Makefile:12: all] Error 2
 make: Entering directory '/workspace/benchmark/aes/ta'
 make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'aes_ta.o'.  Stop.
 make: Leaving directory '/workspace/benchmark/aes/ta'
@@ -109,7 +126,7 @@ This warning is for project developers.  Use -Wno-dev to suppress it.
 呼び出し済み外部 API を抽出中...
 外部 API 関数: 13 個
 外部 API 関数をシンクとして解析中...
-抽出されたシンク候補: 17 個
+抽出されたシンク候補: 31 個
 結果を /workspace/benchmark/aes/ta/results/ta_sinks.json に保存しました
 [DEBUG] Include paths:
   ✓ /workspace/benchmark/aes/ta
@@ -118,7 +135,7 @@ This warning is for project developers.  Use -Wno-dev to suppress it.
 [DEBUG] Parsing /workspace/benchmark/aes/ta/aes_ta.c
   Args: -I/workspace/benchmark/aes/ta -I/workspace/benchmark/aes/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
-[find_sink_calls] 25 call sites → /workspace/benchmark/aes/ta/results/ta_vulnerable_destinations.json
+[find_sink_calls] 29 call sites → /workspace/benchmark/aes/ta/results/ta_vulnerable_destinations.json
 [DEBUG] Include paths:
   ✓ /workspace/benchmark/aes/ta
   ✓ /workspace/benchmark/aes/ta/include
@@ -127,7 +144,7 @@ This warning is for project developers.  Use -Wno-dev to suppress it.
   Args: -I/workspace/benchmark/aes/ta -I/workspace/benchmark/aes/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
 [generate_call_graph] 37 edges → /workspace/benchmark/aes/ta/results/ta_call_graph.json
-[FunctionCallChains] 25 entries → /workspace/benchmark/aes/ta/results/ta_chains.json
+[FunctionCallChains] 29 entries → /workspace/benchmark/aes/ta/results/ta_chains.json
 [DEBUG] Include paths:
   ✓ /workspace/benchmark/aes/ta
   ✓ /workspace/benchmark/aes/ta/include
@@ -135,19 +152,58 @@ This warning is for project developers.  Use -Wno-dev to suppress it.
 [DEBUG] Parsing /workspace/benchmark/aes/ta/aes_ta.c
   Args: -I/workspace/benchmark/aes/ta -I/workspace/benchmark/aes/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
-[extract_sink_calls] 25 entries → /workspace/benchmark/aes/ta/results/ta_vulnerable_destinations.json
-[generate_candidate_flows] 9 件 → /workspace/benchmark/aes/ta/results/ta_candidate_flows.json
-[taint_analyzer] 9 個の候補フローを解析中...
-  [1/9] チェーン: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_FreeTransientObject
-  [2/9] チェーン: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_AllocateTransientObject
-  [3/9] チェーン: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_Malloc
-  [4/9] チェーン: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_Free
-  [5/9] チェーン: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_FreeTransientObject
-  [6/9] チェーン: TA_InvokeCommandEntryPoint -> set_aes_key -> TEE_ResetTransientObject
-  [7/9] チェーン: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_Malloc
-  [8/9] チェーン: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_FreeTransientObject
-  [9/9] チェーン: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_Free
-[taint_analyzer] 解析完了: 9 件の脆弱性を検出
+[extract_sink_calls] 29 entries → /workspace/benchmark/aes/ta/results/ta_vulnerable_destinations.json
+[DEBUG] 入力チェーン数: 29
+[DEBUG] ソース関数: ['TA_InvokeCommandEntryPoint']
+[DEBUG] ステップ1後: 41 CDFs
+[DEBUG] ユニークなVD数: 29
+[DEBUG] ステップ2後: 29 CDFs（最長チェーンのみ）
+[DEBUG] ステップ3後: 29 CDFs（0 個のサブチェーンを削除）
+[DEBUG] ステップ4: 19 グループ
+[DEBUG] ステップ4後: 19 CDFs（10 グループがマージされた）
+[DEBUG] 最終的な危険フロー:
+  - TEE_AllocateOperation at line 155, params=[0, 1]: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_AllocateOperation
+  - TEE_FreeTransientObject at line 167, params=[0]: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_FreeTransientObject
+  - TEE_AllocateTransientObject at line 170, params=[1]: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_AllocateTransientObject
+  - TEE_Malloc at line 188, params=[0]: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_Malloc
+  - TEE_InitRefAttribute at line 194, params=[0, 1]: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_InitRefAttribute
+  - TEE_PopulateTransientObject at line 196, params=[0, 1]: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_PopulateTransientObject
+  - TEE_Free at line 197, params=[0]: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_Free
+  - TEE_SetOperationKey at line 203, params=[0, 1]: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_SetOperationKey
+  - TEE_FreeTransientObject at line 217, params=[0]: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_FreeTransientObject
+  - TEE_InitRefAttribute at line 274, params=[0, 1]: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_InitRefAttribute
+  - TEE_ResetTransientObject at line 276, params=[0]: TA_InvokeCommandEntryPoint -> set_aes_key -> TEE_ResetTransientObject
+  - TEE_PopulateTransientObject at line 277, params=[0, 1]: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_PopulateTransientObject
+  - TEE_ResetOperation at line 283, params=[0, 1]: TA_InvokeCommandEntryPoint -> set_aes_key -> TEE_ResetOperation
+  - TEE_SetOperationKey at line 284, params=[0, 1]: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_SetOperationKey
+  - TEE_CipherInit at line 322, params=[1, 2]: TA_InvokeCommandEntryPoint -> reset_aes_iv -> TEE_CipherInit
+  - TEE_CipherUpdate at line 360, params=[0, 2]: TA_InvokeCommandEntryPoint -> cipher_buffer -> TEE_CipherUpdate
+  - TEE_Malloc at line 387, params=[0]: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_Malloc
+  - TEE_FreeTransientObject at line 410, params=[0]: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_FreeTransientObject
+  - TEE_Free at line 413, params=[0]: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_Free
+
+[generate_candidate_flows] 19 件 → /workspace/benchmark/aes/ta/results/ta_candidate_flows.json
+[taint_analyzer] 19 個の候補フローを解析中...
+  [1/19] チェーン: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_AllocateOperation
+  [2/19] チェーン: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_FreeTransientObject
+  [3/19] チェーン: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_AllocateTransientObject
+  [4/19] チェーン: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_Malloc
+  [5/19] チェーン: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_InitRefAttribute
+  [6/19] チェーン: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_PopulateTransientObject
+  [7/19] チェーン: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_Free
+  [8/19] チェーン: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_SetOperationKey
+  [9/19] チェーン: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_FreeTransientObject
+  [10/19] チェーン: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_InitRefAttribute
+  [11/19] チェーン: TA_InvokeCommandEntryPoint -> set_aes_key -> TEE_ResetTransientObject
+  [12/19] チェーン: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_PopulateTransientObject
+  [13/19] チェーン: TA_InvokeCommandEntryPoint -> set_aes_key -> TEE_ResetOperation
+  [14/19] チェーン: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_SetOperationKey
+  [15/19] チェーン: TA_InvokeCommandEntryPoint -> reset_aes_iv -> TEE_CipherInit
+  [16/19] チェーン: TA_InvokeCommandEntryPoint -> cipher_buffer -> TEE_CipherUpdate
+  [17/19] チェーン: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_Malloc
+  [18/19] チェーン: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_FreeTransientObject
+  [19/19] チェーン: TA_InvokeCommandEntryPoint -> alloc_resources -> TEE_Free
+[taint_analyzer] 解析完了: 10 件の脆弱性を検出
   結果: /workspace/benchmark/aes/ta/results/ta_vulnerabilities.json
   ログ: /workspace/benchmark/aes/ta/results/taint_analysis_log.txt
 
@@ -232,94 +288,9 @@ This warning is for project developers.  Use -Wno-dev to suppress it.
 [phase6 ] → /workspace/benchmark/aes/ta/results/ta_vulnerabilities.json
 
 [generate_report] HTMLレポートを生成しました: /workspace/benchmark/aes/ta/results/ta_vulnerability_report.html
-  検出脆弱性数: 9
+  検出脆弱性数: 10
   AI対話履歴を含めました: /workspace/benchmark/aes/ta/results/taint_analysis_log.txt
-  対話チェーン数: 5
-make -C host CROSS_COMPILE="arm-linux-gnueabihf-" --no-builtin-variables \
-	TEEC_EXPORT=/workspace/benchmark/bad-partitioning/../../optee_client/out/export
-make[1]: Entering directory '/workspace/benchmark/bad-partitioning/host'
-make[1]: Nothing to be done for 'all'.
-make[1]: Leaving directory '/workspace/benchmark/bad-partitioning/host'
-make -C ta CROSS_COMPILE="arm-linux-gnueabihf-" LDFLAGS="" \
-	TA_DEV_KIT_DIR=/workspace/benchmark/bad-partitioning/../../optee_os/out/arm/export-ta_arm32
-make[1]: Entering directory '/workspace/benchmark/bad-partitioning/ta'
-make[1]: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'entry.o'.  Stop.
-make[1]: Leaving directory '/workspace/benchmark/bad-partitioning/ta'
-make: *** [Makefile:14: all] Error 2
-make: Entering directory '/workspace/benchmark/bad-partitioning/ta'
-make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'entry.o'.  Stop.
-make: Leaving directory '/workspace/benchmark/bad-partitioning/ta'
-make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'entry.o'.  Stop.
-呼び出し済み外部 API を抽出中...
-外部 API 関数: 7 個
-外部 API 関数をシンクとして解析中...
-抽出されたシンク候補: 14 個
-結果を /workspace/benchmark/bad-partitioning/ta/results/ta_sinks.json に保存しました
-[DEBUG] Include paths:
-  ✓ /workspace/benchmark/bad-partitioning/ta
-  ✓ /workspace/benchmark/bad-partitioning/ta/include
-  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/bad-partitioning/ta/entry.c
-  Args: -I/workspace/benchmark/bad-partitioning/ta -I/workspace/benchmark/bad-partitioning/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  [3] void function 'produce_i0' should not return a value
-  [3] void function 'produce_i0' should not return a value
-  [3] void function 'produce_i3' should not return a value
-  [3] void function 'produce_s' should not return a value
-  [3] void function 'produce_s3' should not return a value
-  [3] void function 'produce_s3' should not return a value
-[find_sink_calls] 113 call sites → /workspace/benchmark/bad-partitioning/ta/results/ta_vulnerable_destinations.json
-[DEBUG] Include paths:
-  ✓ /workspace/benchmark/bad-partitioning/ta
-  ✓ /workspace/benchmark/bad-partitioning/ta/include
-  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/bad-partitioning/ta/entry.c
-  Args: -I/workspace/benchmark/bad-partitioning/ta -I/workspace/benchmark/bad-partitioning/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  [3] void function 'produce_i0' should not return a value
-  [3] void function 'produce_i0' should not return a value
-  [3] void function 'produce_i3' should not return a value
-  [3] void function 'produce_s' should not return a value
-  [3] void function 'produce_s3' should not return a value
-  [3] void function 'produce_s3' should not return a value
-[generate_call_graph] 60 edges → /workspace/benchmark/bad-partitioning/ta/results/ta_call_graph.json
-[FunctionCallChains] 113 entries → /workspace/benchmark/bad-partitioning/ta/results/ta_chains.json
-[DEBUG] Include paths:
-  ✓ /workspace/benchmark/bad-partitioning/ta
-  ✓ /workspace/benchmark/bad-partitioning/ta/include
-  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/bad-partitioning/ta/entry.c
-  Args: -I/workspace/benchmark/bad-partitioning/ta -I/workspace/benchmark/bad-partitioning/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  [3] void function 'produce_i0' should not return a value
-  [3] void function 'produce_i0' should not return a value
-  [3] void function 'produce_i3' should not return a value
-  [3] void function 'produce_s' should not return a value
-  [3] void function 'produce_s3' should not return a value
-  [3] void function 'produce_s3' should not return a value
-[extract_sink_calls] 113 entries → /workspace/benchmark/bad-partitioning/ta/results/ta_vulnerable_destinations.json
-[generate_candidate_flows] 16 件 → /workspace/benchmark/bad-partitioning/ta/results/ta_candidate_flows.json
-[taint_analyzer] 16 個の候補フローを解析中...
-  [1/16] チェーン: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> strlen
-  [2/16] チェーン: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> strlen
-  [3/16] チェーン: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> strlen
-  [4/16] チェーン: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> strlen
-  [5/16] チェーン: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
-  [6/16] チェーン: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
-  [7/16] チェーン: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
-  [8/16] チェーン: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
-  [9/16] チェーン: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
-  [10/16] チェーン: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
-  [11/16] チェーン: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
-  [12/16] チェーン: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
-  [13/16] チェーン: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
-  [14/16] チェーン: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
-  [15/16] チェーン: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
-  [16/16] チェーン: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
-[taint_analyzer] 解析完了: 16 件の脆弱性を検出
-  結果: /workspace/benchmark/bad-partitioning/ta/results/ta_vulnerabilities.json
-  ログ: /workspace/benchmark/bad-partitioning/ta/results/taint_analysis_log.txt
-[generate_report] HTMLレポートを生成しました: /workspace/benchmark/bad-partitioning/ta/results/ta_vulnerability_report.html
-  検出脆弱性数: 16
-  AI対話履歴を含めました: /workspace/benchmark/bad-partitioning/ta/results/taint_analysis_log.txt
-  対話チェーン数: 2
+  対話チェーン数: 12
 make -C host CROSS_COMPILE="arm-linux-gnueabihf-" --no-builtin-variables \
 	TEEC_EXPORT=/workspace/benchmark/hotp/../../optee_client/out/export
 make[1]: Entering directory '/workspace/benchmark/hotp/host'
@@ -356,7 +327,7 @@ This warning is for project developers.  Use -Wno-dev to suppress it.
 呼び出し済み外部 API を抽出中...
 外部 API 関数: 12 個
 外部 API 関数をシンクとして解析中...
-抽出されたシンク候補: 29 個
+抽出されたシンク候補: 31 個
 結果を /workspace/benchmark/hotp/ta/results/ta_sinks.json に保存しました
 [DEBUG] Include paths:
   ✓ /workspace/benchmark/hotp/ta
@@ -365,7 +336,7 @@ This warning is for project developers.  Use -Wno-dev to suppress it.
 [DEBUG] Parsing /workspace/benchmark/hotp/ta/hotp_ta.c
   Args: -I/workspace/benchmark/hotp/ta -I/workspace/benchmark/hotp/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
-[find_sink_calls] 17 call sites → /workspace/benchmark/hotp/ta/results/ta_vulnerable_destinations.json
+[find_sink_calls] 20 call sites → /workspace/benchmark/hotp/ta/results/ta_vulnerable_destinations.json
 [DEBUG] Include paths:
   ✓ /workspace/benchmark/hotp/ta
   ✓ /workspace/benchmark/hotp/ta/include
@@ -374,68 +345,7 @@ This warning is for project developers.  Use -Wno-dev to suppress it.
   Args: -I/workspace/benchmark/hotp/ta -I/workspace/benchmark/hotp/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
 [generate_call_graph] 21 edges → /workspace/benchmark/hotp/ta/results/ta_call_graph.json
-[FunctionCallChains] 17 entries → /workspace/benchmark/hotp/ta/results/ta_chains.json
-[INFO] $ /usr/bin/python3 /workspace/src/report/generate_report.py --vulnerabilities /workspace/benchmark/aes/ta/results/ta_vulnerabilities.json --phase12 /workspace/benchmark/aes/ta/results/ta_phase12.json --project-name aes --output /workspace/benchmark/aes/ta/results/ta_vulnerability_report.html  (cwd=/workspace/benchmark/aes/ta)
-[phase7 ] → /workspace/benchmark/aes/ta/results/ta_vulnerability_report.html
-
-
-=== Project: bad-partitioning / TA: ta ===
-[INFO] $ bear -- make  (cwd=/workspace/benchmark/bad-partitioning)
-[WARN]   ↳ rc=2
-[INFO] $ bear -- make -C ta V=1  (cwd=/workspace/benchmark/bad-partitioning)
-[WARN]   ↳ rc=2
-[INFO] $ bear -- make  (cwd=/workspace/benchmark/bad-partitioning/ta)
-[WARN]   ↳ rc=2
-[WARN] build failed/empty → dummy DB
-[INFO] ★ dummy DB 1 entries → /workspace/benchmark/bad-partitioning/ta/compile_commands_full.json
-[INFO] TA DB saved: /workspace/benchmark/bad-partitioning/ta/compile_commands.json  entries=1
-[DEBUG] Include paths:
-  ✓ /workspace/benchmark/bad-partitioning/ta
-  ✓ /workspace/benchmark/bad-partitioning/ta/include
-  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/bad-partitioning/ta/entry.c
-  Args: -I/workspace/benchmark/bad-partitioning/ta -I/workspace/benchmark/bad-partitioning/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  [3] void function 'produce_i0' should not return a value
-  [3] void function 'produce_i0' should not return a value
-  [3] void function 'produce_i3' should not return a value
-  [3] void function 'produce_s' should not return a value
-  [3] void function 'produce_s3' should not return a value
-  [3] void function 'produce_s3' should not return a value
-[phase1-2] → /workspace/benchmark/bad-partitioning/ta/results/ta_phase12.json
-[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/identify_sinks.py -i /workspace/benchmark/bad-partitioning/ta/results/ta_phase12.json -o /workspace/benchmark/bad-partitioning/ta/results/ta_sinks.json  (cwd=/workspace/benchmark/bad-partitioning/ta)
-[phase3 ] → /workspace/benchmark/bad-partitioning/ta/results/ta_sinks.json
-
-[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/find_sink_calls.py --compile-db /workspace/benchmark/bad-partitioning/ta/compile_commands.json --sinks /workspace/benchmark/bad-partitioning/ta/results/ta_sinks.json --output /workspace/benchmark/bad-partitioning/ta/results/ta_vulnerable_destinations.json --devkit /workspace/optee_os/out/arm/export-ta_arm32  (cwd=/workspace/benchmark/bad-partitioning/ta)
-[phase3.4] → /workspace/benchmark/bad-partitioning/ta/results/ta_vulnerable_destinations.json
-
-[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/generate_call_graph.py --compile-db /workspace/benchmark/bad-partitioning/ta/compile_commands.json --output /workspace/benchmark/bad-partitioning/ta/results/ta_call_graph.json --devkit /workspace/optee_os/out/arm/export-ta_arm32  (cwd=/workspace/benchmark/bad-partitioning/ta)
-[phase3.5] → /workspace/benchmark/bad-partitioning/ta/results/ta_call_graph.json
-
-[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/function_call_chains.py --call-graph /workspace/benchmark/bad-partitioning/ta/results/ta_call_graph.json --vd-list /workspace/benchmark/bad-partitioning/ta/results/ta_vulnerable_destinations.json --output /workspace/benchmark/bad-partitioning/ta/results/ta_chains.json  (cwd=/workspace/benchmark/bad-partitioning/ta)
-[phase3.6] → /workspace/benchmark/bad-partitioning/ta/results/ta_chains.json
-
-[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/extract_sink_calls.py --compile-db /workspace/benchmark/bad-partitioning/ta/compile_commands.json --sinks /workspace/benchmark/bad-partitioning/ta/results/ta_sinks.json --output /workspace/benchmark/bad-partitioning/ta/results/ta_vulnerable_destinations.json --devkit /workspace/optee_os/out/arm/export-ta_arm32  (cwd=/workspace/benchmark/bad-partitioning/ta)
-[phase3.7] → /workspace/benchmark/bad-partitioning/ta/results/ta_vulnerable_destinations.json
-
-[INFO] $ /usr/bin/python3 /workspace/src/identify_flows/generate_candidate_flows.py --chains /workspace/benchmark/bad-partitioning/ta/results/ta_chains.json --sources TA_InvokeCommandEntryPoint --output /workspace/benchmark/bad-partitioning/ta/results/ta_candidate_flows.json  (cwd=/workspace/benchmark/bad-partitioning/ta)
-[phase5 ] → /workspace/benchmark/bad-partitioning/ta/results/ta_candidate_flows.json
-
-[INFO] $ /usr/bin/python3 /workspace/src/analyze_vulnerabilities/taint_analyzer.py --flows /workspace/benchmark/bad-partitioning/ta/results/ta_candidate_flows.json --phase12 /workspace/benchmark/bad-partitioning/ta/results/ta_phase12.json --output /workspace/benchmark/bad-partitioning/ta/results/ta_vulnerabilities.json  (cwd=/workspace/benchmark/bad-partitioning/ta)
-[phase6 ] → /workspace/benchmark/bad-partitioning/ta/results/ta_vulnerabilities.json
-
-[INFO] $ /usr/bin/python3 /workspace/src/report/generate_report.py --vulnerabilities /workspace/benchmark/bad-partitioning/ta/results/ta_vulnerabilities.json --phase12 /workspace/benchmark/bad-partitioning/ta/results/ta_phase12.json --project-name bad-partitioning --output /workspace/benchmark/bad-partitioning/ta/results/ta_vulnerability_report.html  (cwd=/workspace/benchmark/bad-partitioning/ta)
-[phase7 ] → /workspace/benchmark/bad-partitioning/ta/results/ta_vulnerability_report.html
-
-
-=== Project: hotp / TA: ta ===
-[INFO] $ bear -- make  (cwd=/workspace/benchmark/hotp)
-[WARN]   ↳ rc=2
-[INFO] $ bear -- make -C ta V=1  (cwd=/workspace/benchmark/hotp)
-[WARN]   ↳ rc=2
-[INFO] $ cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -Bbuild -H.  (cwd=/workspace/benchmark/hotp)
-[WARN] bear が拾えなかった .c がある → dummy 補完
-[INFO] ★ dummy DB 1 entries → /workspace/benchmark/hotp/build/compile_commands.json
-[INFO] TA DB saved: /workspace/benchmark/hotp/ta/compile_commands.json  entries=1
+[FunctionCallChains] 20 entries → /workspace/benchmark/hotp/ta/results/ta_chains.json
 [DEBUG] Include paths:
   ✓ /workspace/benchmark/hotp/ta
   ✓ /workspace/benchmark/hotp/ta/include
@@ -443,37 +353,48 @@ This warning is for project developers.  Use -Wno-dev to suppress it.
 [DEBUG] Parsing /workspace/benchmark/hotp/ta/hotp_ta.c
   Args: -I/workspace/benchmark/hotp/ta -I/workspace/benchmark/hotp/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
-[phase1-2] → /workspace/benchmark/hotp/ta/results/ta_phase12.json
-[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/identify_sinks.py -i /workspace/benchmark/hotp/ta/results/ta_phase12.json -o /workspace/benchmark/hotp/ta/results/ta_sinks.json  (cwd=/workspace/benchmark/hotp/ta)
-[phase3 ] → /workspace/benchmark/hotp/ta/results/ta_sinks.json
+[extract_sink_calls] 20 entries → /workspace/benchmark/hotp/ta/results/ta_vulnerable_destinations.json
+[DEBUG] 入力チェーン数: 20
+[DEBUG] ソース関数: ['TA_InvokeCommandEntryPoint']
+[DEBUG] ステップ1後: 20 CDFs
+[DEBUG] ユニークなVD数: 20
+[DEBUG] ステップ2後: 20 CDFs（最長チェーンのみ）
+[DEBUG] ステップ3後: 20 CDFs（0 個のサブチェーンを削除）
+[DEBUG] ステップ4: 11 グループ
+[DEBUG] ステップ4後: 11 CDFs（8 グループがマージされた）
+[DEBUG] 最終的な危険フロー:
+  - TEE_AllocateOperation at line 67, params=[0, 1]: TA_InvokeCommandEntryPoint -> get_hotp -> hmac_sha1 -> TEE_AllocateOperation
+  - TEE_AllocateTransientObject at line 78, params=[1]: TA_InvokeCommandEntryPoint -> get_hotp -> hmac_sha1 -> TEE_AllocateTransientObject
+  - TEE_InitRefAttribute at line 89, params=[0, 1]: TA_InvokeCommandEntryPoint -> get_hotp -> hmac_sha1 -> TEE_InitRefAttribute
+  - TEE_PopulateTransientObject at line 92, params=[1]: TA_InvokeCommandEntryPoint -> get_hotp -> hmac_sha1 -> TEE_PopulateTransientObject
+  - TEE_SetOperationKey at line 99, params=[0, 1]: TA_InvokeCommandEntryPoint -> get_hotp -> hmac_sha1 -> TEE_SetOperationKey
+  - TEE_MACInit at line 106, params=[0, 1]: TA_InvokeCommandEntryPoint -> get_hotp -> hmac_sha1 -> TEE_MACInit
+  - TEE_MACUpdate at line 107, params=[0, 1]: TA_InvokeCommandEntryPoint -> get_hotp -> hmac_sha1 -> TEE_MACUpdate
+  - TEE_MACComputeFinal at line 108, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> get_hotp -> hmac_sha1 -> TEE_MACComputeFinal
+  - TEE_FreeOperation at line 111, params=[0]: TA_InvokeCommandEntryPoint -> get_hotp -> hmac_sha1 -> TEE_FreeOperation
+  - memset at line 152, params=[0, 2]: TA_InvokeCommandEntryPoint -> register_shared_key -> memset
+  - memcpy at line 153, params=[0, 2]: TA_InvokeCommandEntryPoint -> register_shared_key -> memcpy
 
-[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/find_sink_calls.py --compile-db /workspace/benchmark/hotp/ta/compile_commands.json --sinks /workspace/benchmark/hotp/ta/results/ta_sinks.json --output /workspace/benchmark/hotp/ta/results/ta_vulnerable_destinations.json --devkit /workspace/optee_os/out/arm/export-ta_arm32  (cwd=/workspace/benchmark/hotp/ta)
-[phase3.4] → /workspace/benchmark/hotp/ta/results/ta_vulnerable_destinations.json
-
-[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/generate_call_graph.py --compile-db /workspace/benchmark/hotp/ta/compile_commands.json --output /workspace/benchmark/hotp/ta/results/ta_call_graph.json --devkit /workspace/optee_os/out/arm/export-ta_arm32  (cwd=/workspace/benchmark/hotp/ta)
-[phase3.5] → /workspace/benchmark/hotp/ta/results/ta_call_graph.json
-
-[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/function_call_chains.py --call-graph /workspace/benchmark/hotp/ta/results/ta_call_graph.json --vd-list /workspace/benchmark/hotp/ta/results/ta_vulnerable_destinations.json --output /workspace/benchmark/hotp/ta/results/ta_chains.json  (cwd=/workspace/benchmark/hotp/ta)
-[phase3.6] → /workspace/benchmark/hotp/ta/results/ta_chains.json
-
-[DEBUG] Include paths:
-  ✓ /workspace/benchmark/hotp/ta
-  ✓ /workspace/benchmark/hotp/ta/include
-  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/hotp/ta/hotp_ta.c
-  Args: -I/workspace/benchmark/hotp/ta -I/workspace/benchmark/hotp/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[extract_sink_calls] 17 entries → /workspace/benchmark/hotp/ta/results/ta_vulnerable_destinations.json
-[generate_candidate_flows] 1 件 → /workspace/benchmark/hotp/ta/results/ta_candidate_flows.json
-[taint_analyzer] 1 個の候補フローを解析中...
-  [1/1] チェーン: TA_InvokeCommandEntryPoint -> get_hotp -> hmac_sha1 -> TEE_AllocateTransientObject
-[taint_analyzer] 解析完了: 1 件の脆弱性を検出
+[generate_candidate_flows] 11 件 → /workspace/benchmark/hotp/ta/results/ta_candidate_flows.json
+[taint_analyzer] 11 個の候補フローを解析中...
+  [1/11] チェーン: TA_InvokeCommandEntryPoint -> get_hotp -> hmac_sha1 -> TEE_AllocateOperation
+  [2/11] チェーン: TA_InvokeCommandEntryPoint -> get_hotp -> hmac_sha1 -> TEE_AllocateTransientObject
+  [3/11] チェーン: TA_InvokeCommandEntryPoint -> get_hotp -> hmac_sha1 -> TEE_InitRefAttribute
+  [4/11] チェーン: TA_InvokeCommandEntryPoint -> get_hotp -> hmac_sha1 -> TEE_PopulateTransientObject
+  [5/11] チェーン: TA_InvokeCommandEntryPoint -> get_hotp -> hmac_sha1 -> TEE_SetOperationKey
+  [6/11] チェーン: TA_InvokeCommandEntryPoint -> get_hotp -> hmac_sha1 -> TEE_MACInit
+  [7/11] チェーン: TA_InvokeCommandEntryPoint -> get_hotp -> hmac_sha1 -> TEE_MACUpdate
+  [8/11] チェーン: TA_InvokeCommandEntryPoint -> get_hotp -> hmac_sha1 -> TEE_MACComputeFinal
+  [9/11] チェーン: TA_InvokeCommandEntryPoint -> get_hotp -> hmac_sha1 -> TEE_FreeOperation
+  [10/11] チェーン: TA_InvokeCommandEntryPoint -> register_shared_key -> memset
+  [11/11] チェーン: TA_InvokeCommandEntryPoint -> register_shared_key -> memcpy
+[taint_analyzer] 解析完了: 6 件の脆弱性を検出
   結果: /workspace/benchmark/hotp/ta/results/ta_vulnerabilities.json
   ログ: /workspace/benchmark/hotp/ta/results/taint_analysis_log.txt
 [generate_report] HTMLレポートを生成しました: /workspace/benchmark/hotp/ta/results/ta_vulnerability_report.html
-  検出脆弱性数: 1
+  検出脆弱性数: 6
   AI対話履歴を含めました: /workspace/benchmark/hotp/ta/results/taint_analysis_log.txt
-  対話チェーン数: 1
+  対話チェーン数: 11
 make -C host CROSS_COMPILE="arm-linux-gnueabihf-" --no-builtin-variables \
 	TEEC_EXPORT=/workspace/benchmark/random/../../optee_client/out/export
 make[1]: Entering directory '/workspace/benchmark/random/host'
@@ -537,71 +458,54 @@ This warning is for project developers.  Use -Wno-dev to suppress it.
   Args: -I/workspace/benchmark/random/ta -I/workspace/benchmark/random/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
 [extract_sink_calls] 6 entries → /workspace/benchmark/random/ta/results/ta_vulnerable_destinations.json
-[generate_candidate_flows] 2 件 → /workspace/benchmark/random/ta/results/ta_candidate_flows.json
-[taint_analyzer] 2 個の候補フローを解析中...
-  [1/2] チェーン: TA_InvokeCommandEntryPoint -> random_number_generate -> TEE_Malloc
-  [2/2] チェーン: TA_InvokeCommandEntryPoint -> random_number_generate -> TEE_Free
-[taint_analyzer] 解析完了: 2 件の脆弱性を検出
-  結果: /workspace/benchmark/random/ta/results/ta_vulnerabilities.json
-  ログ: /workspace/benchmark/random/ta/results/taint_analysis_log.txt
-[generate_report] HTMLレポートを生成しました: /workspace/benchmark/random/ta/results/ta_vulnerability_report.html
-  検出脆弱性数: 2
-  AI対話履歴を含めました: /workspace/benchmark/random/ta/results/taint_analysis_log.txt
-  対話チェーン数: 2
-make -C host CROSS_COMPILE="arm-linux-gnueabihf-" --no-builtin-variables \
-	TEEC_EXPORT=/workspace/benchmark/secure_storage/../../optee_client/out/export
-make[1]: Entering directory '/workspace/benchmark/secure_storage/host'
-make[1]: Nothing to be done for 'all'.
-make[1]: Leaving directory '/workspace/benchmark/secure_storage/host'
-make -C ta CROSS_COMPILE="arm-linux-gnueabihf-" LDFLAGS="" \
-	TA_DEV_KIT_DIR=/workspace/benchmark/secure_storage/../../optee_os/out/arm/export-ta_arm32
-make[1]: Entering directory '/workspace/benchmark/secure_storage/ta'
-make[1]: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'secure_storage_ta.o'.  Stop.
-make[1]: Leaving directory '/workspace/benchmark/secure_storage/ta'
-make: *** [Makefile:14: all] Error 2
-make: Entering directory '/workspace/benchmark/secure_storage/ta'
-make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'secure_storage_ta.o'.  Stop.
-make: Leaving directory '/workspace/benchmark/secure_storage/ta'
--- The C compiler identification is GNU 11.4.0
--- Detecting C compiler ABI info
--- Detecting C compiler ABI info - done
--- Check for working C compiler: /usr/bin/arm-linux-gnueabihf-gcc - skipped
--- Detecting C compile features
--- Detecting C compile features - done
-CMake Warning (dev) in CMakeLists.txt:
-  No cmake_minimum_required command is present.  A line of code such as
+[DEBUG] 入力チェーン数: 6
+[DEBUG] ソース関数: ['TA_InvokeCommandEntryPoint']
+[DEBUG] ステップ1後: 6 CDFs
+[DEBUG] ユニークなVD数: 6
+[DEBUG] ステップ2後: 6 CDFs（最長チェーンのみ）
+[DEBUG] ステップ3後: 6 CDFs（0 個のサブチェーンを削除）
+[DEBUG] ステップ4: 4 グループ
+[DEBUG] ステップ4後: 4 CDFs（2 グループがマージされた）
+[DEBUG] 最終的な危険フロー:
+  - TEE_Malloc at line 78, params=[0]: TA_InvokeCommandEntryPoint -> random_number_generate -> TEE_Malloc
+  - TEE_GenerateRandom at line 90, params=[0, 1]: TA_InvokeCommandEntryPoint -> random_number_generate -> TEE_GenerateRandom
+  - TEE_MemMove at line 91, params=[0, 2]: TA_InvokeCommandEntryPoint -> random_number_generate -> TEE_MemMove
+  - TEE_Free at line 92, params=[0]: TA_InvokeCommandEntryPoint -> random_number_generate -> TEE_Free
 
-    cmake_minimum_required(VERSION 3.22)
+[generate_candidate_flows] 4 件 → /workspace/benchmark/random/ta/results/ta_candidate_flows.json
+[INFO] $ /usr/bin/python3 /workspace/src/report/generate_report.py --vulnerabilities /workspace/benchmark/aes/ta/results/ta_vulnerabilities.json --phase12 /workspace/benchmark/aes/ta/results/ta_phase12.json --project-name aes --output /workspace/benchmark/aes/ta/results/ta_vulnerability_report.html  (cwd=/workspace/benchmark/aes/ta)
+[phase7 ] → /workspace/benchmark/aes/ta/results/ta_vulnerability_report.html
 
-  should be added at the top of the file.  The version specified may be lower
-  if you wish to support older CMake versions for this project.  For more
-  information run "cmake --help-policy CMP0000".
-This warning is for project developers.  Use -Wno-dev to suppress it.
 
--- Configuring done
--- Generating done
--- Build files have been written to: /workspace/benchmark/secure_storage/build
-呼び出し済み外部 API を抽出中...
-外部 API 関数: 10 個
-外部 API 関数をシンクとして解析中...
-抽出されたシンク候補: 15 個
-結果を /workspace/benchmark/secure_storage/ta/results/ta_sinks.json に保存しました
+=== Project: hotp / TA: ta ===
+[INFO] $ bear -- make  (cwd=/workspace/benchmark/hotp)
+[WARN]   ↳ rc=2
+[INFO] $ bear -- make -C ta V=1  (cwd=/workspace/benchmark/hotp)
+[WARN]   ↳ rc=2
+[INFO] $ cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -Bbuild -H.  (cwd=/workspace/benchmark/hotp)
+[WARN] bear が拾えなかった .c がある → dummy 補完
+[INFO] ★ dummy DB 1 entries → /workspace/benchmark/hotp/build/compile_commands.json
+[INFO] TA DB saved: /workspace/benchmark/hotp/ta/compile_commands.json  entries=1
 [DEBUG] Include paths:
-  ✓ /workspace/benchmark/secure_storage/ta
-  ✓ /workspace/benchmark/secure_storage/ta/include
+  ✓ /workspace/benchmark/hotp/ta
+  ✓ /workspace/benchmark/hotp/ta/include
   ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/secure_storage/ta/secure_storage_ta.c
-  Args: -I/workspace/benchmark/secure_storage/ta -I/workspace/benchmark/secure_storage/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+[DEBUG] Parsing /workspace/benchmark/hotp/ta/hotp_ta.c
+  Args: -I/workspace/benchmark/hotp/ta -I/workspace/benchmark/hotp/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
-[find_sink_calls] 31 call sites → /workspace/benchmark/secure_storage/ta/results/ta_vulnerable_destinations.json
-[DEBUG] Include paths:
-  ✓ /workspace/benchmark/secure_storage/ta
-  ✓ /workspace/benchmark/secure_storage/ta/include
-  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/secure_storage/ta/secure_storage_ta.c
-  Args: -I/workspace/benchmark/secure_storage/ta -I/workspace/benchmark/secure_storage/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[generate_call_graph] 26 edges → /workspace/benchmark/secure_storage/ta/results/ta_call_graph.json
+[phase1-2] → /workspace/benchmark/hotp/ta/results/ta_phase12.json
+[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/identify_sinks.py -i /workspace/benchmark/hotp/ta/results/ta_phase12.json -o /workspace/benchmark/hotp/ta/results/ta_sinks.json  (cwd=/workspace/benchmark/hotp/ta)
+[phase3 ] → /workspace/benchmark/hotp/ta/results/ta_sinks.json
+
+[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/find_sink_calls.py --compile-db /workspace/benchmark/hotp/ta/compile_commands.json --sinks /workspace/benchmark/hotp/ta/results/ta_sinks.json --output /workspace/benchmark/hotp/ta/results/ta_vulnerable_destinations.json --devkit /workspace/optee_os/out/arm/export-ta_arm32  (cwd=/workspace/benchmark/hotp/ta)
+[phase3.4] → /workspace/benchmark/hotp/ta/results/ta_vulnerable_destinations.json
+
+[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/generate_call_graph.py --compile-db /workspace/benchmark/hotp/ta/compile_commands.json --output /workspace/benchmark/hotp/ta/results/ta_call_graph.json --devkit /workspace/optee_os/out/arm/export-ta_arm32  (cwd=/workspace/benchmark/hotp/ta)
+[phase3.5] → /workspace/benchmark/hotp/ta/results/ta_call_graph.json
+
+[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/function_call_chains.py --call-graph /workspace/benchmark/hotp/ta/results/ta_call_graph.json --vd-list /workspace/benchmark/hotp/ta/results/ta_vulnerable_destinations.json --output /workspace/benchmark/hotp/ta/results/ta_chains.json  (cwd=/workspace/benchmark/hotp/ta)
+[phase3.6] → /workspace/benchmark/hotp/ta/results/ta_chains.json
+
 [INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/extract_sink_calls.py --compile-db /workspace/benchmark/hotp/ta/compile_commands.json --sinks /workspace/benchmark/hotp/ta/results/ta_sinks.json --output /workspace/benchmark/hotp/ta/results/ta_vulnerable_destinations.json --devkit /workspace/optee_os/out/arm/export-ta_arm32  (cwd=/workspace/benchmark/hotp/ta)
 [phase3.7] → /workspace/benchmark/hotp/ta/results/ta_vulnerable_destinations.json
 
@@ -650,6 +554,186 @@ This warning is for project developers.  Use -Wno-dev to suppress it.
 [INFO] $ /usr/bin/python3 /workspace/src/identify_flows/generate_candidate_flows.py --chains /workspace/benchmark/random/ta/results/ta_chains.json --sources TA_InvokeCommandEntryPoint --output /workspace/benchmark/random/ta/results/ta_candidate_flows.json  (cwd=/workspace/benchmark/random/ta)
 [phase5 ] → /workspace/benchmark/random/ta/results/ta_candidate_flows.json
 
+[taint_analyzer] 4 個の候補フローを解析中...
+  [1/4] チェーン: TA_InvokeCommandEntryPoint -> random_number_generate -> TEE_Malloc
+  [2/4] チェーン: TA_InvokeCommandEntryPoint -> random_number_generate -> TEE_GenerateRandom
+  [3/4] チェーン: TA_InvokeCommandEntryPoint -> random_number_generate -> TEE_MemMove
+  [4/4] チェーン: TA_InvokeCommandEntryPoint -> random_number_generate -> TEE_Free
+[taint_analyzer] 解析完了: 2 件の脆弱性を検出
+  結果: /workspace/benchmark/random/ta/results/ta_vulnerabilities.json
+  ログ: /workspace/benchmark/random/ta/results/taint_analysis_log.txt
+[generate_report] HTMLレポートを生成しました: /workspace/benchmark/random/ta/results/ta_vulnerability_report.html
+  検出脆弱性数: 2
+  AI対話履歴を含めました: /workspace/benchmark/random/ta/results/taint_analysis_log.txt
+  対話チェーン数: 4
+make -C host CROSS_COMPILE="arm-linux-gnueabihf-" --no-builtin-variables \
+	TEEC_EXPORT=/workspace/benchmark/secure_storage/../../optee_client/out/export
+make[1]: Entering directory '/workspace/benchmark/secure_storage/host'
+arm-linux-gnueabihf-gcc -Wall -I../ta/include -I./include -I/workspace/benchmark/secure_storage/../../optee_client/out/export/include -c main.c -o main.o
+arm-linux-gnueabihf-gcc  -o optee_example_secure_storage main.o -lteec -L/workspace/benchmark/secure_storage/../../optee_client/out/export/lib
+make[1]: Leaving directory '/workspace/benchmark/secure_storage/host'
+make -C ta CROSS_COMPILE="arm-linux-gnueabihf-" LDFLAGS="" \
+	TA_DEV_KIT_DIR=/workspace/benchmark/secure_storage/../../optee_os/out/arm/export-ta_arm32
+make[1]: Entering directory '/workspace/benchmark/secure_storage/ta'
+make[1]: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'secure_storage_ta.o'.  Stop.
+make[1]: Leaving directory '/workspace/benchmark/secure_storage/ta'
+make: *** [Makefile:14: all] Error 2
+make: Entering directory '/workspace/benchmark/secure_storage/ta'
+make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'secure_storage_ta.o'.  Stop.
+make: Leaving directory '/workspace/benchmark/secure_storage/ta'
+-- The C compiler identification is GNU 11.4.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/arm-linux-gnueabihf-gcc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+CMake Warning (dev) in CMakeLists.txt:
+  No cmake_minimum_required command is present.  A line of code such as
+
+    cmake_minimum_required(VERSION 3.22)
+
+  should be added at the top of the file.  The version specified may be lower
+  if you wish to support older CMake versions for this project.  For more
+  information run "cmake --help-policy CMP0000".
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /workspace/benchmark/secure_storage/build
+呼び出し済み外部 API を抽出中...
+外部 API 関数: 10 個
+外部 API 関数をシンクとして解析中...
+抽出されたシンク候補: 16 個
+結果を /workspace/benchmark/secure_storage/ta/results/ta_sinks.json に保存しました
+[DEBUG] Include paths:
+  ✓ /workspace/benchmark/secure_storage/ta
+  ✓ /workspace/benchmark/secure_storage/ta/include
+  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
+[DEBUG] Parsing /workspace/benchmark/secure_storage/ta/secure_storage_ta.c
+  Args: -I/workspace/benchmark/secure_storage/ta -I/workspace/benchmark/secure_storage/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+  ✓ Parsed successfully (warnings: 0)
+[find_sink_calls] 32 call sites → /workspace/benchmark/secure_storage/ta/results/ta_vulnerable_destinations.json
+[DEBUG] Include paths:
+  ✓ /workspace/benchmark/secure_storage/ta
+  ✓ /workspace/benchmark/secure_storage/ta/include
+  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
+[DEBUG] Parsing /workspace/benchmark/secure_storage/ta/secure_storage_ta.c
+  Args: -I/workspace/benchmark/secure_storage/ta -I/workspace/benchmark/secure_storage/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+  ✓ Parsed successfully (warnings: 0)
+[generate_call_graph] 26 edges → /workspace/benchmark/secure_storage/ta/results/ta_call_graph.json
+[FunctionCallChains] 32 entries → /workspace/benchmark/secure_storage/ta/results/ta_chains.json
+[DEBUG] Include paths:
+  ✓ /workspace/benchmark/secure_storage/ta
+  ✓ /workspace/benchmark/secure_storage/ta/include
+  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
+[DEBUG] Parsing /workspace/benchmark/secure_storage/ta/secure_storage_ta.c
+  Args: -I/workspace/benchmark/secure_storage/ta -I/workspace/benchmark/secure_storage/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+  ✓ Parsed successfully (warnings: 0)
+[extract_sink_calls] 32 entries → /workspace/benchmark/secure_storage/ta/results/ta_vulnerable_destinations.json
+[DEBUG] 入力チェーン数: 32
+[DEBUG] ソース関数: ['TA_InvokeCommandEntryPoint']
+[DEBUG] ステップ1後: 82 CDFs
+[DEBUG] ユニークなVD数: 32
+[DEBUG] ステップ2後: 32 CDFs（最長チェーンのみ）
+[DEBUG] ステップ3後: 32 CDFs（0 個のサブチェーンを削除）
+[DEBUG] ステップ4: 24 グループ
+[DEBUG] ステップ4後: 24 CDFs（8 グループがマージされた）
+[DEBUG] 最終的な危険フロー:
+  - TEE_Malloc at line 52, params=[0]: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Malloc
+  - TEE_MemMove at line 56, params=[0, 2]: TA_InvokeCommandEntryPoint -> delete_object -> TEE_MemMove
+  - TEE_Free at line 68, params=[0]: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
+  - TEE_Free at line 73, params=[0]: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
+  - TEE_Malloc at line 100, params=[0]: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Malloc
+  - TEE_MemMove at line 104, params=[0, 2]: TA_InvokeCommandEntryPoint -> delete_object -> TEE_MemMove
+  - TEE_Malloc at line 107, params=[0]: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Malloc
+  - TEE_MemMove at line 110, params=[0, 2]: TA_InvokeCommandEntryPoint -> delete_object -> TEE_MemMove
+  - TEE_CreatePersistentObject at line 120, params=[1, 2]: TA_InvokeCommandEntryPoint -> create_raw_object -> TEE_CreatePersistentObject
+  - TEE_Free at line 128, params=[0]: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
+  - TEE_Free at line 129, params=[0]: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
+  - TEE_WriteObjectData at line 133, params=[0, 2]: TA_InvokeCommandEntryPoint -> create_raw_object -> TEE_WriteObjectData
+  - TEE_Free at line 140, params=[0]: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
+  - TEE_Free at line 141, params=[0]: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
+  - TEE_Malloc at line 168, params=[0]: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Malloc
+  - TEE_MemMove at line 172, params=[0, 2]: TA_InvokeCommandEntryPoint -> delete_object -> TEE_MemMove
+  - TEE_Malloc at line 175, params=[0]: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Malloc
+  - TEE_Free at line 190, params=[0]: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
+  - TEE_Free at line 191, params=[0]: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
+  - TEE_GetObjectInfo1 at line 195, params=[0]: TA_InvokeCommandEntryPoint -> read_raw_object -> TEE_GetObjectInfo1
+  - TEE_ReadObjectData at line 211, params=[0, 2]: TA_InvokeCommandEntryPoint -> read_raw_object -> TEE_ReadObjectData
+  - TEE_MemMove at line 214, params=[0, 2]: TA_InvokeCommandEntryPoint -> delete_object -> TEE_MemMove
+  - TEE_Free at line 225, params=[0]: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
+  - TEE_Free at line 226, params=[0]: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
+
+[generate_candidate_flows] 24 件 → /workspace/benchmark/secure_storage/ta/results/ta_candidate_flows.json
+[taint_analyzer] 24 個の候補フローを解析中...
+  [1/24] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Malloc
+  [2/24] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_MemMove
+  [3/24] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
+  [4/24] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
+  [5/24] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Malloc
+  [6/24] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_MemMove
+  [7/24] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Malloc
+  [8/24] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_MemMove
+  [9/24] チェーン: TA_InvokeCommandEntryPoint -> create_raw_object -> TEE_CreatePersistentObject
+  [10/24] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
+  [11/24] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
+  [12/24] チェーン: TA_InvokeCommandEntryPoint -> create_raw_object -> TEE_WriteObjectData
+  [13/24] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
+  [14/24] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
+  [15/24] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Malloc
+  [16/24] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_MemMove
+  [17/24] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Malloc
+  [18/24] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
+  [19/24] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
+  [20/24] チェーン: TA_InvokeCommandEntryPoint -> read_raw_object -> TEE_GetObjectInfo1
+  [21/24] チェーン: TA_InvokeCommandEntryPoint -> read_raw_object -> TEE_ReadObjectData
+  [22/24] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_MemMove
+  [23/24] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
+  [24/24] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
+[taint_analyzer] 解析完了: 18 件の脆弱性を検出
+  結果: /workspace/benchmark/secure_storage/ta/results/ta_vulnerabilities.json
+  ログ: /workspace/benchmark/secure_storage/ta/results/taint_analysis_log.txt
+[generate_report] HTMLレポートを生成しました: /workspace/benchmark/secure_storage/ta/results/ta_vulnerability_report.html
+  検出脆弱性数: 18
+  AI対話履歴を含めました: /workspace/benchmark/secure_storage/ta/results/taint_analysis_log.txt
+  対話チェーン数: 7
+make -C host CROSS_COMPILE="arm-linux-gnueabihf-" --no-builtin-variables \
+	TEEC_EXPORT=/workspace/benchmark/secvideo_demo/../../optee_client/out/export
+make[1]: Entering directory '/workspace/benchmark/secvideo_demo/host'
+arm-linux-gnueabihf-gcc -o secvideo_demo secvideo_demo.o -lteec -L/workspace/benchmark/secvideo_demo/../../optee_client/out/export/lib -lpthread
+/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: secvideo_demo.o: relocation R_ARM_THM_MOVW_ABS_NC against `stderr@@GLIBC_2.4' can not be used when making a shared object; recompile with -fPIC
+/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: secvideo_demo.o(.text+0x4): unresolvable R_ARM_THM_MOVW_ABS_NC relocation against symbol `stderr@@GLIBC_2.4'
+/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: final link failed
+collect2: error: ld returned 1 exit status
+make[1]: *** [Makefile:21: secvideo_demo] Error 1
+make[1]: Leaving directory '/workspace/benchmark/secvideo_demo/host'
+make: *** [Makefile:12: all] Error 2
+make: Entering directory '/workspace/benchmark/secvideo_demo/ta'
+make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'secvideo_demo_ta.o'.  Stop.
+make: Leaving directory '/workspace/benchmark/secvideo_demo/ta'
+make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'secvideo_demo_ta.o'.  Stop.
+呼び出し済み外部 API を抽出中...
+外部 API 関数: 11 個
+外部 API 関数をシンクとして解析中...
+抽出されたシンク候補: 20 個
+結果を /workspace/benchmark/secvideo_demo/ta/results/ta_sinks.json に保存しました
+[DEBUG] Include paths:
+  ✓ /workspace/benchmark/secvideo_demo/ta
+  ✓ /workspace/benchmark/secvideo_demo/ta/include
+  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
+[DEBUG] Parsing /workspace/benchmark/secvideo_demo/ta/secvideo_demo_ta.c
+  Args: -I/workspace/benchmark/secvideo_demo/ta -I/workspace/benchmark/secvideo_demo/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+  ✓ Parsed successfully (warnings: 0)
+[find_sink_calls] 17 call sites → /workspace/benchmark/secvideo_demo/ta/results/ta_vulnerable_destinations.json
+[DEBUG] Include paths:
+  ✓ /workspace/benchmark/secvideo_demo/ta
+  ✓ /workspace/benchmark/secvideo_demo/ta/include
+  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
+[DEBUG] Parsing /workspace/benchmark/secvideo_demo/ta/secvideo_demo_ta.c
+  Args: -I/workspace/benchmark/secvideo_demo/ta -I/workspace/benchmark/secvideo_demo/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+  ✓ Parsed successfully (warnings: 0)
+[generate_call_graph] 20 edges → /workspace/benchmark/secvideo_demo/ta/results/ta_call_graph.json
+[FunctionCallChains] 17 entries → /workspace/benchmark/secvideo_demo/ta/results/ta_chains.json
 [INFO] $ /usr/bin/python3 /workspace/src/analyze_vulnerabilities/taint_analyzer.py --flows /workspace/benchmark/random/ta/results/ta_candidate_flows.json --phase12 /workspace/benchmark/random/ta/results/ta_phase12.json --output /workspace/benchmark/random/ta/results/ta_vulnerabilities.json  (cwd=/workspace/benchmark/random/ta)
 [phase6 ] → /workspace/benchmark/random/ta/results/ta_vulnerabilities.json
 
@@ -681,136 +765,6 @@ This warning is for project developers.  Use -Wno-dev to suppress it.
 [phase3.4] → /workspace/benchmark/secure_storage/ta/results/ta_vulnerable_destinations.json
 
 [INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/generate_call_graph.py --compile-db /workspace/benchmark/secure_storage/ta/compile_commands.json --output /workspace/benchmark/secure_storage/ta/results/ta_call_graph.json --devkit /workspace/optee_os/out/arm/export-ta_arm32  (cwd=/workspace/benchmark/secure_storage/ta)
-[FunctionCallChains] 31 entries → /workspace/benchmark/secure_storage/ta/results/ta_chains.json
-[DEBUG] Include paths:
-  ✓ /workspace/benchmark/secure_storage/ta
-  ✓ /workspace/benchmark/secure_storage/ta/include
-  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/secure_storage/ta/secure_storage_ta.c
-  Args: -I/workspace/benchmark/secure_storage/ta -I/workspace/benchmark/secure_storage/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[extract_sink_calls] 31 entries → /workspace/benchmark/secure_storage/ta/results/ta_vulnerable_destinations.json
-[generate_candidate_flows] 17 件 → /workspace/benchmark/secure_storage/ta/results/ta_candidate_flows.json
-[taint_analyzer] 17 個の候補フローを解析中...
-  [1/17] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Malloc
-  [2/17] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
-  [3/17] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
-  [4/17] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Malloc
-  [5/17] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Malloc
-  [6/17] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
-  [7/17] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
-  [8/17] チェーン: TA_InvokeCommandEntryPoint -> create_raw_object -> TEE_WriteObjectData
-  [9/17] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
-  [10/17] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
-  [11/17] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Malloc
-  [12/17] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Malloc
-  [13/17] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
-  [14/17] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
-  [15/17] チェーン: TA_InvokeCommandEntryPoint -> read_raw_object -> TEE_GetObjectInfo1
-  [16/17] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
-  [17/17] チェーン: TA_InvokeCommandEntryPoint -> delete_object -> TEE_Free
-[taint_analyzer] 解析完了: 17 件の脆弱性を検出
-  結果: /workspace/benchmark/secure_storage/ta/results/ta_vulnerabilities.json
-  ログ: /workspace/benchmark/secure_storage/ta/results/taint_analysis_log.txt
-[generate_report] HTMLレポートを生成しました: /workspace/benchmark/secure_storage/ta/results/ta_vulnerability_report.html
-  検出脆弱性数: 17
-  AI対話履歴を含めました: /workspace/benchmark/secure_storage/ta/results/taint_analysis_log.txt
-  対話チェーン数: 4
-make -C host CROSS_COMPILE="arm-linux-gnueabihf-" --no-builtin-variables \
-	TEEC_EXPORT=/workspace/benchmark/secvideo_demo/../../optee_client/out/export
-make[1]: Entering directory '/workspace/benchmark/secvideo_demo/host'
-arm-linux-gnueabihf-gcc -o secvideo_demo secvideo_demo.o -lteec -L/workspace/benchmark/secvideo_demo/../../optee_client/out/export/lib -lpthread
-/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: secvideo_demo.o: relocation R_ARM_THM_MOVW_ABS_NC against `stderr@@GLIBC_2.4' can not be used when making a shared object; recompile with -fPIC
-/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: secvideo_demo.o(.text+0x4): unresolvable R_ARM_THM_MOVW_ABS_NC relocation against symbol `stderr@@GLIBC_2.4'
-/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: final link failed
-collect2: error: ld returned 1 exit status
-make[1]: *** [Makefile:21: secvideo_demo] Error 1
-make[1]: Leaving directory '/workspace/benchmark/secvideo_demo/host'
-make: *** [Makefile:12: all] Error 2
-make: Entering directory '/workspace/benchmark/secvideo_demo/ta'
-make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'secvideo_demo_ta.o'.  Stop.
-make: Leaving directory '/workspace/benchmark/secvideo_demo/ta'
-make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'secvideo_demo_ta.o'.  Stop.
-呼び出し済み外部 API を抽出中...
-外部 API 関数: 11 個
-外部 API 関数をシンクとして解析中...
-抽出されたシンク候補: 17 個
-結果を /workspace/benchmark/secvideo_demo/ta/results/ta_sinks.json に保存しました
-[DEBUG] Include paths:
-  ✓ /workspace/benchmark/secvideo_demo/ta
-  ✓ /workspace/benchmark/secvideo_demo/ta/include
-  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/secvideo_demo/ta/secvideo_demo_ta.c
-  Args: -I/workspace/benchmark/secvideo_demo/ta -I/workspace/benchmark/secvideo_demo/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[find_sink_calls] 16 call sites → /workspace/benchmark/secvideo_demo/ta/results/ta_vulnerable_destinations.json
-[DEBUG] Include paths:
-  ✓ /workspace/benchmark/secvideo_demo/ta
-  ✓ /workspace/benchmark/secvideo_demo/ta/include
-  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/secvideo_demo/ta/secvideo_demo_ta.c
-  Args: -I/workspace/benchmark/secvideo_demo/ta -I/workspace/benchmark/secvideo_demo/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[generate_call_graph] 20 edges → /workspace/benchmark/secvideo_demo/ta/results/ta_call_graph.json
-[FunctionCallChains] 16 entries → /workspace/benchmark/secvideo_demo/ta/results/ta_chains.json
-[DEBUG] Include paths:
-  ✓ /workspace/benchmark/secvideo_demo/ta
-  ✓ /workspace/benchmark/secvideo_demo/ta/include
-  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/secvideo_demo/ta/secvideo_demo_ta.c
-  Args: -I/workspace/benchmark/secvideo_demo/ta -I/workspace/benchmark/secvideo_demo/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[extract_sink_calls] 16 entries → /workspace/benchmark/secvideo_demo/ta/results/ta_vulnerable_destinations.json
-[generate_candidate_flows] 2 件 → /workspace/benchmark/secvideo_demo/ta/results/ta_candidate_flows.json
-[taint_analyzer] 2 個の候補フローを解析中...
-  [1/2] チェーン: TA_InvokeCommandEntryPoint -> clear_screen -> TEE_Malloc
-  [2/2] チェーン: TA_InvokeCommandEntryPoint -> clear_screen -> TEE_Free
-[taint_analyzer] 解析完了: 2 件の脆弱性を検出
-  結果: /workspace/benchmark/secvideo_demo/ta/results/ta_vulnerabilities.json
-  ログ: /workspace/benchmark/secvideo_demo/ta/results/taint_analysis_log.txt
-[generate_report] HTMLレポートを生成しました: /workspace/benchmark/secvideo_demo/ta/results/ta_vulnerability_report.html
-  検出脆弱性数: 2
-  AI対話履歴を含めました: /workspace/benchmark/secvideo_demo/ta/results/taint_analysis_log.txt
-  対話チェーン数: 2
-make -C host CROSS_COMPILE="arm-linux-gnueabihf-" --no-builtin-variables  \
-	TEEC_EXPORT=/workspace/benchmark/optee-fiovb/../../optee_client/out/export
-make[1]: Entering directory '/workspace/benchmark/optee-fiovb/host'
-arm-linux-gnueabihf-gcc -o fiovb main.o  -lteec -L/workspace/benchmark/optee-fiovb/../../optee_client/out/export/lib
-/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: main.o: relocation R_ARM_THM_MOVW_ABS_NC against `a local symbol' can not be used when making a shared object; recompile with -fPIC
-/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: main.o(.text+0x20): unresolvable R_ARM_THM_CALL relocation against symbol `TEEC_InitializeContext'
-/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: final link failed
-collect2: error: ld returned 1 exit status
-make[1]: *** [Makefile:21: fiovb] Error 1
-make[1]: Leaving directory '/workspace/benchmark/optee-fiovb/host'
-make: *** [Makefile:17: all] Error 2
-make: Entering directory '/workspace/benchmark/optee-fiovb/ta'
-make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'entry.o'.  Stop.
-make: Leaving directory '/workspace/benchmark/optee-fiovb/ta'
--- The C compiler identification is GNU 11.4.0
--- Detecting C compiler ABI info
--- Detecting C compiler ABI info - done
--- Check for working C compiler: /usr/bin/arm-linux-gnueabihf-gcc - skipped
--- Detecting C compile features
--- Detecting C compile features - done
-CMake Error at CMakeLists.txt:31 (install):
-  install FILES given no DESTINATION!
-
-
-CMake Warning (dev) in CMakeLists.txt:
-  No cmake_minimum_required command is present.  A line of code such as
-
-    cmake_minimum_required(VERSION 3.22)
-
-  should be added at the top of the file.  The version specified may be lower
-  if you wish to support older CMake versions for this project.  For more
-  information run "cmake --help-policy CMP0000".
-This warning is for project developers.  Use -Wno-dev to suppress it.
-
--- Configuring incomplete, errors occurred!
-See also "/workspace/benchmark/optee-fiovb/build/CMakeFiles/CMakeOutput.log".
-gmake: Makefile: No such file or directory
-gmake: *** No rule to make target 'Makefile'.  Stop.
-make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'entry.o'.  Stop.
 [phase3.5] → /workspace/benchmark/secure_storage/ta/results/ta_call_graph.json
 
 [INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/function_call_chains.py --call-graph /workspace/benchmark/secure_storage/ta/results/ta_call_graph.json --vd-list /workspace/benchmark/secure_storage/ta/results/ta_vulnerable_destinations.json --output /workspace/benchmark/secure_storage/ta/results/ta_chains.json  (cwd=/workspace/benchmark/secure_storage/ta)
@@ -857,6 +811,275 @@ make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-
 [phase3.5] → /workspace/benchmark/secvideo_demo/ta/results/ta_call_graph.json
 
 [INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/function_call_chains.py --call-graph /workspace/benchmark/secvideo_demo/ta/results/ta_call_graph.json --vd-list /workspace/benchmark/secvideo_demo/ta/results/ta_vulnerable_destinations.json --output /workspace/benchmark/secvideo_demo/ta/results/ta_chains.json  (cwd=/workspace/benchmark/secvideo_demo/ta)
+[DEBUG] Include paths:
+  ✓ /workspace/benchmark/secvideo_demo/ta
+  ✓ /workspace/benchmark/secvideo_demo/ta/include
+  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
+[DEBUG] Parsing /workspace/benchmark/secvideo_demo/ta/secvideo_demo_ta.c
+  Args: -I/workspace/benchmark/secvideo_demo/ta -I/workspace/benchmark/secvideo_demo/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+  ✓ Parsed successfully (warnings: 0)
+[extract_sink_calls] 17 entries → /workspace/benchmark/secvideo_demo/ta/results/ta_vulnerable_destinations.json
+[DEBUG] 入力チェーン数: 17
+[DEBUG] ソース関数: ['TA_InvokeCommandEntryPoint']
+[DEBUG] ステップ1後: 17 CDFs
+[DEBUG] ユニークなVD数: 17
+[DEBUG] ステップ2後: 17 CDFs（最長チェーンのみ）
+[DEBUG] ステップ3後: 17 CDFs（0 個のサブチェーンを削除）
+[DEBUG] ステップ4: 10 グループ
+[DEBUG] ステップ4後: 10 CDFs（6 グループがマージされた）
+[DEBUG] 最終的な危険フロー:
+  - TEE_Malloc at line 107, params=[0]: TA_InvokeCommandEntryPoint -> clear_screen -> TEE_Malloc
+  - memset at line 110, params=[0, 2]: TA_InvokeCommandEntryPoint -> clear_screen -> memset
+  - TEE_Free at line 117, params=[0]: TA_InvokeCommandEntryPoint -> clear_screen -> TEE_Free
+  - TEE_AllocateTransientObject at line 135, params=[0, 1]: TA_InvokeCommandEntryPoint -> image_data -> decrypt -> TEE_AllocateTransientObject
+  - TEE_PopulateTransientObject at line 143, params=[1, 2]: TA_InvokeCommandEntryPoint -> image_data -> decrypt -> TEE_PopulateTransientObject
+  - TEE_SetOperationKey at line 147, params=[0, 1]: TA_InvokeCommandEntryPoint -> image_data -> decrypt -> TEE_SetOperationKey
+  - TEE_FreeTransientObject at line 150, params=[0]: TA_InvokeCommandEntryPoint -> image_data -> decrypt -> TEE_FreeTransientObject
+  - TEE_CipherInit at line 154, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> image_data -> decrypt -> TEE_CipherInit
+  - TEE_CipherDoFinal at line 158, params=[0, 2]: TA_InvokeCommandEntryPoint -> image_data -> decrypt -> TEE_CipherDoFinal
+  - TEE_CheckMemoryAccessRights at line 197, params=[0]: TA_InvokeCommandEntryPoint -> image_data -> TEE_CheckMemoryAccessRights
+
+[generate_candidate_flows] 10 件 → /workspace/benchmark/secvideo_demo/ta/results/ta_candidate_flows.json
+[taint_analyzer] 10 個の候補フローを解析中...
+  [1/10] チェーン: TA_InvokeCommandEntryPoint -> clear_screen -> TEE_Malloc
+  [2/10] チェーン: TA_InvokeCommandEntryPoint -> clear_screen -> memset
+  [3/10] チェーン: TA_InvokeCommandEntryPoint -> clear_screen -> TEE_Free
+  [4/10] チェーン: TA_InvokeCommandEntryPoint -> image_data -> decrypt -> TEE_AllocateTransientObject
+  [5/10] チェーン: TA_InvokeCommandEntryPoint -> image_data -> decrypt -> TEE_PopulateTransientObject
+  [6/10] チェーン: TA_InvokeCommandEntryPoint -> image_data -> decrypt -> TEE_SetOperationKey
+  [7/10] チェーン: TA_InvokeCommandEntryPoint -> image_data -> decrypt -> TEE_FreeTransientObject
+  [8/10] チェーン: TA_InvokeCommandEntryPoint -> image_data -> decrypt -> TEE_CipherInit
+  [9/10] チェーン: TA_InvokeCommandEntryPoint -> image_data -> decrypt -> TEE_CipherDoFinal
+  [10/10] チェーン: TA_InvokeCommandEntryPoint -> image_data -> TEE_CheckMemoryAccessRights
+[taint_analyzer] 解析完了: 2 件の脆弱性を検出
+  結果: /workspace/benchmark/secvideo_demo/ta/results/ta_vulnerabilities.json
+  ログ: /workspace/benchmark/secvideo_demo/ta/results/taint_analysis_log.txt
+[generate_report] HTMLレポートを生成しました: /workspace/benchmark/secvideo_demo/ta/results/ta_vulnerability_report.html
+  検出脆弱性数: 2
+  AI対話履歴を含めました: /workspace/benchmark/secvideo_demo/ta/results/taint_analysis_log.txt
+  対話チェーン数: 10
+make -C host CROSS_COMPILE="arm-linux-gnueabihf-" --no-builtin-variables  \
+	TEEC_EXPORT=/workspace/benchmark/optee-fiovb/../../optee_client/out/export
+make[1]: Entering directory '/workspace/benchmark/optee-fiovb/host'
+make[1]: Nothing to be done for 'all'.
+make[1]: Leaving directory '/workspace/benchmark/optee-fiovb/host'
+make -C ta CROSS_COMPILE="arm-linux-gnueabihf-" LDFLAGS=""  \
+	TA_DEV_KIT_DIR=/workspace/benchmark/optee-fiovb/../../optee_os/out/arm/export-ta_arm32
+make[1]: Entering directory '/workspace/benchmark/optee-fiovb/ta'
+make[1]: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'entry.o'.  Stop.
+make[1]: Leaving directory '/workspace/benchmark/optee-fiovb/ta'
+make: *** [Makefile:18: all] Error 2
+make: Entering directory '/workspace/benchmark/optee-fiovb/ta'
+make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'entry.o'.  Stop.
+make: Leaving directory '/workspace/benchmark/optee-fiovb/ta'
+-- The C compiler identification is GNU 11.4.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/arm-linux-gnueabihf-gcc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+CMake Error at CMakeLists.txt:31 (install):
+  install FILES given no DESTINATION!
+
+
+CMake Warning (dev) in CMakeLists.txt:
+  No cmake_minimum_required command is present.  A line of code such as
+
+    cmake_minimum_required(VERSION 3.22)
+
+  should be added at the top of the file.  The version specified may be lower
+  if you wish to support older CMake versions for this project.  For more
+  information run "cmake --help-policy CMP0000".
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+-- Configuring incomplete, errors occurred!
+See also "/workspace/benchmark/optee-fiovb/build/CMakeFiles/CMakeOutput.log".
+gmake: Makefile: No such file or directory
+gmake: *** No rule to make target 'Makefile'.  Stop.
+make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'entry.o'.  Stop.
+呼び出し済み外部 API を抽出中...
+外部 API 関数: 12 個
+外部 API 関数をシンクとして解析中...
+抽出されたシンク候補: 19 個
+結果を /workspace/benchmark/optee-fiovb/ta/results/ta_sinks.json に保存しました
+[DEBUG] Include paths:
+  ✓ /workspace/benchmark/optee-fiovb/ta
+  ✓ /workspace/benchmark/optee-fiovb/ta/include
+  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
+[DEBUG] Parsing /workspace/benchmark/optee-fiovb/ta/entry.c
+  Args: -I/workspace/benchmark/optee-fiovb/ta -I/workspace/benchmark/optee-fiovb/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+  ✓ Parsed successfully (warnings: 0)
+[find_sink_calls] 37 call sites → /workspace/benchmark/optee-fiovb/ta/results/ta_vulnerable_destinations.json
+[DEBUG] Include paths:
+  ✓ /workspace/benchmark/optee-fiovb/ta
+  ✓ /workspace/benchmark/optee-fiovb/ta/include
+  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
+[DEBUG] Parsing /workspace/benchmark/optee-fiovb/ta/entry.c
+  Args: -I/workspace/benchmark/optee-fiovb/ta -I/workspace/benchmark/optee-fiovb/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+  ✓ Parsed successfully (warnings: 0)
+[generate_call_graph] 50 edges → /workspace/benchmark/optee-fiovb/ta/results/ta_call_graph.json
+[FunctionCallChains] 37 entries → /workspace/benchmark/optee-fiovb/ta/results/ta_chains.json
+[DEBUG] Include paths:
+  ✓ /workspace/benchmark/optee-fiovb/ta
+  ✓ /workspace/benchmark/optee-fiovb/ta/include
+  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
+[DEBUG] Parsing /workspace/benchmark/optee-fiovb/ta/entry.c
+  Args: -I/workspace/benchmark/optee-fiovb/ta -I/workspace/benchmark/optee-fiovb/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+  ✓ Parsed successfully (warnings: 0)
+[extract_sink_calls] 37 entries → /workspace/benchmark/optee-fiovb/ta/results/ta_vulnerable_destinations.json
+[DEBUG] 入力チェーン数: 37
+[DEBUG] ソース関数: ['TA_InvokeCommandEntryPoint']
+[DEBUG] ステップ1後: 130 CDFs
+[DEBUG] ユニークなVD数: 37
+[DEBUG] ステップ2後: 37 CDFs（最長チェーンのみ）
+[DEBUG] ステップ3後: 37 CDFs（0 個のサブチェーンを削除）
+[DEBUG] ステップ4: 21 グループ
+[DEBUG] ステップ4後: 21 CDFs（9 グループがマージされた）
+[DEBUG] 最終的な危険フロー:
+  - strlen at line 29, params=[0]: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> strlen
+  - TEE_MemMove at line 36, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> TEE_MemMove
+  - TEE_MemMove at line 39, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> TEE_MemMove
+  - TEE_CreatePersistentObject at line 89, params=[1, 2]: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> write_value -> TEE_CreatePersistentObject
+  - TEE_ReadObjectData at line 128, params=[0, 2]: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> TEE_ReadObjectData
+  - TEE_CloseAndDeletePersistentObject1 at line 159, params=[0]: TA_InvokeCommandEntryPoint -> delete_persist_value -> delete_value -> TEE_CloseAndDeletePersistentObject1
+  - strlen at line 173, params=[0]: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> strlen
+  - strlen at line 192, params=[0]: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> strlen
+  - strlen at line 222, params=[0]: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> strlen
+  - strncmp at line 260, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> write_persist_value -> strncmp
+  - strlen at line 260, params=[0]: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> strlen
+  - TEE_Malloc at line 264, params=[0]: TA_InvokeCommandEntryPoint -> write_persist_value -> TEE_Malloc
+  - TEE_MemMove at line 268, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> TEE_MemMove
+  - strncmp at line 281, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> write_persist_value -> strncmp
+  - strlen at line 281, params=[0]: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> strlen
+  - TEE_Free at line 289, params=[0]: TA_InvokeCommandEntryPoint -> write_persist_value -> TEE_Free
+  - TEE_Malloc at line 320, params=[0]: TA_InvokeCommandEntryPoint -> write_persist_value -> TEE_Malloc
+  - TEE_MemMove at line 326, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> TEE_MemMove
+  - TEE_Free at line 331, params=[0]: TA_InvokeCommandEntryPoint -> write_persist_value -> TEE_Free
+  - strncmp at line 356, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> write_persist_value -> strncmp
+  - strlen at line 356, params=[0]: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> strlen
+
+[generate_candidate_flows] 21 件 → /workspace/benchmark/optee-fiovb/ta/results/ta_candidate_flows.json
+[taint_analyzer] 21 個の候補フローを解析中...
+  [1/21] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> strlen
+  [2/21] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> TEE_MemMove
+  [3/21] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> TEE_MemMove
+  [4/21] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> write_value -> TEE_CreatePersistentObject
+  [5/21] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> TEE_ReadObjectData
+  [6/21] チェーン: TA_InvokeCommandEntryPoint -> delete_persist_value -> delete_value -> TEE_CloseAndDeletePersistentObject1
+  [7/21] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> strlen
+  [8/21] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> strlen
+  [9/21] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> strlen
+  [10/21] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> strncmp
+  [11/21] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> strlen
+  [12/21] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> TEE_Malloc
+  [13/21] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> TEE_MemMove
+  [14/21] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> strncmp
+  [15/21] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> strlen
+  [16/21] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> TEE_Free
+  [17/21] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> TEE_Malloc
+  [18/21] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> TEE_MemMove
+  [19/21] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> TEE_Free
+  [20/21] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> strncmp
+  [21/21] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> strlen
+[taint_analyzer] 解析完了: 12 件の脆弱性を検出
+  結果: /workspace/benchmark/optee-fiovb/ta/results/ta_vulnerabilities.json
+  ログ: /workspace/benchmark/optee-fiovb/ta/results/taint_analysis_log.txt
+[generate_report] HTMLレポートを生成しました: /workspace/benchmark/optee-fiovb/ta/results/ta_vulnerability_report.html
+  検出脆弱性数: 12
+  AI対話履歴を含めました: /workspace/benchmark/optee-fiovb/ta/results/taint_analysis_log.txt
+  対話チェーン数: 8
+make -C host CROSS_COMPILE="arm-linux-gnueabihf-" --no-builtin-variables  \
+	TEEC_EXPORT=/workspace/benchmark/optee-sdp/../../optee_client/out/export
+make[1]: Entering directory '/workspace/benchmark/optee-sdp/host'
+arm-linux-gnueabihf-gcc -Wall -I../ta/include -I./ -I/workspace/benchmark/optee-sdp/../../optee_client/out/export/include -c smaf-optee.c -o smaf-optee.o
+smaf-optee.c: In function ‘sdp_ta_region_create’:
+smaf-optee.c:33:9: warning: implicit declaration of function ‘memset’ [-Wimplicit-function-declaration]
+   33 |         memset(&op, 0, sizeof(op));
+      |         ^~~~~~
+smaf-optee.c:10:1: note: include ‘<string.h>’ or provide a declaration of ‘memset’
+    9 | #include <tee_client_api.h>
+  +++ |+#include <string.h>
+   10 | 
+smaf-optee.c:33:9: warning: incompatible implicit declaration of built-in function ‘memset’ [-Wbuiltin-declaration-mismatch]
+   33 |         memset(&op, 0, sizeof(op));
+      |         ^~~~~~
+smaf-optee.c:33:9: note: include ‘<string.h>’ or provide a declaration of ‘memset’
+smaf-optee.c:30:21: warning: variable ‘res’ set but not used [-Wunused-but-set-variable]
+   30 |         TEEC_Result res;
+      |                     ^~~
+smaf-optee.c: In function ‘sdp_ta_region_destroy’:
+smaf-optee.c:52:9: warning: incompatible implicit declaration of built-in function ‘memset’ [-Wbuiltin-declaration-mismatch]
+   52 |         memset(&op, 0, sizeof(op));
+      |         ^~~~~~
+smaf-optee.c:52:9: note: include ‘<string.h>’ or provide a declaration of ‘memset’
+smaf-optee.c:49:21: warning: variable ‘res’ set but not used [-Wunused-but-set-variable]
+   49 |         TEEC_Result res;
+      |                     ^~~
+smaf-optee.c: In function ‘sdp_ta_region_update’:
+smaf-optee.c:71:9: warning: incompatible implicit declaration of built-in function ‘memset’ [-Wbuiltin-declaration-mismatch]
+   71 |         memset(&op, 0, sizeof(op));
+      |         ^~~~~~
+smaf-optee.c:71:9: note: include ‘<string.h>’ or provide a declaration of ‘memset’
+smaf-optee.c:68:21: warning: variable ‘res’ set but not used [-Wunused-but-set-variable]
+   68 |         TEEC_Result res;
+      |                     ^~~
+smaf-optee.c: In function ‘sdp_init_session’:
+smaf-optee.c:96:21: warning: variable ‘res’ set but not used [-Wunused-but-set-variable]
+   96 |         TEEC_Result res;
+      |                     ^~~
+smaf-optee.c: In function ‘smaf_optee_ta_dump_status’:
+smaf-optee.c:123:9: warning: incompatible implicit declaration of built-in function ‘memset’ [-Wbuiltin-declaration-mismatch]
+  123 |         memset(&op, 0, sizeof(op));
+      |         ^~~~~~
+smaf-optee.c:123:9: note: include ‘<string.h>’ or provide a declaration of ‘memset’
+smaf-optee.c:130:16: warning: implicit declaration of function ‘malloc’ [-Wimplicit-function-declaration]
+  130 |         dump = malloc(MAX_DUMP_SIZE);
+      |                ^~~~~~
+smaf-optee.c:10:1: note: include ‘<stdlib.h>’ or provide a declaration of ‘malloc’
+    9 | #include <tee_client_api.h>
+  +++ |+#include <stdlib.h>
+   10 | 
+smaf-optee.c:130:16: warning: incompatible implicit declaration of built-in function ‘malloc’ [-Wbuiltin-declaration-mismatch]
+  130 |         dump = malloc(MAX_DUMP_SIZE);
+      |                ^~~~~~
+smaf-optee.c:130:16: note: include ‘<stdlib.h>’ or provide a declaration of ‘malloc’
+smaf-optee.c:137:9: warning: implicit declaration of function ‘printf’ [-Wimplicit-function-declaration]
+  137 |         printf("%s", dump);
+      |         ^~~~~~
+smaf-optee.c:10:1: note: include ‘<stdio.h>’ or provide a declaration of ‘printf’
+    9 | #include <tee_client_api.h>
+  +++ |+#include <stdio.h>
+   10 | 
+smaf-optee.c:137:9: warning: incompatible implicit declaration of built-in function ‘printf’ [-Wbuiltin-declaration-mismatch]
+  137 |         printf("%s", dump);
+      |         ^~~~~~
+smaf-optee.c:137:9: note: include ‘<stdio.h>’ or provide a declaration of ‘printf’
+smaf-optee.c:139:9: warning: implicit declaration of function ‘free’ [-Wimplicit-function-declaration]
+  139 |         free(dump);
+      |         ^~~~
+smaf-optee.c:139:9: note: include ‘<stdlib.h>’ or provide a declaration of ‘free’
+smaf-optee.c:139:9: warning: incompatible implicit declaration of built-in function ‘free’ [-Wbuiltin-declaration-mismatch]
+smaf-optee.c:139:9: note: include ‘<stdlib.h>’ or provide a declaration of ‘free’
+smaf-optee.c:119:21: warning: variable ‘res’ set but not used [-Wunused-but-set-variable]
+  119 |         TEEC_Result res;
+      |                     ^~~
+arm-linux-gnueabihf-gcc -o smaf-optee smaf-optee.o  -lteec -L/workspace/benchmark/optee-sdp/../../optee_client/out/export/lib
+make[1]: Leaving directory '/workspace/benchmark/optee-sdp/host'
+make -C ta CROSS_COMPILE="arm-linux-gnueabihf-" LDFLAGS="" \
+	TA_DEV_KIT_DIR=/workspace/benchmark/optee-sdp/../../optee_os/out/arm/export-ta_arm32
+make[1]: Entering directory '/workspace/benchmark/optee-sdp/ta'
+make[1]: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'sdp_ta.o'.  Stop.
+make[1]: Leaving directory '/workspace/benchmark/optee-sdp/ta'
+make: *** [Makefile:13: all] Error 2
+make: Entering directory '/workspace/benchmark/optee-sdp/ta'
+make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'sdp_ta.o'.  Stop.
+make: Leaving directory '/workspace/benchmark/optee-sdp/ta'
+make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'sdp_ta.o'.  Stop.
+呼び出し済み外部 API を抽出中...
+外部 API 関数: 13 個
+外部 API 関数をシンクとして解析中...
+抽出されたシンク候補: 46 個
+結果を /workspace/benchmark/optee-sdp/ta/results/ta_sinks.json に保存しました
 [phase3.6] → /workspace/benchmark/secvideo_demo/ta/results/ta_chains.json
 
 [INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/extract_sink_calls.py --compile-db /workspace/benchmark/secvideo_demo/ta/compile_commands.json --sinks /workspace/benchmark/secvideo_demo/ta/results/ta_sinks.json --output /workspace/benchmark/secvideo_demo/ta/results/ta_vulnerable_destinations.json --devkit /workspace/optee_os/out/arm/export-ta_arm32  (cwd=/workspace/benchmark/secvideo_demo/ta)
@@ -894,136 +1117,6 @@ make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-
   Args: -I/workspace/benchmark/optee-fiovb/ta -I/workspace/benchmark/optee-fiovb/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
 [phase1-2] → /workspace/benchmark/optee-fiovb/ta/results/ta_phase12.json
-呼び出し済み外部 API を抽出中...
-外部 API 関数: 12 個
-外部 API 関数をシンクとして解析中...
-抽出されたシンク候補: 24 個
-結果を /workspace/benchmark/optee-fiovb/ta/results/ta_sinks.json に保存しました
-[DEBUG] Include paths:
-  ✓ /workspace/benchmark/optee-fiovb/ta
-  ✓ /workspace/benchmark/optee-fiovb/ta/include
-  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/optee-fiovb/ta/entry.c
-  Args: -I/workspace/benchmark/optee-fiovb/ta -I/workspace/benchmark/optee-fiovb/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[find_sink_calls] 30 call sites → /workspace/benchmark/optee-fiovb/ta/results/ta_vulnerable_destinations.json
-[DEBUG] Include paths:
-  ✓ /workspace/benchmark/optee-fiovb/ta
-  ✓ /workspace/benchmark/optee-fiovb/ta/include
-  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/optee-fiovb/ta/entry.c
-  Args: -I/workspace/benchmark/optee-fiovb/ta -I/workspace/benchmark/optee-fiovb/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[generate_call_graph] 50 edges → /workspace/benchmark/optee-fiovb/ta/results/ta_call_graph.json
-[FunctionCallChains] 30 entries → /workspace/benchmark/optee-fiovb/ta/results/ta_chains.json
-[DEBUG] Include paths:
-  ✓ /workspace/benchmark/optee-fiovb/ta
-  ✓ /workspace/benchmark/optee-fiovb/ta/include
-  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/optee-fiovb/ta/entry.c
-  Args: -I/workspace/benchmark/optee-fiovb/ta -I/workspace/benchmark/optee-fiovb/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[extract_sink_calls] 30 entries → /workspace/benchmark/optee-fiovb/ta/results/ta_vulnerable_destinations.json
-[generate_candidate_flows] 14 件 → /workspace/benchmark/optee-fiovb/ta/results/ta_candidate_flows.json
-[taint_analyzer] 14 個の候補フローを解析中...
-  [1/14] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> strlen
-  [2/14] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> TEE_OpenPersistentObject
-  [3/14] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> TEE_OpenPersistentObject
-  [4/14] チェーン: TA_InvokeCommandEntryPoint -> delete_persist_value -> delete_value -> TEE_CloseAndDeletePersistentObject1
-  [5/14] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> strlen
-  [6/14] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> strlen
-  [7/14] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> strlen
-  [8/14] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> strlen
-  [9/14] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> TEE_Malloc
-  [10/14] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> strlen
-  [11/14] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> TEE_Free
-  [12/14] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> TEE_Malloc
-  [13/14] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> TEE_Free
-  [14/14] チェーン: TA_InvokeCommandEntryPoint -> write_persist_value -> increase_boot_firmware -> is_rollback_protected -> read_value -> get_named_object_name -> strlen
-[taint_analyzer] 解析完了: 13 件の脆弱性を検出
-  結果: /workspace/benchmark/optee-fiovb/ta/results/ta_vulnerabilities.json
-  ログ: /workspace/benchmark/optee-fiovb/ta/results/taint_analysis_log.txt
-[generate_report] HTMLレポートを生成しました: /workspace/benchmark/optee-fiovb/ta/results/ta_vulnerability_report.html
-  検出脆弱性数: 13
-  AI対話履歴を含めました: /workspace/benchmark/optee-fiovb/ta/results/taint_analysis_log.txt
-  対話チェーン数: 5
-make -C host CROSS_COMPILE="arm-linux-gnueabihf-" --no-builtin-variables  \
-	TEEC_EXPORT=/workspace/benchmark/optee-sdp/../../optee_client/out/export
-make[1]: Entering directory '/workspace/benchmark/optee-sdp/host'
-arm-linux-gnueabihf-gcc -o smaf-optee smaf-optee.o  -lteec -L/workspace/benchmark/optee-sdp/../../optee_client/out/export/lib
-/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: smaf-optee.o: relocation R_ARM_THM_MOVW_ABS_NC against `a local symbol' can not be used when making a shared object; recompile with -fPIC
-/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: smaf-optee.o(.text+0x10e): unresolvable R_ARM_THM_CALL relocation against symbol `TEEC_InitializeContext'
-/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: final link failed
-collect2: error: ld returned 1 exit status
-make[1]: *** [Makefile:21: smaf-optee] Error 1
-make[1]: Leaving directory '/workspace/benchmark/optee-sdp/host'
-make: *** [Makefile:12: all] Error 2
-make: Entering directory '/workspace/benchmark/optee-sdp/ta'
-make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'sdp_ta.o'.  Stop.
-make: Leaving directory '/workspace/benchmark/optee-sdp/ta'
-make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'sdp_ta.o'.  Stop.
-呼び出し済み外部 API を抽出中...
-外部 API 関数: 13 個
-外部 API 関数をシンクとして解析中...
-抽出されたシンク候補: 38 個
-結果を /workspace/benchmark/optee-sdp/ta/results/ta_sinks.json に保存しました
-[DEBUG] Include paths:
-  ✓ /workspace/benchmark/optee-sdp/ta
-  ✗ /workspace/benchmark/optee-sdp/ta/include
-  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/optee-sdp/ta/sdp_ta.c
-  Args: -I/workspace/benchmark/optee-sdp/ta -I/workspace/benchmark/optee-sdp/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/optee-sdp/ta/platform/stub.c
-  Args: -I/workspace/benchmark/optee-sdp/ta -I/workspace/benchmark/optee-sdp/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[find_sink_calls] 47 call sites → /workspace/benchmark/optee-sdp/ta/results/ta_vulnerable_destinations.json
-[DEBUG] Include paths:
-  ✓ /workspace/benchmark/optee-sdp/ta
-  ✗ /workspace/benchmark/optee-sdp/ta/include
-  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/optee-sdp/ta/sdp_ta.c
-  Args: -I/workspace/benchmark/optee-sdp/ta -I/workspace/benchmark/optee-sdp/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/optee-sdp/ta/platform/stub.c
-  Args: -I/workspace/benchmark/optee-sdp/ta -I/workspace/benchmark/optee-sdp/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[generate_call_graph] 25 edges → /workspace/benchmark/optee-sdp/ta/results/ta_call_graph.json
-[FunctionCallChains] 47 entries → /workspace/benchmark/optee-sdp/ta/results/ta_chains.json
-[DEBUG] Include paths:
-  ✓ /workspace/benchmark/optee-sdp/ta
-  ✗ /workspace/benchmark/optee-sdp/ta/include
-  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/optee-sdp/ta/sdp_ta.c
-  Args: -I/workspace/benchmark/optee-sdp/ta -I/workspace/benchmark/optee-sdp/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/optee-sdp/ta/platform/stub.c
-  Args: -I/workspace/benchmark/optee-sdp/ta -I/workspace/benchmark/optee-sdp/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[extract_sink_calls] 47 entries → /workspace/benchmark/optee-sdp/ta/results/ta_vulnerable_destinations.json
-[generate_candidate_flows] 1 件 → /workspace/benchmark/optee-sdp/ta/results/ta_candidate_flows.json
-[taint_analyzer] 1 個の候補フローを解析中...
-  [1/1] チェーン: TA_InvokeCommandEntryPoint -> update_region -> platform_find_device_by_name
-[taint_analyzer] 解析完了: 1 件の脆弱性を検出
-  結果: /workspace/benchmark/optee-sdp/ta/results/ta_vulnerabilities.json
-  ログ: /workspace/benchmark/optee-sdp/ta/results/taint_analysis_log.txt
-[generate_report] HTMLレポートを生成しました: /workspace/benchmark/optee-sdp/ta/results/ta_vulnerability_report.html
-  検出脆弱性数: 1
-  AI対話履歴を含めました: /workspace/benchmark/optee-sdp/ta/results/taint_analysis_log.txt
-  対話チェーン数: 1
-make -C host CROSS_COMPILE="arm-linux-gnueabihf-" --no-builtin-variables \
-	TEEC_EXPORT=/workspace/benchmark/basicAlg_use/../../optee_client/out/export
-make[1]: Entering directory '/workspace/benchmark/basicAlg_use/host'
-arm-linux-gnueabihf-gcc -lteec -L/workspace/benchmark/basicAlg_use/../../optee_client/out/export/lib -o basicAlgUse CryptoVerifyCaDebug.o CryptoVerifyCa.o CryptoVerifyCaTest.o
-/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: CryptoVerifyCaDebug.o: relocation R_ARM_THM_MOVW_ABS_NC against `a local symbol' can not be used when making a shared object; recompile with -fPIC
-/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: CryptoVerifyCa.o: relocation R_ARM_THM_MOVW_ABS_NC against `a local symbol' can not be used when making a shared object; recompile with -fPIC
-/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: CryptoVerifyCaTest.o: relocation R_ARM_THM_MOVW_ABS_NC against `a local symbol' can not be used when making a shared object; recompile with -fPIC
-/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: CryptoVerifyCaDebug.o(.text+0x3c): unresolvable R_ARM_THM_CALL relocation against symbol `printf@@GLIBC_2.4'
-/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: final link failed
-collect2: error: ld returned 1 exit status
-make[1]: *** [Makefile:23: basicAlgUse] Error 1
-make[1]: Leaving directory '/workspace/benchmark/basicAlg_use/host'
-make: *** [Makefile:12: all] Error 2
 [INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/identify_sinks.py -i /workspace/benchmark/optee-fiovb/ta/results/ta_phase12.json -o /workspace/benchmark/optee-fiovb/ta/results/ta_sinks.json  (cwd=/workspace/benchmark/optee-fiovb/ta)
 [phase3 ] → /workspace/benchmark/optee-fiovb/ta/results/ta_sinks.json
 
@@ -1073,182 +1166,112 @@ make: *** [Makefile:12: all] Error 2
 [INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/identify_sinks.py -i /workspace/benchmark/optee-sdp/ta/results/ta_phase12.json -o /workspace/benchmark/optee-sdp/ta/results/ta_sinks.json  (cwd=/workspace/benchmark/optee-sdp/ta)
 [phase3 ] → /workspace/benchmark/optee-sdp/ta/results/ta_sinks.json
 
-[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/find_sink_calls.py --compile-db /workspace/benchmark/optee-sdp/ta/compile_commands.json --sinks /workspace/benchmark/optee-sdp/ta/results/ta_sinks.json --output /workspace/benchmark/optee-sdp/ta/results/ta_vulnerable_destinations.json --devkit /workspace/optee_os/out/arm/export-ta_arm32  (cwd=/workspace/benchmark/optee-sdp/ta)
-[phase3.4] → /workspace/benchmark/optee-sdp/ta/results/ta_vulnerable_destinations.json
-
-[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/generate_call_graph.py --compile-db /workspace/benchmark/optee-sdp/ta/compile_commands.json --output /workspace/benchmark/optee-sdp/ta/results/ta_call_graph.json --devkit /workspace/optee_os/out/arm/export-ta_arm32  (cwd=/workspace/benchmark/optee-sdp/ta)
-[phase3.5] → /workspace/benchmark/optee-sdp/ta/results/ta_call_graph.json
-
-[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/function_call_chains.py --call-graph /workspace/benchmark/optee-sdp/ta/results/ta_call_graph.json --vd-list /workspace/benchmark/optee-sdp/ta/results/ta_vulnerable_destinations.json --output /workspace/benchmark/optee-sdp/ta/results/ta_chains.json  (cwd=/workspace/benchmark/optee-sdp/ta)
-[phase3.6] → /workspace/benchmark/optee-sdp/ta/results/ta_chains.json
-
-[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/extract_sink_calls.py --compile-db /workspace/benchmark/optee-sdp/ta/compile_commands.json --sinks /workspace/benchmark/optee-sdp/ta/results/ta_sinks.json --output /workspace/benchmark/optee-sdp/ta/results/ta_vulnerable_destinations.json --devkit /workspace/optee_os/out/arm/export-ta_arm32  (cwd=/workspace/benchmark/optee-sdp/ta)
-[phase3.7] → /workspace/benchmark/optee-sdp/ta/results/ta_vulnerable_destinations.json
-
-[INFO] $ /usr/bin/python3 /workspace/src/identify_flows/generate_candidate_flows.py --chains /workspace/benchmark/optee-sdp/ta/results/ta_chains.json --sources TA_InvokeCommandEntryPoint --output /workspace/benchmark/optee-sdp/ta/results/ta_candidate_flows.json  (cwd=/workspace/benchmark/optee-sdp/ta)
-[phase5 ] → /workspace/benchmark/optee-sdp/ta/results/ta_candidate_flows.json
-
-[INFO] $ /usr/bin/python3 /workspace/src/analyze_vulnerabilities/taint_analyzer.py --flows /workspace/benchmark/optee-sdp/ta/results/ta_candidate_flows.json --phase12 /workspace/benchmark/optee-sdp/ta/results/ta_phase12.json --output /workspace/benchmark/optee-sdp/ta/results/ta_vulnerabilities.json  (cwd=/workspace/benchmark/optee-sdp/ta)
-[phase6 ] → /workspace/benchmark/optee-sdp/ta/results/ta_vulnerabilities.json
-
-[INFO] $ /usr/bin/python3 /workspace/src/report/generate_report.py --vulnerabilities /workspace/benchmark/optee-sdp/ta/results/ta_vulnerabilities.json --phase12 /workspace/benchmark/optee-sdp/ta/results/ta_phase12.json --project-name optee-sdp --output /workspace/benchmark/optee-sdp/ta/results/ta_vulnerability_report.html  (cwd=/workspace/benchmark/optee-sdp/ta)
-[phase7 ] → /workspace/benchmark/optee-sdp/ta/results/ta_vulnerability_report.html
-
-
-=== Project: basicAlg_use / TA: ta ===
-[INFO] $ bear -- make  (cwd=/workspace/benchmark/basicAlg_use)
-[WARN]   ↳ rc=2
-make: Entering directory '/workspace/benchmark/basicAlg_use/ta'
-make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'CryptoVerifyTaEntry.o'.  Stop.
-make: Leaving directory '/workspace/benchmark/basicAlg_use/ta'
-make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'CryptoVerifyTaEntry.o'.  Stop.
-呼び出し済み外部 API を抽出中...
-外部 API 関数: 40 個
-外部 API 関数をシンクとして解析中...
-抽出されたシンク候補: 129 個
-結果を /workspace/benchmark/basicAlg_use/ta/results/ta_sinks.json に保存しました
 [DEBUG] Include paths:
-  ✓ /workspace/benchmark/basicAlg_use/ta
-  ✓ /workspace/benchmark/basicAlg_use/ta/include
+  ✓ /workspace/benchmark/optee-sdp/ta
+  ✗ /workspace/benchmark/optee-sdp/ta/include
   ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaAes.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+[DEBUG] Parsing /workspace/benchmark/optee-sdp/ta/sdp_ta.c
+  Args: -I/workspace/benchmark/optee-sdp/ta -I/workspace/benchmark/optee-sdp/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaEntry.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+[DEBUG] Parsing /workspace/benchmark/optee-sdp/ta/platform/stub.c
+  Args: -I/workspace/benchmark/optee-sdp/ta -I/workspace/benchmark/optee-sdp/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaRsa.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHandle.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaOther.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHash.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaDebug.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaPbkdf2.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[find_sink_calls] 156 call sites → /workspace/benchmark/basicAlg_use/ta/results/ta_vulnerable_destinations.json
+[find_sink_calls] 53 call sites → /workspace/benchmark/optee-sdp/ta/results/ta_vulnerable_destinations.json
 [DEBUG] Include paths:
-  ✓ /workspace/benchmark/basicAlg_use/ta
-  ✓ /workspace/benchmark/basicAlg_use/ta/include
+  ✓ /workspace/benchmark/optee-sdp/ta
+  ✗ /workspace/benchmark/optee-sdp/ta/include
   ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaAes.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+[DEBUG] Parsing /workspace/benchmark/optee-sdp/ta/sdp_ta.c
+  Args: -I/workspace/benchmark/optee-sdp/ta -I/workspace/benchmark/optee-sdp/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaEntry.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+[DEBUG] Parsing /workspace/benchmark/optee-sdp/ta/platform/stub.c
+  Args: -I/workspace/benchmark/optee-sdp/ta -I/workspace/benchmark/optee-sdp/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaRsa.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHandle.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaOther.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHash.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaDebug.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaPbkdf2.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[generate_call_graph] 120 edges → /workspace/benchmark/basicAlg_use/ta/results/ta_call_graph.json
-[FunctionCallChains] 156 entries → /workspace/benchmark/basicAlg_use/ta/results/ta_chains.json
+[generate_call_graph] 25 edges → /workspace/benchmark/optee-sdp/ta/results/ta_call_graph.json
+[FunctionCallChains] 53 entries → /workspace/benchmark/optee-sdp/ta/results/ta_chains.json
 [DEBUG] Include paths:
-  ✓ /workspace/benchmark/basicAlg_use/ta
-  ✓ /workspace/benchmark/basicAlg_use/ta/include
+  ✓ /workspace/benchmark/optee-sdp/ta
+  ✗ /workspace/benchmark/optee-sdp/ta/include
   ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaAes.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+[DEBUG] Parsing /workspace/benchmark/optee-sdp/ta/sdp_ta.c
+  Args: -I/workspace/benchmark/optee-sdp/ta -I/workspace/benchmark/optee-sdp/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaEntry.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+[DEBUG] Parsing /workspace/benchmark/optee-sdp/ta/platform/stub.c
+  Args: -I/workspace/benchmark/optee-sdp/ta -I/workspace/benchmark/optee-sdp/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaRsa.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHandle.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaOther.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHash.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaDebug.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaPbkdf2.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[extract_sink_calls] 156 entries → /workspace/benchmark/basicAlg_use/ta/results/ta_vulnerable_destinations.json
-[generate_candidate_flows] 34 件 → /workspace/benchmark/basicAlg_use/ta/results/ta_candidate_flows.json
-[taint_analyzer] 34 個の候補フローを解析中...
-  [1/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Pbkdf -> g_CryptoTaPbkdf_PBKDF2 -> l_CryptoTaPbkdf_HMAC -> g_CryptoTaHash_sha -> g_TA_Printf
-  [2/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Pbkdf -> g_CryptoTaPbkdf_PBKDF2 -> l_CryptoTaPbkdf_HMAC -> g_CryptoTaHash_sha -> g_TA_Printf
-  [3/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Pbkdf -> g_CryptoTaPbkdf_PBKDF2 -> l_CryptoTaPbkdf_HMAC -> g_CryptoTaHash_sha -> g_TA_Printf
-  [4/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Rsa -> g_CryptoTaRsa_rsaDecOper -> l_CryptoTaRsa_SetRsaPrivateKey -> TEE_AllocateTransientObject
-  [5/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Rsa -> g_CryptoTaRsa_rsaDecOper -> l_CryptoTaRsa_SetRsaPrivateKey -> TEE_PopulateTransientObject
-  [6/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Aes -> g_CryptoTaAes_AesOper -> TEE_SetOperationKey
-  [7/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Pbkdf -> g_CryptoTaPbkdf_PBKDF2 -> l_CryptoTaPbkdf_HMAC -> g_CryptoTaHash_sha -> g_TA_Printf
-  [8/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Rsa -> g_CryptoTaRsa_rsaDecOper -> l_CryptoTaRsa_CleanUpKeyPairObj -> TEE_FreeTransientObject
-  [9/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Rsa -> g_CryptoTaRsa_rsaDecOper -> l_CryptoTaRsa_CleanUpKeyPairObj -> TEE_FreeTransientObject
-  [10/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Rsa -> g_CryptoTaRsa_rsaDecOper -> l_CryptoTaRsa_SetRsaPrivateKey -> TEE_AllocateTransientObject
-  [11/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Rsa -> g_CryptoTaRsa_rsaDecOper -> l_CryptoTaRsa_SetRsaPrivateKey -> TEE_PopulateTransientObject
-  [12/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Rsa -> g_CryptoTaRsa_rsaDecOper -> l_CryptoTaRsa_CleanUpKeyPairObj -> TEE_FreeTransientObject
-  [13/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Rsa -> g_CryptoTaRsa_rsaDecOper -> l_CryptoTaRsa_SetRsaPrivateKey -> TEE_AllocateTransientObject
-  [14/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Rsa -> g_CryptoTaRsa_rsaDecOper -> l_CryptoTaRsa_SetRsaPrivateKey -> TEE_PopulateTransientObject
-  [15/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Rsa -> g_CryptoTaRsa_rsaDecOper -> l_CryptoTaRsa_CleanUpKeyPairObj -> TEE_FreeTransientObject
-  [16/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Aes -> g_CryptoTaAes_AesOper -> TEE_SetOperationKey
-  [17/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Pbkdf -> g_CryptoTaPbkdf_PBKDF2 -> l_CryptoTaPbkdf_HMAC -> g_CryptoTaHash_sha -> g_TA_Printf
-  [18/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Aes -> g_CryptoTaAes_AesOper -> TEE_SetOperationKey
-  [19/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Pbkdf -> g_CryptoTaPbkdf_PBKDF2 -> l_CryptoTaPbkdf_HMAC -> g_CryptoTaHash_sha -> g_TA_Printf
-  [20/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Pbkdf -> g_CryptoTaPbkdf_PBKDF2 -> l_CryptoTaPbkdf_HMAC -> g_CryptoTaHash_sha -> g_TA_Printf
-  [21/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Aes -> g_CryptoTaAes_AesOper -> TEE_SetOperationKey
-  [22/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Pbkdf -> g_CryptoTaPbkdf_PBKDF2 -> l_CryptoTaPbkdf_HMAC -> g_CryptoTaHash_sha -> g_TA_Printf
-  [23/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Pbkdf -> g_CryptoTaPbkdf_PBKDF2 -> l_CryptoTaPbkdf_HMAC -> g_CryptoTaHash_sha -> g_TA_Printf
-  [24/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Pbkdf -> g_CryptoTaPbkdf_PBKDF2 -> l_CryptoTaPbkdf_HMAC -> g_CryptoTaHash_sha -> g_TA_Printf
-  [25/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Aes -> g_CryptoTaAes_AesOper -> TEE_SetOperationKey
-  [26/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Pbkdf -> g_CryptoTaPbkdf_PBKDF2 -> l_CryptoTaPbkdf_HMAC -> g_CryptoTaHash_sha -> g_TA_Printf
-  [27/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Pbkdf -> g_CryptoTaPbkdf_PBKDF2 -> l_CryptoTaPbkdf_HMAC -> g_CryptoTaHash_sha -> g_TA_Printf
-  [28/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Pbkdf -> g_CryptoTaPbkdf_PBKDF2 -> l_CryptoTaPbkdf_HMAC -> g_CryptoTaHash_sha -> TEE_DigestUpdate
-  [29/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Pbkdf -> g_CryptoTaPbkdf_PBKDF2 -> l_CryptoTaPbkdf_HMAC -> g_CryptoTaHash_sha -> g_TA_Printf
-  [30/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Rsa -> g_CryptoTaRsa_rsaDecOper -> l_CryptoTaRsa_SetRsaPrivateKey -> TEE_AllocateTransientObject
-  [31/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Rsa -> g_CryptoTaRsa_rsaDecOper -> l_CryptoTaRsa_SetRsaPrivateKey -> TEE_PopulateTransientObject
-  [32/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Aes -> g_CryptoTaAes_AesOper -> TEE_SetOperationKey
-  [33/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Rsa -> g_CryptoTaRsa_rsaDecOper -> l_CryptoTaRsa_SetRsaPrivateKey -> TEE_AllocateTransientObject
-  [34/34] チェーン: TA_InvokeCommandEntryPoint -> g_CryptoTaHandle_Pbkdf -> g_CryptoTaPbkdf_PBKDF2 -> l_CryptoTaPbkdf_HMAC -> g_CryptoTaHash_sha -> g_TA_Printf
-[taint_analyzer] 解析完了: 34 件の脆弱性を検出
-  結果: /workspace/benchmark/basicAlg_use/ta/results/ta_vulnerabilities.json
-  ログ: /workspace/benchmark/basicAlg_use/ta/results/taint_analysis_log.txt
-[generate_report] HTMLレポートを生成しました: /workspace/benchmark/basicAlg_use/ta/results/ta_vulnerability_report.html
-  検出脆弱性数: 34
-  AI対話履歴を含めました: /workspace/benchmark/basicAlg_use/ta/results/taint_analysis_log.txt
-  対話チェーン数: 6
+[extract_sink_calls] 53 entries → /workspace/benchmark/optee-sdp/ta/results/ta_vulnerable_destinations.json
+[DEBUG] 入力チェーン数: 53
+[DEBUG] ソース関数: ['TA_InvokeCommandEntryPoint']
+[DEBUG] ステップ1後: 77 CDFs
+[DEBUG] ユニークなVD数: 50
+[DEBUG] ステップ2後: 50 CDFs（最長チェーンのみ）
+[DEBUG] ステップ3後: 50 CDFs（0 個のサブチェーンを削除）
+[DEBUG] ステップ4: 21 グループ
+[DEBUG] ステップ4後: 21 CDFs（18 グループがマージされた）
+[DEBUG] 最終的な危険フロー:
+  - platform_create_region at line 86, params=[0, 1]: TA_InvokeCommandEntryPoint -> create_region -> platform_create_region
+  - platform_destroy_region at line 108, params=[0, 1]: TA_InvokeCommandEntryPoint -> destroy_region -> platform_destroy_region
+  - platform_find_device_by_name at line 137, params=[0]: TA_InvokeCommandEntryPoint -> update_region -> platform_find_device_by_name
+  - platform_find_region_by_id at line 143, params=[0]: TA_InvokeCommandEntryPoint -> update_region -> platform_find_region_by_id
+  - platform_check_permissions at line 150, params=[0]: TA_InvokeCommandEntryPoint -> update_region -> platform_check_permissions
+  - platform_add_device_to_region at line 155, params=[0, 1]: TA_InvokeCommandEntryPoint -> update_region -> platform_add_device_to_region
+  - platform_remove_device_from_region at line 157, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> update_region -> platform_remove_device_from_region
+  - platform_dump_status at line 173, params=[0, 1]: TA_InvokeCommandEntryPoint -> dump_status -> platform_dump_status
+  - platform_dump_device at line 174, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> dump_status -> platform_dump_device
+  - memset at line 89, params=[0, 2]: TA_InvokeCommandEntryPoint -> destroy_region -> platform_destroy_region -> memset
+  - memset at line 112, params=[0, 2]: TA_InvokeCommandEntryPoint -> destroy_region -> platform_destroy_region -> memset
+  - strcmp at line 130, params=[0, 1]: TA_InvokeCommandEntryPoint -> update_region -> platform_find_device_by_name -> strcmp
+  - snprintf at line 210, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> dump_status -> platform_dump_status -> snprintf
+  - snprintf at line 215, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> dump_status -> platform_dump_status -> snprintf
+  - snprintf at line 220, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> dump_status -> platform_dump_status -> snprintf
+  - snprintf at line 224, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> dump_status -> platform_dump_status -> snprintf
+  - snprintf at line 228, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> dump_status -> platform_dump_status -> snprintf
+  - snprintf at line 235, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> dump_status -> platform_dump_status -> snprintf
+  - snprintf at line 241, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> dump_status -> platform_dump_status -> snprintf
+  - snprintf at line 256, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> dump_status -> platform_dump_status -> snprintf
+  - snprintf at line 261, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> dump_status -> platform_dump_status -> snprintf
+
+[generate_candidate_flows] 21 件 → /workspace/benchmark/optee-sdp/ta/results/ta_candidate_flows.json
+[taint_analyzer] 21 個の候補フローを解析中...
+  [1/21] チェーン: TA_InvokeCommandEntryPoint -> create_region -> platform_create_region
+  [2/21] チェーン: TA_InvokeCommandEntryPoint -> destroy_region -> platform_destroy_region
+  [3/21] チェーン: TA_InvokeCommandEntryPoint -> update_region -> platform_find_device_by_name
+  [4/21] チェーン: TA_InvokeCommandEntryPoint -> update_region -> platform_find_region_by_id
+  [5/21] チェーン: TA_InvokeCommandEntryPoint -> update_region -> platform_check_permissions
+  [6/21] チェーン: TA_InvokeCommandEntryPoint -> update_region -> platform_add_device_to_region
+  [7/21] チェーン: TA_InvokeCommandEntryPoint -> update_region -> platform_remove_device_from_region
+  [8/21] チェーン: TA_InvokeCommandEntryPoint -> dump_status -> platform_dump_status
+  [9/21] チェーン: TA_InvokeCommandEntryPoint -> dump_status -> platform_dump_device
+  [10/21] チェーン: TA_InvokeCommandEntryPoint -> destroy_region -> platform_destroy_region -> memset
+  [11/21] チェーン: TA_InvokeCommandEntryPoint -> destroy_region -> platform_destroy_region -> memset
+  [12/21] チェーン: TA_InvokeCommandEntryPoint -> update_region -> platform_find_device_by_name -> strcmp
+  [13/21] チェーン: TA_InvokeCommandEntryPoint -> dump_status -> platform_dump_status -> snprintf
+  [14/21] チェーン: TA_InvokeCommandEntryPoint -> dump_status -> platform_dump_status -> snprintf
+  [15/21] チェーン: TA_InvokeCommandEntryPoint -> dump_status -> platform_dump_status -> snprintf
+  [16/21] チェーン: TA_InvokeCommandEntryPoint -> dump_status -> platform_dump_status -> snprintf
+  [17/21] チェーン: TA_InvokeCommandEntryPoint -> dump_status -> platform_dump_status -> snprintf
+  [18/21] チェーン: TA_InvokeCommandEntryPoint -> dump_status -> platform_dump_status -> snprintf
+  [19/21] チェーン: TA_InvokeCommandEntryPoint -> dump_status -> platform_dump_status -> snprintf
+  [20/21] チェーン: TA_InvokeCommandEntryPoint -> dump_status -> platform_dump_status -> snprintf
+  [21/21] チェーン: TA_InvokeCommandEntryPoint -> dump_status -> platform_dump_status -> snprintf
+[taint_analyzer] 解析完了: 19 件の脆弱性を検出
+  結果: /workspace/benchmark/optee-sdp/ta/results/ta_vulnerabilities.json
+  ログ: /workspace/benchmark/optee-sdp/ta/results/taint_analysis_log.txt
+[generate_report] HTMLレポートを生成しました: /workspace/benchmark/optee-sdp/ta/results/ta_vulnerability_report.html
+  検出脆弱性数: 19
+  AI対話履歴を含めました: /workspace/benchmark/optee-sdp/ta/results/taint_analysis_log.txt
+  対話チェーン数: 12
 make -C host CROSS_COMPILE="arm-linux-gnueabihf-" --no-builtin-variables \
 	TEEC_EXPORT=/workspace/benchmark/Lenet5_in_OPTEE/../../optee_client/out/export
 make[1]: Entering directory '/workspace/benchmark/Lenet5_in_OPTEE/host'
-make[1]: Nothing to be done for 'all'.
+arm-linux-gnueabihf-gcc -o optee_lenet5 main.o -lteec -L/workspace/benchmark/Lenet5_in_OPTEE/../../optee_client/out/export/lib
+/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: main.o: relocation R_ARM_THM_MOVW_ABS_NC against `a local symbol' can not be used when making a shared object; recompile with -fPIC
+/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: main.o(.text+0x18): unresolvable R_ARM_THM_CALL relocation against symbol `fopen@@GLIBC_2.4'
+/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: final link failed
+collect2: error: ld returned 1 exit status
+make[1]: *** [makefile:21: optee_lenet5] Error 1
 make[1]: Leaving directory '/workspace/benchmark/Lenet5_in_OPTEE/host'
-make -C ta CROSS_COMPILE="arm-linux-gnueabihf-" LDFLAGS="" \
-	TA_DEV_KIT_DIR=/workspace/benchmark/Lenet5_in_OPTEE/../../optee_os/out/arm/export-ta_arm32
-make[1]: Entering directory '/workspace/benchmark/Lenet5_in_OPTEE/ta'
-make[1]: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'lenet5_ta.o'.  Stop.
-make[1]: Leaving directory '/workspace/benchmark/Lenet5_in_OPTEE/ta'
-make: *** [Makefile:13: all] Error 2
+make: *** [Makefile:12: all] Error 2
 make: Entering directory '/workspace/benchmark/Lenet5_in_OPTEE/ta'
 make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'lenet5_ta.o'.  Stop.
 make: Leaving directory '/workspace/benchmark/Lenet5_in_OPTEE/ta'
@@ -1271,65 +1294,118 @@ This warning is for project developers.  Use -Wno-dev to suppress it.
 -- Configuring done
 -- Generating done
 -- Build files have been written to: /workspace/benchmark/Lenet5_in_OPTEE/build
-[INFO] $ bear -- make -C ta V=1  (cwd=/workspace/benchmark/basicAlg_use)
-[WARN]   ↳ rc=2
-[INFO] $ bear -- make  (cwd=/workspace/benchmark/basicAlg_use/ta)
-[WARN]   ↳ rc=2
-[WARN] build failed/empty → dummy DB
-[INFO] ★ dummy DB 8 entries → /workspace/benchmark/basicAlg_use/ta/compile_commands_full.json
-[INFO] TA DB saved: /workspace/benchmark/basicAlg_use/ta/compile_commands.json  entries=8
+呼び出し済み外部 API を抽出中...
+外部 API 関数: 9 個
+外部 API 関数をシンクとして解析中...
+抽出されたシンク候補: 25 個
+結果を /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_sinks.json に保存しました
 [DEBUG] Include paths:
-  ✓ /workspace/benchmark/basicAlg_use/ta
-  ✓ /workspace/benchmark/basicAlg_use/ta/include
+  ✓ /workspace/benchmark/Lenet5_in_OPTEE/ta
+  ✓ /workspace/benchmark/Lenet5_in_OPTEE/ta/include
   ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaAes.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/lenet5_ta.c
+  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaEntry.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/e_exp.c
+  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaRsa.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/lenet.c
+  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHandle.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/e_sqrt.c
+  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaOther.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+[find_sink_calls] 16 call sites → /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_vulnerable_destinations.json
+[DEBUG] Include paths:
+  ✓ /workspace/benchmark/Lenet5_in_OPTEE/ta
+  ✓ /workspace/benchmark/Lenet5_in_OPTEE/ta/include
+  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
+[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/lenet5_ta.c
+  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHash.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/e_exp.c
+  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaDebug.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/lenet.c
+  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaPbkdf2.c
-  Args: -I/workspace/benchmark/basicAlg_use/ta -I/workspace/benchmark/basicAlg_use/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/e_sqrt.c
+  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
-[phase1-2] → /workspace/benchmark/basicAlg_use/ta/results/ta_phase12.json
-[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/identify_sinks.py -i /workspace/benchmark/basicAlg_use/ta/results/ta_phase12.json -o /workspace/benchmark/basicAlg_use/ta/results/ta_sinks.json  (cwd=/workspace/benchmark/basicAlg_use/ta)
-[phase3 ] → /workspace/benchmark/basicAlg_use/ta/results/ta_sinks.json
+[generate_call_graph] 31 edges → /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_call_graph.json
+[FunctionCallChains] 16 entries → /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_chains.json
+[DEBUG] Include paths:
+  ✓ /workspace/benchmark/Lenet5_in_OPTEE/ta
+  ✓ /workspace/benchmark/Lenet5_in_OPTEE/ta/include
+  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
+[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/lenet5_ta.c
+  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+  ✓ Parsed successfully (warnings: 0)
+[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/e_exp.c
+  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+  ✓ Parsed successfully (warnings: 0)
+[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/lenet.c
+  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+  ✓ Parsed successfully (warnings: 0)
+[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/e_sqrt.c
+  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+  ✓ Parsed successfully (warnings: 0)
+[extract_sink_calls] 16 entries → /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_vulnerable_destinations.json
+[DEBUG] 入力チェーン数: 16
+[DEBUG] ソース関数: ['TA_InvokeCommandEntryPoint']
+[DEBUG] ステップ1後: 26 CDFs
+[DEBUG] ユニークなVD数: 16
+[DEBUG] ステップ2後: 16 CDFs（最長チェーンのみ）
+[DEBUG] ステップ3後: 16 CDFs（0 個のサブチェーンを削除）
+[DEBUG] ステップ4: 10 グループ
+[DEBUG] ステップ4後: 10 CDFs（4 グループがマージされた）
+[DEBUG] 最終的な危険フロー:
+  - TEE_Malloc at line 93, params=[0]: TA_InvokeCommandEntryPoint -> ta_init -> TEE_Malloc
+  - Initial at line 94, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> ta_init -> Initial
+  - TrainBatch at line 137, params=[0, 1]: TA_InvokeCommandEntryPoint -> ta_trainBatch -> TrainBatch
+  - Predict at line 156, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> ta_predict -> Predict
+  - __ieee754_sqrt at line 196, params=[0]: TA_InvokeCommandEntryPoint -> ta_trainBatch -> TrainBatch -> load_input -> __ieee754_sqrt
+  - TEE_GenerateRandom at line 252, params=[0, 1]: TA_InvokeCommandEntryPoint -> ta_init -> Initial -> f64rand -> rand -> TEE_GenerateRandom
+  - __ieee754_sqrt at line 305, params=[0]: TA_InvokeCommandEntryPoint -> ta_trainBatch -> TrainBatch -> load_input -> __ieee754_sqrt
+  - __ieee754_sqrt at line 306, params=[0]: TA_InvokeCommandEntryPoint -> ta_trainBatch -> TrainBatch -> load_input -> __ieee754_sqrt
+  - __ieee754_sqrt at line 307, params=[0]: TA_InvokeCommandEntryPoint -> ta_trainBatch -> TrainBatch -> load_input -> __ieee754_sqrt
+  - __ieee754_sqrt at line 308, params=[0]: TA_InvokeCommandEntryPoint -> ta_trainBatch -> TrainBatch -> load_input -> __ieee754_sqrt
 
-[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/find_sink_calls.py --compile-db /workspace/benchmark/basicAlg_use/ta/compile_commands.json --sinks /workspace/benchmark/basicAlg_use/ta/results/ta_sinks.json --output /workspace/benchmark/basicAlg_use/ta/results/ta_vulnerable_destinations.json --devkit /workspace/optee_os/out/arm/export-ta_arm32  (cwd=/workspace/benchmark/basicAlg_use/ta)
-[phase3.4] → /workspace/benchmark/basicAlg_use/ta/results/ta_vulnerable_destinations.json
+[generate_candidate_flows] 10 件 → /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_candidate_flows.json
+[taint_analyzer] 10 個の候補フローを解析中...
+  [1/10] チェーン: TA_InvokeCommandEntryPoint -> ta_init -> TEE_Malloc
+  [2/10] チェーン: TA_InvokeCommandEntryPoint -> ta_init -> Initial
+  [3/10] チェーン: TA_InvokeCommandEntryPoint -> ta_trainBatch -> TrainBatch
+  [4/10] チェーン: TA_InvokeCommandEntryPoint -> ta_predict -> Predict
+  [5/10] チェーン: TA_InvokeCommandEntryPoint -> ta_trainBatch -> TrainBatch -> load_input -> __ieee754_sqrt
+  [6/10] チェーン: TA_InvokeCommandEntryPoint -> ta_init -> Initial -> f64rand -> rand -> TEE_GenerateRandom
+  [7/10] チェーン: TA_InvokeCommandEntryPoint -> ta_trainBatch -> TrainBatch -> load_input -> __ieee754_sqrt
+  [8/10] チェーン: TA_InvokeCommandEntryPoint -> ta_trainBatch -> TrainBatch -> load_input -> __ieee754_sqrt
+  [9/10] チェーン: TA_InvokeCommandEntryPoint -> ta_trainBatch -> TrainBatch -> load_input -> __ieee754_sqrt
+  [10/10] チェーン: TA_InvokeCommandEntryPoint -> ta_trainBatch -> TrainBatch -> load_input -> __ieee754_sqrt
+[taint_analyzer] 解析完了: 7 件の脆弱性を検出
+  結果: /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_vulnerabilities.json
+  ログ: /workspace/benchmark/Lenet5_in_OPTEE/ta/results/taint_analysis_log.txt
+[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/find_sink_calls.py --compile-db /workspace/benchmark/optee-sdp/ta/compile_commands.json --sinks /workspace/benchmark/optee-sdp/ta/results/ta_sinks.json --output /workspace/benchmark/optee-sdp/ta/results/ta_vulnerable_destinations.json --devkit /workspace/optee_os/out/arm/export-ta_arm32  (cwd=/workspace/benchmark/optee-sdp/ta)
+[phase3.4] → /workspace/benchmark/optee-sdp/ta/results/ta_vulnerable_destinations.json
 
-[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/generate_call_graph.py --compile-db /workspace/benchmark/basicAlg_use/ta/compile_commands.json --output /workspace/benchmark/basicAlg_use/ta/results/ta_call_graph.json --devkit /workspace/optee_os/out/arm/export-ta_arm32  (cwd=/workspace/benchmark/basicAlg_use/ta)
-[phase3.5] → /workspace/benchmark/basicAlg_use/ta/results/ta_call_graph.json
+[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/generate_call_graph.py --compile-db /workspace/benchmark/optee-sdp/ta/compile_commands.json --output /workspace/benchmark/optee-sdp/ta/results/ta_call_graph.json --devkit /workspace/optee_os/out/arm/export-ta_arm32  (cwd=/workspace/benchmark/optee-sdp/ta)
+[phase3.5] → /workspace/benchmark/optee-sdp/ta/results/ta_call_graph.json
 
-[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/function_call_chains.py --call-graph /workspace/benchmark/basicAlg_use/ta/results/ta_call_graph.json --vd-list /workspace/benchmark/basicAlg_use/ta/results/ta_vulnerable_destinations.json --output /workspace/benchmark/basicAlg_use/ta/results/ta_chains.json  (cwd=/workspace/benchmark/basicAlg_use/ta)
-[phase3.6] → /workspace/benchmark/basicAlg_use/ta/results/ta_chains.json
+[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/function_call_chains.py --call-graph /workspace/benchmark/optee-sdp/ta/results/ta_call_graph.json --vd-list /workspace/benchmark/optee-sdp/ta/results/ta_vulnerable_destinations.json --output /workspace/benchmark/optee-sdp/ta/results/ta_chains.json  (cwd=/workspace/benchmark/optee-sdp/ta)
+[phase3.6] → /workspace/benchmark/optee-sdp/ta/results/ta_chains.json
 
-[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/extract_sink_calls.py --compile-db /workspace/benchmark/basicAlg_use/ta/compile_commands.json --sinks /workspace/benchmark/basicAlg_use/ta/results/ta_sinks.json --output /workspace/benchmark/basicAlg_use/ta/results/ta_vulnerable_destinations.json --devkit /workspace/optee_os/out/arm/export-ta_arm32  (cwd=/workspace/benchmark/basicAlg_use/ta)
-[phase3.7] → /workspace/benchmark/basicAlg_use/ta/results/ta_vulnerable_destinations.json
+[INFO] $ /usr/bin/python3 /workspace/src/identify_sinks/extract_sink_calls.py --compile-db /workspace/benchmark/optee-sdp/ta/compile_commands.json --sinks /workspace/benchmark/optee-sdp/ta/results/ta_sinks.json --output /workspace/benchmark/optee-sdp/ta/results/ta_vulnerable_destinations.json --devkit /workspace/optee_os/out/arm/export-ta_arm32  (cwd=/workspace/benchmark/optee-sdp/ta)
+[phase3.7] → /workspace/benchmark/optee-sdp/ta/results/ta_vulnerable_destinations.json
 
-[INFO] $ /usr/bin/python3 /workspace/src/identify_flows/generate_candidate_flows.py --chains /workspace/benchmark/basicAlg_use/ta/results/ta_chains.json --sources TA_InvokeCommandEntryPoint --output /workspace/benchmark/basicAlg_use/ta/results/ta_candidate_flows.json  (cwd=/workspace/benchmark/basicAlg_use/ta)
-[phase5 ] → /workspace/benchmark/basicAlg_use/ta/results/ta_candidate_flows.json
+[INFO] $ /usr/bin/python3 /workspace/src/identify_flows/generate_candidate_flows.py --chains /workspace/benchmark/optee-sdp/ta/results/ta_chains.json --sources TA_InvokeCommandEntryPoint --output /workspace/benchmark/optee-sdp/ta/results/ta_candidate_flows.json  (cwd=/workspace/benchmark/optee-sdp/ta)
+[phase5 ] → /workspace/benchmark/optee-sdp/ta/results/ta_candidate_flows.json
 
-[INFO] $ /usr/bin/python3 /workspace/src/analyze_vulnerabilities/taint_analyzer.py --flows /workspace/benchmark/basicAlg_use/ta/results/ta_candidate_flows.json --phase12 /workspace/benchmark/basicAlg_use/ta/results/ta_phase12.json --output /workspace/benchmark/basicAlg_use/ta/results/ta_vulnerabilities.json  (cwd=/workspace/benchmark/basicAlg_use/ta)
-[phase6 ] → /workspace/benchmark/basicAlg_use/ta/results/ta_vulnerabilities.json
+[INFO] $ /usr/bin/python3 /workspace/src/analyze_vulnerabilities/taint_analyzer.py --flows /workspace/benchmark/optee-sdp/ta/results/ta_candidate_flows.json --phase12 /workspace/benchmark/optee-sdp/ta/results/ta_phase12.json --output /workspace/benchmark/optee-sdp/ta/results/ta_vulnerabilities.json  (cwd=/workspace/benchmark/optee-sdp/ta)
+[phase6 ] → /workspace/benchmark/optee-sdp/ta/results/ta_vulnerabilities.json
 
-[INFO] $ /usr/bin/python3 /workspace/src/report/generate_report.py --vulnerabilities /workspace/benchmark/basicAlg_use/ta/results/ta_vulnerabilities.json --phase12 /workspace/benchmark/basicAlg_use/ta/results/ta_phase12.json --project-name basicAlg_use --output /workspace/benchmark/basicAlg_use/ta/results/ta_vulnerability_report.html  (cwd=/workspace/benchmark/basicAlg_use/ta)
-[phase7 ] → /workspace/benchmark/basicAlg_use/ta/results/ta_vulnerability_report.html
+[INFO] $ /usr/bin/python3 /workspace/src/report/generate_report.py --vulnerabilities /workspace/benchmark/optee-sdp/ta/results/ta_vulnerabilities.json --phase12 /workspace/benchmark/optee-sdp/ta/results/ta_phase12.json --project-name optee-sdp --output /workspace/benchmark/optee-sdp/ta/results/ta_vulnerability_report.html  (cwd=/workspace/benchmark/optee-sdp/ta)
+[phase7 ] → /workspace/benchmark/optee-sdp/ta/results/ta_vulnerability_report.html
 
 
 === Project: Lenet5_in_OPTEE / TA: ta ===
@@ -1355,79 +1431,6 @@ This warning is for project developers.  Use -Wno-dev to suppress it.
   Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
 [DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/e_sqrt.c
-呼び出し済み外部 API を抽出中...
-外部 API 関数: 9 個
-外部 API 関数をシンクとして解析中...
-抽出されたシンク候補: 22 個
-結果を /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_sinks.json に保存しました
-[DEBUG] Include paths:
-  ✓ /workspace/benchmark/Lenet5_in_OPTEE/ta
-  ✓ /workspace/benchmark/Lenet5_in_OPTEE/ta/include
-  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/lenet5_ta.c
-  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/e_exp.c
-  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/lenet.c
-  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/e_sqrt.c
-  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[find_sink_calls] 15 call sites → /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_vulnerable_destinations.json
-[DEBUG] Include paths:
-  ✓ /workspace/benchmark/Lenet5_in_OPTEE/ta
-  ✓ /workspace/benchmark/Lenet5_in_OPTEE/ta/include
-  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/lenet5_ta.c
-  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/e_exp.c
-  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/lenet.c
-  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/e_sqrt.c
-  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[generate_call_graph] 31 edges → /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_call_graph.json
-[FunctionCallChains] 15 entries → /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_chains.json
-[DEBUG] Include paths:
-  ✓ /workspace/benchmark/Lenet5_in_OPTEE/ta
-  ✓ /workspace/benchmark/Lenet5_in_OPTEE/ta/include
-  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
-[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/lenet5_ta.c
-  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/e_exp.c
-  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/lenet.c
-  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[DEBUG] Parsing /workspace/benchmark/Lenet5_in_OPTEE/ta/e_sqrt.c
-  Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
-  ✓ Parsed successfully (warnings: 0)
-[extract_sink_calls] 15 entries → /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_vulnerable_destinations.json
-[generate_candidate_flows] 7 件 → /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_candidate_flows.json
-[taint_analyzer] 7 個の候補フローを解析中...
-  [1/7] チェーン: TA_InvokeCommandEntryPoint -> ta_init -> TEE_Malloc
-  [2/7] チェーン: TA_InvokeCommandEntryPoint -> ta_trainBatch -> TrainBatch -> load_input -> __ieee754_sqrt
-  [3/7] チェーン: TA_InvokeCommandEntryPoint -> ta_init -> Initial -> f64rand -> rand -> TEE_GenerateRandom
-  [4/7] チェーン: TA_InvokeCommandEntryPoint -> ta_trainBatch -> TrainBatch -> load_input -> __ieee754_sqrt
-  [5/7] チェーン: TA_InvokeCommandEntryPoint -> ta_trainBatch -> TrainBatch -> load_input -> __ieee754_sqrt
-  [6/7] チェーン: TA_InvokeCommandEntryPoint -> ta_trainBatch -> TrainBatch -> load_input -> __ieee754_sqrt
-  [7/7] チェーン: TA_InvokeCommandEntryPoint -> ta_trainBatch -> TrainBatch -> load_input -> __ieee754_sqrt
-[taint_analyzer] 解析完了: 5 件の脆弱性を検出
-  結果: /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_vulnerabilities.json
-  ログ: /workspace/benchmark/Lenet5_in_OPTEE/ta/results/taint_analysis_log.txt
-[generate_report] HTMLレポートを生成しました: /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_vulnerability_report.html
-  検出脆弱性数: 5
-  AI対話履歴を含めました: /workspace/benchmark/Lenet5_in_OPTEE/ta/results/taint_analysis_log.txt
-  対話チェーン数: 3
   Args: -I/workspace/benchmark/Lenet5_in_OPTEE/ta -I/workspace/benchmark/Lenet5_in_OPTEE/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
   ✓ Parsed successfully (warnings: 0)
 [phase1-2] → /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_phase12.json
@@ -1452,6 +1455,139 @@ This warning is for project developers.  Use -Wno-dev to suppress it.
 [INFO] $ /usr/bin/python3 /workspace/src/analyze_vulnerabilities/taint_analyzer.py --flows /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_candidate_flows.json --phase12 /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_phase12.json --output /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_vulnerabilities.json  (cwd=/workspace/benchmark/Lenet5_in_OPTEE/ta)
 [phase6 ] → /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_vulnerabilities.json
 
-[INFO] $ /usr/bin/python3 /workspace/src/report/generate_report.py --vulnerabilities /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_vulnerabilities.json --phase12 /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_phase12.json --project-name Lenet5_in_OPTEE --output /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_vulnerability_report.html  (cwd=/workspace/benchmark/Lenet5_in_OPTEE/ta)
-[phase7 ] → /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_vulnerability_report.html
+[generate_report] HTMLレポートを生成しました: /workspace/benchmark/Lenet5_in_OPTEE/ta/results/ta_vulnerability_report.html
+  検出脆弱性数: 7
+  AI対話履歴を含めました: /workspace/benchmark/Lenet5_in_OPTEE/ta/results/taint_analysis_log.txt
+  対話チェーン数: 6
+make -C host CROSS_COMPILE="arm-linux-gnueabihf-" --no-builtin-variables \
+	TEEC_EXPORT=/workspace/benchmark/bad-partitioning/../../optee_client/out/export
+make[1]: Entering directory '/workspace/benchmark/bad-partitioning/host'
+arm-linux-gnueabihf-gcc -o optee_example_hello_world main.o -lteec -L/workspace/benchmark/bad-partitioning/../../optee_client/out/export/lib -lpthread
+/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: main.o: relocation R_ARM_THM_MOVW_ABS_NC against `a local symbol' can not be used when making a shared object; recompile with -fPIC
+/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: main.o(.text+0x26): unresolvable R_ARM_THM_CALL relocation against symbol `TEEC_InitializeContext'
+/usr/lib/gcc-cross/arm-linux-gnueabihf/11/../../../../arm-linux-gnueabihf/bin/ld: final link failed
+collect2: error: ld returned 1 exit status
+make[1]: *** [Makefile:21: optee_example_hello_world] Error 1
+make[1]: Leaving directory '/workspace/benchmark/bad-partitioning/host'
+make: *** [Makefile:12: all] Error 2
+make: Entering directory '/workspace/benchmark/bad-partitioning/ta'
+make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'entry.o'.  Stop.
+make: Leaving directory '/workspace/benchmark/bad-partitioning/ta'
+make: *** No rule to make target '/mnt/disk/toolschain/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/6.5.0/include/stddef.h', needed by 'entry.o'.  Stop.
+呼び出し済み外部 API を抽出中...
+外部 API 関数: 7 個
+外部 API 関数をシンクとして解析中...
+抽出されたシンク候補: 11 個
+結果を /workspace/benchmark/bad-partitioning/ta/results/ta_sinks.json に保存しました
+[DEBUG] Include paths:
+  ✓ /workspace/benchmark/bad-partitioning/ta
+  ✓ /workspace/benchmark/bad-partitioning/ta/include
+  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
+[DEBUG] Parsing /workspace/benchmark/bad-partitioning/ta/entry.c
+  Args: -I/workspace/benchmark/bad-partitioning/ta -I/workspace/benchmark/bad-partitioning/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+  [3] void function 'produce_i0' should not return a value
+  [3] void function 'produce_i0' should not return a value
+  [3] void function 'produce_i3' should not return a value
+  [3] void function 'produce_s' should not return a value
+  [3] void function 'produce_s3' should not return a value
+  [3] void function 'produce_s3' should not return a value
+[find_sink_calls] 114 call sites → /workspace/benchmark/bad-partitioning/ta/results/ta_vulnerable_destinations.json
+[DEBUG] Include paths:
+  ✓ /workspace/benchmark/bad-partitioning/ta
+  ✓ /workspace/benchmark/bad-partitioning/ta/include
+  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
+[DEBUG] Parsing /workspace/benchmark/bad-partitioning/ta/entry.c
+  Args: -I/workspace/benchmark/bad-partitioning/ta -I/workspace/benchmark/bad-partitioning/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+  [3] void function 'produce_i0' should not return a value
+  [3] void function 'produce_i0' should not return a value
+  [3] void function 'produce_i3' should not return a value
+  [3] void function 'produce_s' should not return a value
+  [3] void function 'produce_s3' should not return a value
+  [3] void function 'produce_s3' should not return a value
+[generate_call_graph] 60 edges → /workspace/benchmark/bad-partitioning/ta/results/ta_call_graph.json
+[FunctionCallChains] 114 entries → /workspace/benchmark/bad-partitioning/ta/results/ta_chains.json
+[DEBUG] Include paths:
+  ✓ /workspace/benchmark/bad-partitioning/ta
+  ✓ /workspace/benchmark/bad-partitioning/ta/include
+  ✓ /workspace/optee_os/out/arm/export-ta_arm32/include
+[DEBUG] Parsing /workspace/benchmark/bad-partitioning/ta/entry.c
+  Args: -I/workspace/benchmark/bad-partitioning/ta -I/workspace/benchmark/bad-partitioning/ta/include -I/workspace/optee_os/out/arm/export-ta_arm32/include --target=armv7a-none-eabi
+  [3] void function 'produce_i0' should not return a value
+  [3] void function 'produce_i0' should not return a value
+  [3] void function 'produce_i3' should not return a value
+  [3] void function 'produce_s' should not return a value
+  [3] void function 'produce_s3' should not return a value
+  [3] void function 'produce_s3' should not return a value
+[extract_sink_calls] 114 entries → /workspace/benchmark/bad-partitioning/ta/results/ta_vulnerable_destinations.json
+[DEBUG] 入力チェーン数: 114
+[DEBUG] ソース関数: ['TA_InvokeCommandEntryPoint']
+[DEBUG] ステップ1後: 389 CDFs
+[DEBUG] ユニークなVD数: 114
+[DEBUG] ステップ2後: 114 CDFs（最長チェーンのみ）
+[DEBUG] ステップ3後: 114 CDFs（0 個のサブチェーンを削除）
+[DEBUG] ステップ4: 61 グループ
+[DEBUG] ステップ4後: 61 CDFs（35 グループがマージされた）
+[DEBUG] 最終的な危険フロー:
+  - TEE_MemMove at line 116, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> TEE_MemMove
+  - strlen at line 116, params=[0]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> strlen
+  - snprintf at line 117, params=[0, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> snprintf
+  - snprintf at line 121, params=[0, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> snprintf
+  - snprintf at line 122, params=[0, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> snprintf
+  - snprintf at line 125, params=[0, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> snprintf
+  - snprintf at line 126, params=[0, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> snprintf
+  - TEE_MemMove at line 136, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> TEE_MemMove
+  - strlen at line 136, params=[0]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> strlen
+  - snprintf at line 137, params=[0, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> snprintf
+  - snprintf at line 143, params=[0, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> snprintf
+  - snprintf at line 144, params=[0, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> snprintf
+  - snprintf at line 147, params=[0, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> snprintf
+  - snprintf at line 148, params=[0, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> snprintf
+  - TEE_MemMove at line 154, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> TEE_MemMove
+  - strlen at line 154, params=[0]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> strlen
+  - snprintf at line 155, params=[0, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> snprintf
+  - TEE_MemMove at line 175, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> TEE_MemMove
+  - strlen at line 175, params=[0]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> strlen
+  - snprintf at line 176, params=[0, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> snprintf
+  - snprintf at line 184, params=[0, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> snprintf
+  - snprintf at line 185, params=[0, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> snprintf
+  - snprintf at line 189, params=[0, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> snprintf
+  - snprintf at line 190, params=[0, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> snprintf
+  - snprintf at line 191, params=[0, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> snprintf
+  - TEE_Malloc at line 198, params=[0]: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
+  - TEE_Malloc at line 201, params=[0]: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
+  - TEE_Malloc at line 202, params=[0]: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
+  - TEE_MemMove at line 208, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> TEE_MemMove
+  - TEE_MemMove at line 212, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> TEE_MemMove
+  - TEE_Malloc at line 217, params=[0]: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
+  - TEE_Malloc at line 220, params=[0]: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
+  - TEE_Malloc at line 221, params=[0]: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
+  - TEE_MemMove at line 227, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> TEE_MemMove
+  - TEE_MemMove at line 238, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> TEE_MemMove
+  - TEE_MemMove at line 239, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> TEE_MemMove
+  - TEE_MemMove at line 246, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> TEE_MemMove
+  - TEE_Malloc at line 251, params=[0]: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
+  - TEE_Malloc at line 254, params=[0]: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
+  - TEE_Malloc at line 280, params=[0]: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
+  - TEE_Malloc at line 283, params=[0]: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
+  - TEE_Malloc at line 284, params=[0]: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
+  - TEE_MemMove at line 290, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> TEE_MemMove
+  - TEE_MemMove at line 291, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> TEE_MemMove
+  - TEE_Malloc at line 303, params=[0]: TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_Malloc
+  - TEE_MemMove at line 306, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> TEE_MemMove
+  - TEE_MemMove at line 307, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> TEE_MemMove
+  - TEE_MemMove at line 309, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> TEE_MemMove
+  - TEE_MemCompare at line 324, params=[2]: TA_InvokeCommandEntryPoint -> shared_memory -> produce_s -> produce_s2 -> TEE_MemCompare
+  - TEE_MemCompare at line 340, params=[2]: TA_InvokeCommandEntryPoint -> shared_memory -> produce_s -> produce_s2 -> TEE_MemCompare
+  - TEE_MemMove at line 350, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> TEE_MemMove
+  - TEE_MemCompare at line 366, params=[2]: TA_InvokeCommandEntryPoint -> shared_memory -> produce_s -> produce_s2 -> TEE_MemCompare
+  - TEE_MemCompare at line 372, params=[2]: TA_InvokeCommandEntryPoint -> shared_memory -> produce_s -> produce_s2 -> TEE_MemCompare
+  - TEE_MemCompare at line 378, params=[2]: TA_InvokeCommandEntryPoint -> shared_memory -> produce_s -> produce_s2 -> TEE_MemCompare
+  - TEE_MemMove at line 401, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> TEE_MemMove
+  - TEE_Wait at line 430, params=[0]: TA_InvokeCommandEntryPoint -> shared_memory -> TEE_Wait
+  - TEE_MemCompare at line 437, params=[2]: TA_InvokeCommandEntryPoint -> shared_memory -> produce_s -> produce_s2 -> TEE_MemCompare
+  - TEE_MemCompare at line 445, params=[2]: TA_InvokeCommandEntryPoint -> shared_memory -> produce_s -> produce_s2 -> TEE_MemCompare
+  - TEE_MemCompare at line 451, params=[2]: TA_InvokeCommandEntryPoint -> shared_memory -> produce_s -> produce_s2 -> TEE_MemCompare
+  - TEE_MemCompare at line 457, params=[2]: TA_InvokeCommandEntryPoint -> shared_memory -> produce_s -> produce_s2 -> TEE_MemCompare
+  - TEE_MemMove at line 485, params=[0, 1, 2]: TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> TEE_MemMove
 
+[generate_candidate_flows] 61 件 → /workspace/benchmark/bad-partitioning/ta/results/ta_candidate_flows.json

@@ -73,7 +73,7 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool):
     call_graph = res_dir / f"{ta_dir.name}_call_graph.json"
     chains_out = res_dir / f"{ta_dir.name}_chains.json"
     vd_final  = vd_raw  # 上書き保存
-
+    print(f"[phase3.1] → python3 {find_py} --compile-db {ta_db} --sinks {sinks} --output {vd_raw} --devkit {os.environ.get('TA_DEV_KIT_DIR', '')}")
     run([sys.executable, str(find_py),
          "--compile-db", str(ta_db),
          "--sinks",      str(sinks),
@@ -81,7 +81,7 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool):
          "--devkit",     os.environ.get("TA_DEV_KIT_DIR", "")],
         ta_dir, v)
     print(f"[phase3.4] → {vd_raw}\n")
-
+    print(f"[phase3.2] → python3 {graph_py} --compile-db {ta_db} --output {call_graph} --devkit {os.environ.get('TA_DEV_KIT_DIR', '')}")    
     run([sys.executable, str(graph_py),
          "--compile-db", str(ta_db),
          "--output",     str(call_graph),
@@ -107,9 +107,10 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool):
     # Phase5: 危険なフロー（候補）生成
     flows_py = Path(__file__).parent / "identify_flows" / "generate_candidate_flows.py"
     candidate_flows = res_dir / f"{ta_dir.name}_candidate_flows.json"
+    print(f"[phase5_command] → python3 {flows_py} --chains {chains_out} --sources TA_InvokeCommandEntryPoint,TA_OpenSessionEntryPoint --output {candidate_flows}")
     run([sys.executable, str(flows_py),
          "--chains", str(chains_out),
-         "--sources", "TA_InvokeCommandEntryPoint",
+         "--sources", "TA_InvokeCommandEntryPoint,TA_OpenSessionEntryPoint",
          "--output", str(candidate_flows)],
         ta_dir, v)
     print(f"[phase5 ] → {candidate_flows}\n")

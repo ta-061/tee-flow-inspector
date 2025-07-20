@@ -41,9 +41,20 @@ def main():
     
     print(f"[DEBUG] 入力チェーン数: {len(data)}")
 
-    src_map = parse_sources(args.sources)
+    # ,で分割
+    src_keys = args.sources.split(",")
+    src_map = parse_sources(src_keys[0])
+    if len(src_keys) > 1:
+        # 2つ目以降のソースマップを統合
+        for i in range(1, len(src_keys)):
+            additional_map = parse_sources(src_keys[i])
+            src_map.update(additional_map)
+    print(f"[DEBUG] ソース関数マッピング: {src_map}")
     print(f"[DEBUG] ソース関数: {list(src_map.keys())}")
-    
+
+    if args.debug:
+        for fn, params in src_map.items():
+            print(f"  - {fn}: {params if params else 'no params'}")
     # ステップ1: 各チェーンエントリからCDFを抽出
     all_cdfs = []
     
@@ -79,20 +90,20 @@ def main():
     vd_groups = defaultdict(list)
     for cdf in all_cdfs:
         vd = cdf["vd"]
-        key = (vd["file"], vd["line"], vd["sink"], vd["param_index"])
+        source_func = cdf["source_func"]
+        key = (vd["file"], vd["line"], vd["sink"], vd["param_index"], source_func)
         vd_groups[key].append(cdf)
     
-    print(f"[DEBUG] ユニークなVD数: {len(vd_groups)}")
-    
-    # 各グループから最長のチェーンを選択
+
+    # 各グループから最長のチェーンを選択（同じVD+ソースの場合のみ統合）
     longest_cdfs = []
     for group in vd_groups.values():
         if group:
-            # chainsは配列なので、最初の要素の長さで比較
+            # 同じVD+ソースの場合は最長チェーンのみ選択
             longest = max(group, key=lambda x: len(x["chains"][0]) if x["chains"] else 0)
             longest_cdfs.append(longest)
     
-    print(f"[DEBUG] ステップ2後: {len(longest_cdfs)} CDFs（最長チェーンのみ）")
+    print(f"[DEBUG] ステップ2後: {len(longest_cdfs)} CDFs（同じVD+ソースの最長チェーンのみ）")
     
     # ステップ3: サブチェーンの除去
     filtered_cdfs = []
@@ -122,7 +133,6 @@ def main():
             filtered_cdfs.append(cdf)
     
     print(f"[DEBUG] ステップ3後: {len(filtered_cdfs)} CDFs（{removed_count} 個のサブチェーンを削除）")
-    
     # ステップ4: 同じ脆弱性を表す可能性のあるCDFを統合（オプション）
     # グループ化のキー：(file, line, sink, chain)
     grouped = defaultdict(list)
