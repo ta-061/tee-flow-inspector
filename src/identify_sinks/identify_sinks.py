@@ -12,20 +12,15 @@ import json
 import re
 import argparse
 from pathlib import Path
-import openai
+
+# 新しいLLM設定システムをインポート
+sys.path.append(str(Path(__file__).parent.parent))
+from llm_settings.config_manager import UnifiedLLMClient
 
 
 def init_client():
-    keyfile = Path(__file__).resolve().parent.parent / "api_key.json"
-    if not keyfile.exists():
-        print(f"Error: API キー設定ファイルが見つかりません ({keyfile})", file=sys.stderr)
-        sys.exit(1)
-    cfg = json.loads(keyfile.read_text(encoding="utf-8"))
-    openai.api_key = cfg.get("api_key", "")
-    if not openai.api_key:
-        print("Error: api_key.json に api_key が設定されていません。", file=sys.stderr)
-        sys.exit(1)
-    return openai
+    """新しいLLM設定システムを使用したクライアント初期化"""
+    return UnifiedLLMClient()
 
 
 def extract_function_code(func):
@@ -58,16 +53,13 @@ def extract_called_functions(code: str) -> list[str]:
     return list(set(re.findall(pattern, code)))
 
 
-def ask_llm(client, prompt: str) -> str:
-    resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.0,
-    )
-    return resp.choices[0].message.content
+def ask_llm(client: UnifiedLLMClient, prompt: str) -> str:
+    """新しいLLM設定システムを使用したLLM呼び出し"""
+    messages = [{"role": "user", "content": prompt}]
+    return client.chat_completion(messages)
 
 
-def analyze_external_function_as_sink(client, func_name: str, log_file: Path) -> list[dict]:
+def analyze_external_function_as_sink(client: UnifiedLLMClient, func_name: str, log_file: Path) -> list[dict]:
     prompt = f"""You are an expert in static taint analysis for TA (Trusted Application) code running in a TEE (Trusted Execution Environment).
 
 We are specifically interested in identifying if the external API function `{func_name}` can be a sink based on these vulnerability patterns:
@@ -134,6 +126,7 @@ def main():
     parser = argparse.ArgumentParser(description="フェーズ3: シンク特定")
     parser.add_argument("-i", "--input", required=True, help="フェーズ1-2 JSON 結果ファイル")
     parser.add_argument("-o", "--output", required=True, help="出力 ta_sinks.json パス")
+    parser.add_argument("--provider", help="使用するLLMプロバイダー (openai, claude, deepseek, local)")
     args = parser.parse_args()
     
     out_path = Path(args.output)
@@ -141,7 +134,17 @@ def main():
     log_file = out_path.parent / "prompts_and_responses.txt"
     log_file.write_text("", encoding="utf-8")
     
+    # 新しいLLMクライアントを初期化
     client = init_client()
+    
+    # プロバイダーが指定されていれば切り替え
+    if args.provider:
+        print(f"LLMプロバイダーを {args.provider} に切り替えます...")
+        client.switch_provider(args.provider)
+    
+    # 現在のプロバイダーを表示
+    print(f"使用中のLLMプロバイダー: {client.get_current_provider()}")
+    
     phase12 = json.loads(Path(args.input).read_text(encoding="utf-8"))
     project_root = Path(phase12.get("project_root", ""))
     external_funcs = {f["name"] for f in phase12.get("external_declarations", [])}

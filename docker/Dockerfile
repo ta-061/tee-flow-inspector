@@ -49,6 +49,7 @@ RUN echo /usr/lib/llvm-18/lib > /etc/ld.so.conf.d/llvm18.conf \
  && ldconfig
 
 ENV LD_LIBRARY_PATH=/usr/lib/llvm-18/lib:$LD_LIBRARY_PATH
+
 ###############################################################################
 # Python 依存ライブラリ
 ###############################################################################
@@ -67,8 +68,18 @@ WORKDIR /workspace
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint
 RUN chmod +x /usr/local/bin/entrypoint
 
+# Python依存関係をインストール
 COPY docker/requirements.txt .
 RUN pip install -r requirements.txt
+
+# LLM設定用スクリプトをコピー
+COPY docker/scripts/llm_config.sh /usr/local/bin/llm_config
+COPY docker/scripts/llm_setup.sh /usr/local/bin/llm_setup
+RUN chmod +x /usr/local/bin/llm_config /usr/local/bin/llm_setup
+
+# エイリアスを設定（bashrcに追加）
+RUN echo 'alias llm="llm_config"' >> /etc/bash.bashrc && \
+    echo 'alias llm-setup="llm_setup"' >> /etc/bash.bashrc
 
 ENTRYPOINT ["/usr/local/bin/entrypoint"]
 # DevContainer が停止しないようデフォルトは無限スリープ

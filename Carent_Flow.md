@@ -1,3 +1,4 @@
+```mermaid
 flowchart TB
     %% スタイル定義
     classDef inputFile fill:#e1f5fe,stroke:#01579b,stroke-width:2px
@@ -69,3 +70,4 @@ flowchart TB
     CandidateFlows -.- FlowsDesc{{<b>用途:</b><br/>エントリポイントから<br/>シンクまでの実行パス}}
     Vulnerabilities -.- VulnDesc{{<b>用途:</b><br/>実際に悪用可能な<br/>脆弱性の詳細情報}}
     Report -.- ReportDesc{{<b>用途:</b><br/>開発者向けの<br/>脆弱性解析結果レポート}}
+```
