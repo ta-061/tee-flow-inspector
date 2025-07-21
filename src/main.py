@@ -88,11 +88,13 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool):
          "--devkit",     os.environ.get("TA_DEV_KIT_DIR", "")],
         ta_dir, v)
     print(f"[phase3.5] → {call_graph}\n")
-
+    print(f"[phase3.3] → python3 {fcc_py} --call-graph {call_graph} --vd-list {vd_raw} --compile-db {ta_db} --devkit {os.environ.get('TA_DEV_KIT_DIR', '')} --output {chains_out}")
     run([sys.executable, str(fcc_py),
-         "--call-graph", str(call_graph),
-         "--vd-list",    str(vd_raw),
-         "--output",     str(chains_out)],
+        "--call-graph", str(call_graph),
+        "--vd-list",    str(vd_raw),
+        "--compile-db", str(ta_db),      # 追加
+        "--devkit",     os.environ.get("TA_DEV_KIT_DIR", ""),  # 追加
+        "--output",     str(chains_out)],
         ta_dir, v)
     print(f"[phase3.6] → {chains_out}\n")
 

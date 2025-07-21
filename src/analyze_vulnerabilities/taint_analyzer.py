@@ -27,53 +27,118 @@ def init_client():
     """新しいLLM設定システムを使用したクライアント初期化"""
     return UnifiedLLMClient()
 
+def extract_function_call_context(vd: dict, project_root: Path) -> str:
+    """外部関数の呼び出しコンテキストを抽出"""
+    file_path = Path(vd["file"])
+    if not file_path.is_absolute():
+        file_path = project_root / file_path
+    
+    if not file_path.exists():
+        return f"// Call to {vd['sink']} at line {vd['line']}"
+    
+    lines = file_path.read_text(encoding="utf-8").splitlines()
+    call_line = vd["line"] - 1  # 0-indexed
+    
+    # 呼び出し文を抽出（複数行の可能性を考慮）
+    call_statement = extract_complete_statement(lines, call_line)
+    
+    return f"// Call at line {vd['line']}:\n{call_statement}"
 
-def extract_function_code(func_name: str, phase12_data: dict) -> str:
+def extract_complete_statement(lines: list[str], start_line: int) -> str:
+    """完全な文を抽出（セミコロンまで）"""
+    statement = ""
+    i = start_line
+    
+    while i < len(lines):
+        statement += lines[i].strip() + " "
+        if ";" in lines[i]:
+            break
+        i += 1
+    
+    return statement.strip()
+
+def extract_and_clean_code(func: dict, project_root: Path) -> str:
+    """ユーザ定義関数のコードを抽出して整形"""
+    rel_path = Path(func["file"])
+    abs_path = (project_root / rel_path) if project_root and not rel_path.is_absolute() else rel_path
+    
+    if not abs_path.exists():
+        return f"// Function {func['name']} source file not found"
+    
+    # 関数の開始行から終了まで抽出
+    lines = abs_path.read_text(encoding="utf-8").splitlines()
+    start_line = func["line"] - 1
+    
+    # 簡易的な関数終了検出（閉じ括弧のバランスで判定）
+    code_lines = []
+    brace_count = 0
+    in_function = False
+    
+    for i, line in enumerate(lines[start_line:], start=start_line):
+        code_lines.append(line)
+        
+        # 関数本体の開始を検出
+        if "{" in line and not in_function:
+            in_function = True
+        
+        if in_function:
+            brace_count += line.count("{")
+            brace_count -= line.count("}")
+            
+            if brace_count <= 0:
+                break
+    
+    code = "\n".join(code_lines)
+    return clean_code_for_llm(code)
+
+def clean_code_for_llm(code: str) -> str:
+    """LLM解析用にコードを整形"""
+    import re
+    
+    # コメント除去
+    # 単一行コメント
+    code = re.sub(r'//.*$', '', code, flags=re.MULTILINE)
+    # 複数行コメント
+    code = re.sub(r'/\*.*?\*/', '', code, flags=re.DOTALL)
+    # 単一行コメント
+    code = re.sub(r'//.*$', '', code, flags=re.MULTILINE)
+    # 複数行コメント
+    code = re.sub(r'/\*.*?\*/', '', code, flags=re.DOTALL)
+    
+    # 空行の圧縮
+    code = re.sub(r'\n\s*\n', '\n', code)
+    
+    # マクロの簡略化（__maybe_unusedなど）
+    code = re.sub(r'__maybe_unused\s+', '', code)
+    code = re.sub(r'__attribute__\s*\(\(.*?\)\)\s*', '', code)
+    
+    return code.strip()
+
+def extract_function_code(func_name: str, phase12_data: dict, vd: dict = None) -> str:
     """
-    フェーズ1-2の結果から関数のソースコードを抽出
-    外部関数の場合は、関数シグネチャと説明を生成
+    関数のソースコードまたは呼び出しコンテキストを抽出
+    
+    Args:
+        func_name: 関数名
+        phase12_data: フェーズ1-2の結果
+        vd: 脆弱性の宛先情報（外部関数の場合に使用）
     """
     project_root = Path(phase12_data.get("project_root", ""))
     
     # ユーザ定義関数から探す
     for func in phase12_data.get("user_defined_functions", []):
         if func["name"] == func_name:
-            rel_path = Path(func["file"])
-            abs_path = (project_root / rel_path) if project_root else rel_path
-            
-            if not abs_path.exists():
-                return f"// Function {func_name} source file not found"
-            
-            # 関数の開始行から終了まで抽出
-            lines = abs_path.read_text(encoding="utf-8").splitlines()
-            start_line = func["line"] - 1
-            
-            # 簡易的な関数終了検出（閉じ括弧のバランスで判定）
-            code_lines = []
-            brace_count = 0
-            in_function = False
-            
-            for i, line in enumerate(lines[start_line:], start=start_line):
-                code_lines.append(line)
-                
-                # 関数本体の開始を検出
-                if "{" in line and not in_function:
-                    in_function = True
-                
-                if in_function:
-                    brace_count += line.count("{")
-                    brace_count -= line.count("}")
-                    
-                    if brace_count <= 0:
-                        break
-            
-            return "\n".join(code_lines)
+            # 既存の処理...
+            code = extract_and_clean_code(func, project_root)
+            return code
     
-    # 外部関数の場合は、その情報を提供
-    for func in phase12_data.get("external_declarations", []):
-        if func["name"] == func_name:
-            # LATTE オリジナルと同じく、関数名だけ残す
-            return f"// External function: {func_name} (implementation unavailable)"
+    # 外部関数の場合
+    if vd and func_name == vd["sink"]:
+        # VDの位置から実際の呼び出しコンテキストを抽出
+        return extract_function_call_context(vd, project_root)
+    
+    # その他の外部関数
+    return f"// External function: {func_name}"
 
 
 def ask_llm(client: UnifiedLLMClient, messages: list, max_retries: int = 3) -> str:
@@ -106,8 +171,9 @@ def ask_llm(client: UnifiedLLMClient, messages: list, max_retries: int = 3) -> s
     return "[ERROR] Maximum retries exceeded"
 
 
-def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict, phase12_data: dict, 
-                      log_file: Path, source_params: list[str] | None = None) -> dict:
+def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict, 
+                      phase12_data: dict, log_file: Path, 
+                      source_params: list[str] | None = None) -> dict:
     """
     単一のコールチェーンに対してテイント解析を実行
     param_indicesが存在する場合は、統合された解析として扱う
@@ -145,7 +211,14 @@ def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict, pha
     
     for i, func_name in enumerate(chain):
         # 関数のソースコードを取得
-        code = extract_function_code(func_name, phase12_data)
+        if i == len(chain) - 1 and func_name == vd["sink"]:
+            # 最後の関数がシンクの場合、呼び出しコンテキストを含める
+            code = extract_function_code(func_name, phase12_data, vd)
+        else:
+            code = extract_function_code(func_name, phase12_data)
+        
+        # コードを整形
+        code = clean_code_for_llm(code)
         
         # プロンプトを生成
         if i == 0:

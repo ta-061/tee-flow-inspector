@@ -1,12 +1,13 @@
-#　src/parsing/parse_utils.py
+# src/parsing/parse_utils.py
 #!/usr/bin/env python3
-"""統一されたlibclangパースユーティリティ"""
+"""統一されたlibclangパースユーティリティ（データ依存性分析機能付き）"""
 import json
 import shlex
 import os
 from pathlib import Path
 from clang import cindex
 from clang.cindex import CursorKind, TranslationUnitLoadError
+from typing import Set, Dict, List, Tuple, Optional
 
 
 def load_compile_db(path: Path) -> list[dict]:
@@ -190,3 +191,246 @@ def find_function_calls(tu, target_functions: set[str]) -> list[dict]:
     
     walk(tu.cursor)
     return calls
+
+
+class DataFlowAnalyzer:
+    """関数内データフロー解析器（LATTEスタイル）"""
+    
+    def __init__(self, tu):
+        self.tu = tu
+        self.tainted_vars = set()
+        
+    def analyze_backward_dataflow(self, func_cursor, sink_location: Tuple[str, int], 
+                                 sink_args: List[str]) -> Set[str]:
+        """
+        関数内で後方データフロー解析を実行
+        特定の関数のセマンティクスに依存せず、純粋にASTベースで解析
+        
+        Args:
+            func_cursor: 関数のカーソル
+            sink_location: (ファイル名, 行番号)
+            sink_args: シンクで使用される引数/変数名のリスト
+            
+        Returns:
+            関数パラメータのうち、シンクに影響を与えるもののセット
+        """
+        # ステップ1: 関数内のすべての文を収集
+        statements = self._collect_statements(func_cursor)
+        
+        # ステップ2: シンク位置を特定し、初期の汚染変数を設定
+        self.tainted_vars = set(sink_args)
+        sink_found = False
+        
+        # ステップ3: シンク位置から後方に解析
+        for i in range(len(statements) - 1, -1, -1):
+            stmt = statements[i]
+            
+            # シンク位置に到達したか確認
+            if (stmt.location.file and 
+                stmt.location.file.name == sink_location[0] and 
+                stmt.location.line <= sink_location[1]):
+                sink_found = True
+            
+            if not sink_found:
+                continue
+                
+            # データフロー解析（純粋にASTベース）
+            self._analyze_statement_backward(stmt)
+        
+        # ステップ4: 関数パラメータとの交差を返す
+        func_params = self._get_function_parameters(func_cursor)
+        return self.tainted_vars.intersection(func_params)
+    
+    def _collect_statements(self, cursor) -> List[cindex.Cursor]:
+        """関数内のすべての文を収集"""
+        statements = []
+        
+        def walk(node):
+            # すべての文を順序通りに収集
+            statements.append(node)
+            for child in node.get_children():
+                walk(child)
+                
+        # 関数本体を探索
+        for child in cursor.get_children():
+            if child.kind == CursorKind.COMPOUND_STMT:
+                walk(child)
+                
+        return statements
+    
+    def _analyze_statement_backward(self, stmt):
+        """文を後方データフロー解析（関数固有のルールなし）"""
+        if stmt.kind == CursorKind.BINARY_OPERATOR:
+            # 代入文の可能性
+            tokens = list(stmt.get_tokens())
+            if '=' in [t.spelling for t in tokens]:
+                # 代入の左辺と右辺を識別
+                children = list(stmt.get_children())
+                if len(children) >= 2:
+                    lhs = children[0]
+                    rhs = children[1]
+                    
+                    lhs_vars = self._collect_variables(lhs)
+                    
+                    # 左辺の変数が汚染されている場合、右辺の変数も汚染
+                    if any(var in self.tainted_vars for var in lhs_vars):
+                        rhs_vars = self._collect_variables(rhs)
+                        self.tainted_vars.update(rhs_vars)
+                        
+        elif stmt.kind == CursorKind.CALL_EXPR:
+            # 関数呼び出し - LLMが後で解析するため、引数の依存性のみ追跡
+            self._analyze_function_call_backward(stmt)
+    
+    def _analyze_function_call_backward(self, call_expr):
+        """関数呼び出しの引数を後方解析（関数固有のルールなし）"""
+        # すべての引数を収集
+        arg_vars = set()
+        for child in call_expr.get_children():
+            # 最初の子は関数名なのでスキップ
+            if child.kind != CursorKind.DECL_REF_EXPR or not arg_vars:
+                if child.kind != CursorKind.DECL_REF_EXPR:
+                    vars_in_arg = self._collect_variables(child)
+                    arg_vars.update(vars_in_arg)
+        
+        # いずれかの引数が汚染されている場合、すべての引数を汚染
+        # （保守的な近似 - LLMが後で正確に判断）
+        if any(var in self.tainted_vars for var in arg_vars):
+            self.tainted_vars.update(arg_vars)
+    
+    def _collect_variables(self, cursor) -> Set[str]:
+        """式から変数名を収集"""
+        variables = set()
+        
+        if cursor.kind == CursorKind.DECL_REF_EXPR:
+            variables.add(cursor.spelling)
+        elif cursor.kind == CursorKind.MEMBER_REF_EXPR:
+            # 構造体メンバーも変数として扱う
+            variables.add(cursor.spelling)
+            # ベースオブジェクトも収集
+            for child in cursor.get_children():
+                variables.update(self._collect_variables(child))
+        elif cursor.kind == CursorKind.ARRAY_SUBSCRIPT_EXPR:
+            # 配列アクセス
+            for child in cursor.get_children():
+                variables.update(self._collect_variables(child))
+        elif cursor.kind == CursorKind.UNARY_OPERATOR:
+            # ポインタ参照など
+            for child in cursor.get_children():
+                variables.update(self._collect_variables(child))
+        else:
+            # その他の式は子要素を再帰的に探索
+            for child in cursor.get_children():
+                variables.update(self._collect_variables(child))
+                
+        return variables
+    
+    def _get_function_parameters(self, func_cursor) -> Set[str]:
+        """関数のパラメータ名を取得"""
+        params = set()
+        for child in func_cursor.get_children():
+            if child.kind == CursorKind.PARM_DECL:
+                params.add(child.spelling)
+        return params
+
+
+def analyze_interprocedural_dataflow(tu, vd: dict, call_graph: dict) -> List[List[str]]:
+    """
+    関数間データフロー解析を実行してコールチェーンを生成
+    
+    Args:
+        tu: Translation Unit
+        vd: {"file": ..., "line": ..., "sink": ..., "param_index": ...}
+        call_graph: 呼び出しグラフ
+        
+    Returns:
+        データ依存性のあるコールチェーンのリスト
+    """
+    analyzer = DataFlowAnalyzer(tu)
+    chains = []
+    
+    # VDを含む関数を見つける
+    func_containing_vd = _find_function_containing_location(
+        tu.cursor, vd["file"], vd["line"]
+    )
+    
+    if not func_containing_vd:
+        return chains
+    
+    # シンクの引数を特定（簡易的にパラメータインデックスから推定）
+    # 実際の引数名はLLMが後で正確に解析
+    sink_args = [f"param_{vd['param_index']}"]
+    
+    # 関数内データフロー解析
+    affected_params = analyzer.analyze_backward_dataflow(
+        func_containing_vd,
+        (vd["file"], vd["line"]),
+        sink_args
+    )
+    
+    # 影響を受けるパラメータがある場合、呼び出し元を探索
+    if affected_params:
+        _trace_callers_recursive(
+            func_containing_vd.spelling,
+            affected_params,
+            call_graph,
+            [func_containing_vd.spelling],
+            chains,
+            max_depth=50
+        )
+    else:
+        # パラメータに依存しない場合でも、この関数自体をチェーンとして記録
+        chains.append([func_containing_vd.spelling])
+    
+    return chains
+
+
+def _find_function_containing_location(cursor, file_path: str, line: int):
+    """指定された位置を含む関数を見つける"""
+    for child in cursor.get_children():
+        if child.kind == CursorKind.FUNCTION_DECL and child.is_definition():
+            if (child.location.file and 
+                child.location.file.name == file_path and
+                child.extent.start.line <= line <= child.extent.end.line):
+                return child
+        
+        # 再帰的に探索
+        result = _find_function_containing_location(child, file_path, line)
+        if result:
+            return result
+    
+    return None
+
+
+def _trace_callers_recursive(current_func: str, tainted_params: Set[str], 
+                           call_graph: dict, path: List[str], 
+                           chains: List[List[str]], max_depth: int):
+    """呼び出し元を再帰的に追跡（保守的な近似）"""
+    if len(path) > max_depth:
+        return
+    
+    # 現在の関数の呼び出し元を探す
+    callers = call_graph.get(current_func, [])
+    
+    if not callers:
+        # エントリポイントに到達
+        chains.append(path[:])
+        return
+    
+    for caller_info in callers:
+        caller_name = caller_info["caller"]
+        
+        # 循環を防ぐ
+        if caller_name in path:
+            continue
+        
+        # 保守的な近似：データ依存の可能性がある呼び出し元をすべて追跡
+        # LLMが後で正確な依存関係を判断
+        new_path = path + [caller_name]
+        _trace_callers_recursive(
+            caller_name, 
+            tainted_params,  # 保守的にすべてのパラメータを伝播
+            call_graph,
+            new_path,
+            chains,
+            max_depth
+        )

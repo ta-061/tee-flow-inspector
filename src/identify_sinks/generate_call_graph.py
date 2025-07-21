@@ -1,6 +1,6 @@
-#src/identify_sinks/generate_call_graph_advanced.py
+#src/identify_sinks/generate_call_graph.py
 #!/usr/bin/env python3
-"""generate_call_graph_advanced.py - 関数定義位置も含む詳細な呼び出しグラフを生成"""
+"""generate_call_graph.py - 関数定義位置も含む詳細な呼び出しグラフを生成"""
 import json
 import sys
 from pathlib import Path
