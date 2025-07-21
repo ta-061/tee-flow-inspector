@@ -12,6 +12,54 @@ import json
 import re
 import argparse
 from pathlib import Path
+from typing import Optional
+
+class PromptManager:
+    """プロンプトテンプレートを管理するクラス"""
+    
+    def __init__(self, prompts_dir: Optional[Path] = None):
+        """
+        Args:
+            prompts_dir: プロンプトファイルが格納されているディレクトリ
+        """
+        if prompts_dir is None:
+            prompts_dir = Path("/workspace/prompts/sinks_prompt")
+        
+        self.prompts_dir = prompts_dir
+        self._cache = {}  # 読み込んだプロンプトのキャッシュ
+    
+    def load_prompt(self, filename: str) -> str:
+        """
+        プロンプトファイルを読み込む
+        
+        Args:
+            filename: プロンプトファイル名
+            
+        Returns:
+            プロンプトテンプレート文字列
+        """
+        if filename in self._cache:
+            return self._cache[filename]
+        
+        prompt_path = self.prompts_dir / filename
+        
+        if not prompt_path.exists():
+            raise FileNotFoundError(f"プロンプトファイルが見つかりません: {prompt_path}")
+        
+        try:
+            prompt = prompt_path.read_text(encoding="utf-8")
+            self._cache[filename] = prompt
+            return prompt
+        except Exception as e:
+            raise RuntimeError(f"プロンプトファイルの読み込みに失敗しました: {e}")
+    
+    def clear_cache(self):
+        """キャッシュをクリア（プロンプト更新時に使用）"""
+        self._cache.clear()
+
+
+# グローバルなプロンプトマネージャーインスタンス
+_prompt_manager = PromptManager()
 
 # 新しいLLM設定システムをインポート
 sys.path.append(str(Path(__file__).parent.parent))
@@ -60,39 +108,10 @@ def ask_llm(client: UnifiedLLMClient, prompt: str) -> str:
 
 
 def analyze_external_function_as_sink(client: UnifiedLLMClient, func_name: str, log_file: Path) -> list[dict]:
-    prompt = f"""You are an expert in static taint analysis for TA (Trusted Application) code running in a TEE (Trusted Execution Environment).
-
-We are specifically interested in identifying if the external API function `{func_name}` can be a sink based on these vulnerability patterns:
-
-① Unencrypted output to Normal World: Functions that could potentially write data to shared memory buffers or other interfaces accessible by the Normal World.
-
-② Missing input validation: Functions that accept size/length parameters or pointers that could be manipulated to cause buffer overflows, out-of-bounds access, or other memory corruption issues.
-
-③ Shared memory operations: Functions that copy data to/from memory regions, especially if the destination could be shared with the Normal World.
-
-Consider the function from a taint analysis perspective - if tainted data reaches this function, could it lead to security issues?
-
-Common sink functions in TEE context include:
-- Memory operations: memcpy, memmove, strcpy, strncpy, etc.
-- Output functions: printf family, write operations
-- Random number generation that writes to buffers
-- Any function that could expose data or be exploited with malicious input
-
-Perform a detailed analysis following these steps:
-1. Briefly explain the purpose of the function `{func_name}`.
-2. Consider each of the three vulnerability patterns and reason whether the function could be exploited if it receives tainted data.
-3. Be practical - consider how the function is typically used in TEE applications.
-
-Finally, if you determine the function `{func_name}` could be a sink, list each potential vulnerability in exactly the following format:
-(function: FUNCTION_NAME; param_index: PARAM_INDEX; reason: REASON)
-
-For functions with multiple parameters that could be problematic, list each separately.
-Common parameter indices:
-- For memory operations: 0 (destination), 1 (source), 2 (size)
-- For output functions: 0 (format string), 1+ (data parameters)
-
-If none of the vulnerability patterns apply, clearly state "no vulnerabilities found."
-"""
+    prompt = _prompt_manager.load_prompt("sink_identification.txt")
+    prompt = prompt.format(
+        func_name=func_name,
+    )
     
     with open(log_file, "a", encoding="utf-8") as lf:
         lf.write(f"# External Function: {func_name}\n## Prompt:\n{prompt}\n")
