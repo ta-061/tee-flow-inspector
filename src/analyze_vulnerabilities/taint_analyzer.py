@@ -100,10 +100,6 @@ def clean_code_for_llm(code: str) -> str:
     code = re.sub(r'//.*$', '', code, flags=re.MULTILINE)
     # 複数行コメント
     code = re.sub(r'/\*.*?\*/', '', code, flags=re.DOTALL)
-    # 単一行コメント
-    code = re.sub(r'//.*$', '', code, flags=re.MULTILINE)
-    # 複数行コメント
-    code = re.sub(r'/\*.*?\*/', '', code, flags=re.DOTALL)
     
     # 空行の圧縮
     code = re.sub(r'\n\s*\n', '\n', code)
@@ -233,27 +229,39 @@ def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict,
             prompt = get_start_prompt(func_name, param_names, code)
         else:
             # 中間プロンプト
+            # 最後の関数かどうかチェック
+            is_final_function = (i == len(chain) - 1)
+            sink_function = vd["sink"] if is_final_function else None
+            
             # 最後の関数で複数のparam_indexを考慮
-            if i == len(chain) - 1 and len(param_indices) > 1:
+            if is_final_function and len(param_indices) > 1:
                 # 複数のパラメータについて言及
                 param_names_list = [f"arg{idx}" for idx in param_indices]
                 param_name = f"parameters {', '.join(param_names_list)} (indices: {param_indices})"
                 
-                # get_middle_prompt_multi_paramsが存在しない場合の代替案
-                try:
-                    prompt = get_middle_prompt_multi_params(func_name, param_name, code)
-                except NameError:
-                    # 関数が存在しない場合は、通常のget_middle_promptを使用し、
-                    # 複数パラメータの情報を追加
-                    prompt = get_middle_prompt(func_name, param_name, code)
-                    prompt += f"\n\nNote: Multiple parameters {param_names_list} may be affected by tainted data."
+                prompt = get_middle_prompt_multi_params(
+                    func_name, 
+                    param_name, 
+                    code,
+                    sink_function=sink_function,
+                    param_indices=param_indices
+                )
             else:
                 # 単一パラメータの場合
-                if i == len(chain) - 1 and param_indices:
+                if is_final_function and param_indices:
                     param_name = f"arg{param_indices[0]}"
+                    param_index = param_indices[0]
                 else:
                     param_name = "params"
-                prompt = get_middle_prompt(func_name, param_name, code)
+                    param_index = None
+                
+                prompt = get_middle_prompt(
+                    func_name, 
+                    param_name, 
+                    code,
+                    sink_function=sink_function,
+                    param_index=param_index
+                )
         
         # 会話履歴にユーザーメッセージを追加
         conversation_history.append({"role": "user", "content": prompt})

@@ -63,7 +63,6 @@ def analyze_vd_data_dependency(tu, vd: dict, func_cursor):
             break
     
     if not func_body:
-        print(f"[DEBUG] Function body not found")
         func_params = analyzer._get_function_parameters(func_cursor)
         return func_params
     
@@ -90,7 +89,6 @@ def analyze_vd_data_dependency(tu, vd: dict, func_cursor):
     calls = []
     collect_calls(func_body, calls)
     
-    print(f"[DEBUG] Found {len(calls)} calls in function")
     for call in calls:
         print(f"[DEBUG]   {call['name']} at line {call['line']}")
     
@@ -106,12 +104,10 @@ def analyze_vd_data_dependency(tu, vd: dict, func_cursor):
                 sink_call = call['cursor']
     
     if not sink_call:
-        print(f"[DEBUG] Sink call '{sink_name}' not found in function")
         # 保守的にすべてのパラメータに依存すると仮定
         func_params = analyzer._get_function_parameters(func_cursor)
         return func_params
     
-    print(f"[DEBUG] Found sink call: {sink_name} at line {sink_call.location.line} (VD line: {vd_line})")
     
     # シンクの引数を抽出
     sink_args = []
@@ -131,23 +127,18 @@ def analyze_vd_data_dependency(tu, vd: dict, func_cursor):
             # この引数の変数を収集
             variables = analyzer._collect_variables(child)
             sink_args.extend(variables)
-            print(f"[DEBUG] Argument {arg_index}: variables: {variables}")
             
             # 引数の式全体も表示（デバッグ用）
             tokens = list(child.get_tokens())
             if tokens:
                 arg_text = ' '.join(t.spelling for t in tokens)
-                print(f"[DEBUG] Argument expression: {arg_text}")
         
         arg_index += 1
     
-    print(f"[DEBUG] Total arguments found: {len(arg_nodes)}")
-    print(f"[DEBUG] Sink argument variables: {sink_args}")
     
     if not sink_args:
         # 引数が定数の場合など、変数が見つからない場合
         # 保守的にすべてのパラメータに依存すると仮定
-        print(f"[DEBUG] No variables found in sink argument, assuming all parameters")
         func_params = analyzer._get_function_parameters(func_cursor)
         return func_params
     
@@ -157,8 +148,7 @@ def analyze_vd_data_dependency(tu, vd: dict, func_cursor):
         (vd["file"], vd_line),
         list(sink_args)
     )
-    
-    print(f"[DEBUG] Affected parameters after dataflow analysis: {affected_params}")
+
     
     # もし影響を受けるパラメータが見つからない場合でも、
     # シンク引数に直接パラメータが使われているかチェック
@@ -175,8 +165,6 @@ def build_call_graph_index(edges: list[dict]) -> dict:
     # 被呼び出し関数 -> 呼び出し元のマッピング
     callee_to_callers = defaultdict(list)
     
-    print(f"[DEBUG] Building call graph index from {len(edges)} edges")
-    
     for edge in edges:
         caller = edge.get("caller")
         callee = edge.get("callee")
@@ -187,12 +175,6 @@ def build_call_graph_index(edges: list[dict]) -> dict:
                 "call_line": edge.get("call_line", 0)
             })
     
-    print(f"[DEBUG] Call graph index built with {len(callee_to_callers)} functions")
-    # 重要な関数の呼び出し元を表示
-    for func in ["random_number_generate", "TEE_Malloc", "TEE_GenerateRandom"]:
-        if func in callee_to_callers:
-            callers = [c['caller'] for c in callee_to_callers[func]]
-            print(f"[DEBUG]   {func} <- {callers}")
     
     return callee_to_callers
 
@@ -206,9 +188,7 @@ def trace_chains_with_dependency(func_name: str,
     """
     chains = []
     
-    print(f"[DEBUG] Tracing chains for function: {func_name}")
-    print(f"[DEBUG] Dependent parameters: {dependent_params}")
-    
+
     def dfs(current_func: str, path: list[str], depth: int):
         if depth > max_depth:
             return
@@ -216,12 +196,10 @@ def trace_chains_with_dependency(func_name: str,
         # 現在の関数の呼び出し元を取得
         callers = call_graph_index.get(current_func, [])
         
-        print(f"[DEBUG] Function {current_func} has {len(callers)} callers")
         
         if not callers:
             # エントリポイントに到達
             chains.append(path[:])
-            print(f"[DEBUG] Entry point reached: {' -> '.join(path)}")
             return
         
         # 各呼び出し元について
@@ -232,7 +210,6 @@ def trace_chains_with_dependency(func_name: str,
             if caller_name in path:
                 continue
             
-            print(f"[DEBUG] Exploring caller: {caller_name}")
             
             # パスを更新（呼び出し元を先頭に追加）
             new_path = [caller_name] + path
@@ -250,7 +227,6 @@ def trace_chains_with_dependency(func_name: str,
             
             if not caller_func:
                 # 関数定義が見つからない場合は、保守的に追跡を続ける
-                print(f"[DEBUG] Function definition not found for {caller_name}, continuing...")
                 dfs(caller_name, new_path, depth + 1)
                 continue
             
@@ -264,8 +240,6 @@ def trace_chains_with_dependency(func_name: str,
     
     # 探索開始（現在の関数を初期パスに含める）
     dfs(func_name, [func_name], 0)
-    
-    print(f"[DEBUG] Found {len(chains)} chains")
     
     return chains
 
@@ -303,15 +277,12 @@ def get_chains_for_vd(vd: dict, tus: list, call_graph_edges: list) -> list[list[
             break
     
     if not vd_func:
-        print(f"[WARN] Function containing VD not found: {vd}")
         return chains
     
-    print(f"[DEBUG] VD found in function: {vd_func.spelling}")
     
     # Step 1: 関数内データ依存性解析
     dependent_params = analyze_vd_data_dependency(vd_tu, vd, vd_func)
     
-    print(f"[DEBUG] VD depends on parameters: {dependent_params}")
     
     # Step 2: 呼び出しグラフインデックスを構築
     call_graph_index = build_call_graph_index(call_graph_edges)
@@ -365,10 +336,7 @@ def main():
     
     import os
     devkit = args.devkit or os.environ.get("TA_DEV_KIT_DIR")
-    
-    print(f"[INFO] Loading translation units...")
     tus = parse_sources_unified(entries, devkit, verbose=False, ta_dir=ta_dir)
-    print(f"[INFO] Loaded {len(tus)} translation units")
     
     # 各VDに対してチェーンを生成
     result = []
@@ -377,8 +345,6 @@ def main():
             vd = vd_entry["vd"]
         else:
             vd = vd_entry
-        
-        print(f"\n[INFO] Processing VD {i+1}/{len(vd_list)}: {vd['sink']} at line {vd['line']}")
         
         chains = get_chains_for_vd(vd, tus, edges)
         
@@ -396,14 +362,13 @@ def main():
             "chains": unique_chains
         })
         
-        print(f"[INFO] Found {len(unique_chains)} unique chains")
     
     # 結果を出力
     Path(args.output).write_text(
         json.dumps(result, indent=2, ensure_ascii=False),
         encoding="utf-8"
     )
-    print(f"\n[INFO] Results written to {args.output}")
+
 
 if __name__ == "__main__":
     main()

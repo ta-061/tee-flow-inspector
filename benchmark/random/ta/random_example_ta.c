@@ -75,7 +75,7 @@ static TEE_Result random_number_generate(uint32_t param_types,
 	if (param_types != exp_param_types)
 		return TEE_ERROR_BAD_PARAMETERS;
 
-	buf = TEE_Malloc(params[0].memref.size,0);
+	buf = TEE_Malloc(params[0].memref.size, 0);
 	if (!buf)
 		return TEE_ERROR_OUT_OF_MEMORY;
 	IMSG("Generating random data over %u bytes.", params[0].memref.size);

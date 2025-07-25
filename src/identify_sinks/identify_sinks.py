@@ -1,10 +1,9 @@
 # /src/identify_sinks/identify_sinks.py
-# !/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 フェーズ3: フェーズ1-2の結果を読み込んで、呼び出されている外部 API だけをLLMに問い、シンク候補をJSON出力する
-使い方:
-  python identify_sinks.py -i /path/to/ta_phase12.json -o /path/to/ta_sinks.json
+RAG対応版
 """
 
 import sys
@@ -65,6 +64,31 @@ _prompt_manager = PromptManager()
 sys.path.append(str(Path(__file__).parent.parent))
 from llm_settings.config_manager import UnifiedLLMClient
 
+# RAGシステムをインポート
+from rag.rag_client import TEERAGClient
+
+# グローバルRAGクライアント
+_rag_client = None
+
+def init_rag_client():
+    """RAGクライアントの初期化"""
+    global _rag_client
+    if _rag_client is None:
+        try:
+            # FAISSのセキュリティ設定を環境変数で設定
+            import os
+            os.environ['FAISS_ALLOW_DANGEROUS_DESERIALIZATION'] = 'true'
+            
+            _rag_client = TEERAGClient()
+            if not _rag_client.is_initialized:
+                print("[INFO] Building RAG index for the first time...")
+                _rag_client.build_index()
+        except Exception as e:
+            print(f"[WARN] Failed to initialize RAG: {e}")
+            print("[INFO] Continuing without RAG support...")
+            _rag_client = None
+    return _rag_client
+
 
 def init_client():
     """新しいLLM設定システムを使用したクライアント初期化"""
@@ -107,14 +131,35 @@ def ask_llm(client: UnifiedLLMClient, prompt: str) -> str:
     return client.chat_completion(messages)
 
 
-def analyze_external_function_as_sink(client: UnifiedLLMClient, func_name: str, log_file: Path) -> list[dict]:
-    prompt = _prompt_manager.load_prompt("sink_identification.txt")
-    prompt = prompt.format(
-        func_name=func_name,
-    )
+def analyze_external_function_as_sink(client: UnifiedLLMClient, func_name: str, log_file: Path, use_rag: bool = True) -> list[dict]:
+    # RAGを使用する場合、関連情報を取得
+    rag_context = ""
+    if use_rag and _rag_client is not None:
+        try:
+            rag_context = _rag_client.search_for_sink_analysis(func_name)
+        except Exception as e:
+            print(f"[WARN] RAG search failed: {e}")
+            rag_context = ""
+    
+    # プロンプトを読み込み
+    if use_rag and rag_context and "[ERROR]" not in rag_context:
+        prompt_template = _prompt_manager.load_prompt("sink_identification_with_rag.txt")
+        prompt = prompt_template.format(
+            func_name=func_name,
+            rag_context=rag_context
+        )
+    else:
+        # RAGが利用できない場合は通常のプロンプトを使用
+        prompt_template = _prompt_manager.load_prompt("sink_identification.txt")
+        prompt = prompt_template.format(
+            func_name=func_name,
+        )
     
     with open(log_file, "a", encoding="utf-8") as lf:
-        lf.write(f"# External Function: {func_name}\n## Prompt:\n{prompt}\n")
+        lf.write(f"# External Function: {func_name}\n")
+        if use_rag and rag_context and "[ERROR]" not in rag_context:
+            lf.write(f"## RAG Context:\n{rag_context[:500]}...\n")
+        lf.write(f"## Prompt:\n{prompt}\n")
     
     resp = ask_llm(client, prompt)
     clean = re.sub(r"^```(?:json)?\s*|\s*```$", "", resp.strip(), flags=re.MULTILINE)
@@ -142,16 +187,24 @@ def analyze_external_function_as_sink(client: UnifiedLLMClient, func_name: str, 
 
 
 def main():
-    parser = argparse.ArgumentParser(description="フェーズ3: シンク特定")
+    parser = argparse.ArgumentParser(description="フェーズ3: シンク特定 (RAG対応)")
     parser.add_argument("-i", "--input", required=True, help="フェーズ1-2 JSON 結果ファイル")
     parser.add_argument("-o", "--output", required=True, help="出力 ta_sinks.json パス")
     parser.add_argument("--provider", help="使用するLLMプロバイダー (openai, claude, deepseek, local)")
+    parser.add_argument("--no-rag", action="store_true", help="RAGを使用しない")
     args = parser.parse_args()
     
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     log_file = out_path.parent / "prompts_and_responses.txt"
     log_file.write_text("", encoding="utf-8")
+    
+    # RAGの使用フラグ
+    use_rag = not args.no_rag
+    
+    if use_rag:
+        print("[INFO] RAG mode enabled. Initializing RAG system...")
+        init_rag_client()
     
     # 新しいLLMクライアントを初期化
     client = init_client()
@@ -194,7 +247,7 @@ def main():
     print("外部 API 関数をシンクとして解析中...")
     all_sinks = []
     for func_name in sorted(called_external_funcs):
-        sinks = analyze_external_function_as_sink(client, func_name, log_file)
+        sinks = analyze_external_function_as_sink(client, func_name, log_file, use_rag)
         all_sinks.extend(sinks)
     
     print(f"抽出されたシンク候補: {len(all_sinks)} 個")

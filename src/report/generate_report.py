@@ -147,11 +147,9 @@ def parse_taint_log(path: Path, debug: bool = False) -> dict:
             prompt_lines = []
             while i < len(lines):
                 nl = lines[i]
-                if nl.startswith("### Response:") or nl.startswith("## ") \
-                    or nl.startswith("Analyzing chain:"):
-                        break
-                if nl.strip():
-                    prompt_lines.append(nl)
+                if nl.startswith("### Response:") or nl.startswith("Analyzing chain:"):
+                    break
+                prompt_lines.append(nl)
                 i += 1
             
             if prompt_lines:
@@ -174,7 +172,8 @@ def parse_taint_log(path: Path, debug: bool = False) -> dict:
                 # 次のセクションの開始を検出
                 if (next_line.startswith("## Function") or 
                     next_line.startswith("Analyzing chain:") or
-                    next_line.startswith("## Vulnerability Analysis")):
+                    next_line.startswith("## Vulnerability Analysis") or
+                    next_line.startswith("### Prompt:")):
                     break
                 # 空行も含める（レスポンス内の段落区切りのため）
                 response_lines.append(next_line)

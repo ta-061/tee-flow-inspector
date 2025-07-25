@@ -1,12 +1,24 @@
-#!/usr/bin/env python3
+# src/analyze_vulnerabilities/prompts.py
+# !/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-prompts.py - LLMプロンプトテンプレート管理
+prompts.py - LLMプロンプトテンプレート管理（RAG対応版）
 /workspace/prompts/vulnerabilities_prompt/ からプロンプトを読み込む
 """
 
 from pathlib import Path
 from typing import Optional
+import sys
+import os
+
+# RAGシステムをインポート
+sys.path.append(str(Path(__file__).parent.parent))
+try:
+    from rag.rag_client import TEERAGClient
+    RAG_AVAILABLE = True
+except ImportError:
+    RAG_AVAILABLE = False
+    print("[WARN] RAG module not available. Using standard prompts.")
 
 
 class PromptManager:
@@ -23,6 +35,29 @@ class PromptManager:
         
         self.prompts_dir = prompts_dir
         self._cache = {}  # 読み込んだプロンプトのキャッシュ
+        
+        # ディレクトリの存在確認
+        if not self.prompts_dir.exists():
+            print(f"[WARN] Prompts directory not found: {self.prompts_dir}")
+        else:
+            print(f"[DEBUG] Using prompts directory: {self.prompts_dir}")
+        
+        # RAGクライアント
+        self._rag_client = None
+        if RAG_AVAILABLE:
+            try:
+                # FAISSのセキュリティ設定
+                os.environ['FAISS_ALLOW_DANGEROUS_DESERIALIZATION'] = 'true'
+                
+                self._rag_client = TEERAGClient()
+                if not self._rag_client.is_initialized:
+                    print("[INFO] Initializing RAG system...")
+                    self._rag_client.build_index()
+                else:
+                    print("[DEBUG] RAG system already initialized")
+            except Exception as e:
+                print(f"[WARN] Failed to initialize RAG: {e}")
+                self._rag_client = None
     
     def load_prompt(self, filename: str) -> str:
         """
@@ -40,18 +75,41 @@ class PromptManager:
         prompt_path = self.prompts_dir / filename
         
         if not prompt_path.exists():
+            print(f"[ERROR] Prompt file not found: {prompt_path}")
+            # フォールバック処理
             raise FileNotFoundError(f"プロンプトファイルが見つかりません: {prompt_path}")
         
         try:
             prompt = prompt_path.read_text(encoding="utf-8")
             self._cache[filename] = prompt
+            print(f"[DEBUG] Loaded prompt: {filename}")
             return prompt
         except Exception as e:
+            print(f"[ERROR] Failed to load prompt file {filename}: {e}")
             raise RuntimeError(f"プロンプトファイルの読み込みに失敗しました: {e}")
     
     def clear_cache(self):
         """キャッシュをクリア（プロンプト更新時に使用）"""
         self._cache.clear()
+    
+    def get_rag_context_for_vulnerability(self, code: str, sink_function: str, param_index: int) -> Optional[str]:
+        """脆弱性解析用のRAGコンテキストを取得"""
+        if self._rag_client is None:
+            return None
+        
+        try:
+            context = self._rag_client.search_for_vulnerability_analysis(
+                code, sink_function, param_index
+            )
+            if context and "[ERROR]" not in context:
+                print(f"[DEBUG] Retrieved RAG context for {sink_function} (param {param_index}): {len(context)} chars")
+                return context
+            else:
+                print(f"[DEBUG] No valid RAG context found for {sink_function}")
+                return None
+        except Exception as e:
+            print(f"[WARN] RAG search failed: {e}")
+            return None
 
 
 # グローバルなプロンプトマネージャーインスタンス
@@ -68,8 +126,37 @@ def get_start_prompt(source_function: str, param_name: str, code: str) -> str:
     )
 
 
-def get_middle_prompt(source_function: str, param_name: str, code: str) -> str:
-    """中間プロンプトを生成（外部関数も同じテンプレで処理）"""
+def get_middle_prompt(source_function: str, param_name: str, code: str, 
+                     sink_function: Optional[str] = None, 
+                     param_index: Optional[int] = None) -> str:
+    """中間プロンプトを生成（RAG対応）"""
+    print(f"[DEBUG] get_middle_prompt called: sink_function={sink_function}, param_index={param_index}")
+    
+    # RAGコンテキストを取得（最終関数の場合）
+    rag_context = None
+    if sink_function and param_index is not None and _prompt_manager._rag_client:
+        print(f"[DEBUG] Attempting to get RAG context for {sink_function}")
+        rag_context = _prompt_manager.get_rag_context_for_vulnerability(
+            code, sink_function, param_index
+        )
+    
+    # RAGコンテキストがある場合は専用テンプレートを使用
+    if rag_context and "[ERROR]" not in rag_context:
+        try:
+            template = _prompt_manager.load_prompt("taint_middle_with_rag.txt")
+            print(f"[DEBUG] Using RAG template for {sink_function}")
+            return template.format(
+                source_function=source_function,
+                param_name=param_name,
+                code=code,
+                rag_context=rag_context
+            )
+        except FileNotFoundError:
+            print(f"[WARN] RAG template not found, falling back to standard template")
+        except Exception as e:
+            print(f"[WARN] Failed to use RAG template, falling back to standard: {e}")
+    
+    # 通常のテンプレート
     template = _prompt_manager.load_prompt("taint_middle.txt")
     return template.format(
         source_function=source_function,
@@ -77,15 +164,40 @@ def get_middle_prompt(source_function: str, param_name: str, code: str) -> str:
         code=code
     )
 
-def get_middle_prompt_multi_params(source_function: str, param_name: str, code: str) -> str:
-    """複数パラメータ用の中間プロンプトを生成"""
+def get_middle_prompt_multi_params(source_function: str, param_name: str, code: str,
+                                  sink_function: Optional[str] = None,
+                                  param_indices: Optional[list] = None) -> str:
+    """複数パラメータ用の中間プロンプトを生成（RAG対応）"""
+    # RAGコンテキストを取得（複数パラメータの場合は最初のインデックスを使用）
+    rag_context = None
+    if sink_function and param_indices and _prompt_manager._rag_client:
+        rag_context = _prompt_manager.get_rag_context_for_vulnerability(
+            code, sink_function, param_indices[0]
+        )
+    
+    # RAGコンテキストがある場合
+    if rag_context and "[ERROR]" not in rag_context:
+        try:
+            template = _prompt_manager.load_prompt("taint_middle_multi_params_with_rag.txt")
+            print(f"[DEBUG] Using multi-param RAG template for {sink_function}")
+            return template.format(
+                source_function=source_function,
+                param_name=param_name,
+                code=code,
+                rag_context=rag_context
+            )
+        except FileNotFoundError:
+            print(f"[WARN] Multi-param RAG template not found, falling back to standard template")
+        except Exception as e:
+            print(f"[WARN] Failed to use multi-param RAG template, falling back: {e}")
+    
+    # 通常のテンプレート
     template = _prompt_manager.load_prompt("taint_middle_multi_params.txt")
     return template.format(
         source_function=source_function,
         param_name=param_name,
         code=code
     )
-
 
 def get_end_prompt() -> str:
     """エンドプロンプトを生成"""
@@ -95,6 +207,11 @@ def get_end_prompt() -> str:
 def reload_prompts():
     """プロンプトを再読み込み（開発時のデバッグ用）"""
     _prompt_manager.clear_cache()
+
+
+def is_rag_available() -> bool:
+    """RAGが利用可能かチェック"""
+    return _prompt_manager._rag_client is not None
 
 
 # カスタムディレクトリを指定してプロンプトマネージャーを作成する関数
@@ -109,3 +226,65 @@ def set_prompts_directory(prompts_dir: Path):
     global _prompt_manager
     _prompt_manager = PromptManager(prompts_dir)
     print(f"プロンプトディレクトリを変更しました: {prompts_dir}")
+
+
+# RAGの有効/無効を切り替える関数
+def set_rag_enabled(enabled: bool):
+    """RAGの有効/無効を設定"""
+    global _prompt_manager
+    if enabled and RAG_AVAILABLE:
+        if _prompt_manager._rag_client is None:
+            try:
+                _prompt_manager._rag_client = TEERAGClient()
+                if not _prompt_manager._rag_client.is_initialized:
+                    _prompt_manager._rag_client.build_index()
+                print("[INFO] RAG enabled")
+            except Exception as e:
+                print(f"[ERROR] Failed to enable RAG: {e}")
+    else:
+        _prompt_manager._rag_client = None
+        print("[INFO] RAG disabled")
+
+
+def main():
+    """テスト用のメイン関数"""
+    print("=== Prompt Manager Test ===")
+    
+    # プロンプトディレクトリの確認
+    print(f"Prompts directory: {_prompt_manager.prompts_dir}")
+    print(f"Directory exists: {_prompt_manager.prompts_dir.exists()}")
+    
+    if _prompt_manager.prompts_dir.exists():
+        print("Available prompt files:")
+        for file in _prompt_manager.prompts_dir.glob("*.txt"):
+            print(f"  - {file.name}")
+    
+    # RAGの状態確認
+    print(f"RAG available: {is_rag_available()}")
+    
+    # 各プロンプトのテスト
+    print("\n=== Testing Prompts ===")
+    
+    try:
+        start_prompt = get_start_prompt("test_function", "test_params", "void test() {}")
+        print(f"Start prompt loaded: {len(start_prompt)} chars")
+    except Exception as e:
+        print(f"Failed to load start prompt: {e}")
+    
+    try:
+        middle_prompt = get_middle_prompt("func1", "data", "void func() {}", "TEE_Malloc", 0)
+        print(f"Middle prompt loaded: {len(middle_prompt)} chars")
+        print(f"RAG context included: {'rag_context' in middle_prompt.lower()}")
+    except Exception as e:
+        print(f"Failed to load middle prompt: {e}")
+    
+    try:
+        end_prompt = get_end_prompt()
+        print(f"End prompt loaded: {len(end_prompt)} chars")
+        print(f"Contains vulnerability_found format: {'vulnerability_found' in end_prompt}")
+    except Exception as e:
+        print(f"Failed to load end prompt: {e}")
+
+
+if __name__ == "__main__":
+    main()

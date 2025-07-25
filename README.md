@@ -23,14 +23,26 @@ python3 ./src/main.py \
 
 tee-flow-inspector % tree -I "optee_client|optee_os|results|benchmark|answers"
 .
+├── Carent_Flow.md
 ├── config.mk
 ├── Data_Flow.md
 ├── docker
 │   ├── Dockerfile
 │   ├── entrypoint.sh
-│   └── requirements.txt
+│   ├── requirements.txt
+│   └── scripts
+│       ├── llm_config.sh
+│       └── llm_setup.sh
 ├── LLM_Flow.md
 ├── log.txt
+├── prompts
+│   ├── sinks_prompt
+│   │   └── sink_identification.txt
+│   └── vulnerabilities_prompt
+│       ├── taint_end.txt
+│       ├── taint_middle_multi_params.txt
+│       ├── taint_middle.txt
+│       └── taint_start.txt
 ├── README.md
 ├── src
 │   ├── __pycache__
@@ -40,20 +52,37 @@ tee-flow-inspector % tree -I "optee_client|optee_os|results|benchmark|answers"
 │   │   ├── __pycache__
 │   │   │   └── prompts.cpython-310.pyc
 │   │   ├── prompts.py
-│   │   └── taint_analyzer.py
+│   │   ├── taint_analyzer.py
+│   │   └── taint_analyzer.py.backup
+│   ├── api_key.json.backup
 │   ├── build.py
 │   ├── classify
 │   │   ├── __pycache__
 │   │   │   └── classifier.cpython-310.pyc
 │   │   └── classifier.py
 │   ├── identify_flows
-│   │   └── generate_candidate_flows.py
+│   │   ├── generate_candidate_flows.py
+│   │   └── identify_flow.md
 │   ├── identify_sinks
 │   │   ├── extract_sink_calls.py
 │   │   ├── find_sink_calls.py
 │   │   ├── function_call_chains.py
 │   │   ├── generate_call_graph.py
-│   │   └── identify_sinks.py
+│   │   ├── identify_sinks.py
+│   │   ├── identify_sinks.py.backup
+│   │   └── prompts
+│   ├── llm_settings
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   │   ├── __init__.cpython-310.pyc
+│   │   │   ├── adapter.cpython-310.pyc
+│   │   │   ├── config_manager.cpython-310.pyc
+│   │   │   └── llm_cli.cpython-310.pyc
+│   │   ├── adapter.py
+│   │   ├── config_manager.py
+│   │   ├── llm_cli.py
+│   │   ├── llm_config.json
+│   │   └── migrate_code.py
 │   ├── main.py
 │   ├── parsing
 │   │   ├── __init__.py
@@ -70,6 +99,7 @@ tee-flow-inspector % tree -I "optee_client|optee_os|results|benchmark|answers"
 ├── V1_Flow.md
 ├── V2_Flow.md
 └── V3_Flow.md
+
 
 13 directories, 35 files
 
