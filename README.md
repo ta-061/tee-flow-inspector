@@ -37,12 +37,16 @@ tee-flow-inspector % tree -I "optee_client|optee_os|results|benchmark|answers"
 ├── log.txt
 ├── prompts
 │   ├── sinks_prompt
+│   │   ├── sink_identification_with_rag.txt
 │   │   └── sink_identification.txt
 │   └── vulnerabilities_prompt
 │       ├── taint_end.txt
+│       ├── taint_middle_multi_params_with_rag.txt
 │       ├── taint_middle_multi_params.txt
+│       ├── taint_middle_with_rag.txt
 │       ├── taint_middle.txt
 │       └── taint_start.txt
+├── RAG_SETUP.md
 ├── README.md
 ├── src
 │   ├── __pycache__
@@ -50,6 +54,7 @@ tee-flow-inspector % tree -I "optee_client|optee_os|results|benchmark|answers"
 │   ├── analyze_vulnerabilities
 │   │   ├── __init__.py
 │   │   ├── __pycache__
+│   │   │   ├── __init__.cpython-310.pyc
 │   │   │   └── prompts.cpython-310.pyc
 │   │   ├── prompts.py
 │   │   ├── taint_analyzer.py
@@ -69,8 +74,7 @@ tee-flow-inspector % tree -I "optee_client|optee_os|results|benchmark|answers"
 │   │   ├── function_call_chains.py
 │   │   ├── generate_call_graph.py
 │   │   ├── identify_sinks.py
-│   │   ├── identify_sinks.py.backup
-│   │   └── prompts
+│   │   └── identify_sinks.py.backup
 │   ├── llm_settings
 │   │   ├── __init__.py
 │   │   ├── __pycache__
@@ -92,6 +96,33 @@ tee-flow-inspector % tree -I "optee_client|optee_os|results|benchmark|answers"
 │   │   │   └── parsing.cpython-310.pyc
 │   │   ├── parse_utils.py
 │   │   └── parsing.py
+│   ├── rag
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   │   ├── __init__.cpython-310.pyc
+│   │   │   ├── document_loader.cpython-310.pyc
+│   │   │   ├── rag_client.cpython-310.pyc
+│   │   │   ├── rag_manager.cpython-310.pyc
+│   │   │   ├── retriever.cpython-310.pyc
+│   │   │   ├── text_processor.cpython-310.pyc
+│   │   │   └── vector_store.cpython-310.pyc
+│   │   ├── document_loader.py
+│   │   ├── documents
+│   │   │   └── GPD_TEE_Internal_Core_API_Specification_v1.3.1_PublicRelease_CC.pdf
+│   │   ├── rag_client.py
+│   │   ├── retriever.py
+│   │   ├── text_processor.py
+│   │   ├── vector_store.py
+│   │   └── vector_stores
+│   │       ├── chroma
+│   │       │   ├── 565bd672-696a-4b8a-b5c1-e4398f987aa5
+│   │       │   │   ├── data_level0.bin
+│   │       │   │   ├── header.bin
+│   │       │   │   ├── index_metadata.pickle
+│   │       │   │   ├── length.bin
+│   │       │   │   └── link_lists.bin
+│   │       │   └── chroma.sqlite3
+│   │       └── metadata.json
 │   └── report
 │       ├── __init__.py
 │       ├── generate_report.py
@@ -100,8 +131,6 @@ tee-flow-inspector % tree -I "optee_client|optee_os|results|benchmark|answers"
 ├── V2_Flow.md
 └── V3_Flow.md
 
-
-13 directories, 35 files
 
 
 | ディレクトリ                                                                  | Makefile / build.sh                      | 依存ツールチェーン                        | 典型的に必要なもの                                   | ひとこと判定                       |

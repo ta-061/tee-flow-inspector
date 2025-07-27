@@ -1,53 +1,85 @@
 ```mermaid
-flowchart LR
+graph LR
+    %% 入力データ
+    TASource[TAソースコード<br/>*.c, *.h] --> Build[build.py]
+    DevKit[TA_DEV_KIT_DIR<br/>環境変数] --> Build
+    
+    %% Phase 1-2: ビルドと分類
+    Build --> CompileDB[compile_commands.json<br/>または<br/>compile_commands_full.json]
+    CompileDB --> Classifier[classifier.py]
+    
+    Classifier --> Phase12JSON[phase12.json<br/>project_root<br/>user_defined_functions<br/>external_declarations]
+    
+    %% Phase 3: シンク識別
+    Phase12JSON --> IdentifySinks[identify_sinks.py]
+    TEEDocs[TEE仕様書PDF<br/>documents/] --> RAGSystem[RAGシステム<br/>vector_store.py]
+    RAGSystem --> VectorDB[vector_stores/<br/>ChromaDB]
+    VectorDB --> IdentifySinks
+    
+    LLMConfig[llm_config.json<br/>providers設定] --> LLMClient[UnifiedLLMClient]
+    LLMClient --> IdentifySinks
+    
+    SinkPrompts[prompts/sinks_prompt/<br/>*.txt] --> IdentifySinks
+    
+    IdentifySinks --> SinksJSON[sinks.json<br/>sinks配列<br/>name, param_index, reason]
+    
+    %% Phase 3.1-3.4: 詳細解析
+    CompileDB --> FindSinkCalls[find_sink_calls.py]
+    SinksJSON --> FindSinkCalls
+    FindSinkCalls --> VDJSON1[vulnerable_destinations.json<br/>file, line, sink, param_index]
+    
+    CompileDB --> GenCallGraph[generate_call_graph.py]
+    GenCallGraph --> CallGraphJSON[call_graph.json<br/>edges配列<br/>definitions辞書]
+    
+    VDJSON1 --> FuncCallChains[function_call_chains.py]
+    CallGraphJSON --> FuncCallChains
+    CompileDB --> FuncCallChains
+    
+    FuncCallChains --> ChainsJSON[chains.json<br/>vd情報<br/>chains配列]
+    
+    ChainsJSON --> ExtractSinkCalls[extract_sink_calls.py]
+    SinksJSON --> ExtractSinkCalls
+    ExtractSinkCalls --> VDJSON2[vulnerable_destinations.json<br/>更新版]
+    
+    %% Phase 5: 候補フロー生成
+    ChainsJSON --> GenCandidateFlows[generate_candidate_flows.py]
+    SourceSpec[ソース関数指定<br/>TA_InvokeCommandEntryPoint<br/>TA_OpenSessionEntryPoint] --> GenCandidateFlows
+    
+    GenCandidateFlows --> CandidateFlows[candidate_flows.json<br/>vd, chains<br/>source_func<br/>source_params]
+    
+    %% Phase 6: 脆弱性解析
+    CandidateFlows --> TaintAnalyzer[taint_analyzer.py]
+    Phase12JSON --> TaintAnalyzer
+    
+    VulnPrompts[prompts/vulnerabilities_prompt/<br/>*.txt] --> TaintAnalyzer
+    VectorDB --> TaintAnalyzer
+    LLMClient --> TaintAnalyzer
+    
+    TaintAnalyzer --> VulnJSON[vulnerabilities.json<br/>total_flows_analyzed<br/>vulnerabilities配列]
+    
+    TaintAnalyzer --> TaintLog[taint_analysis_log.txt<br/>LLM対話履歴]
+    
+    %% Phase 7: レポート生成
+    VulnJSON --> GenReport[generate_report.py]
+    Phase12JSON --> GenReport
+    TaintLog --> GenReport
+    HTMLTemplate[html_template.html] --> GenReport
+    
+    GenReport --> HTMLReport[vulnerability_report.html<br/>インタラクティブ<br/>レポート]
+    
+    %% 中間ログファイル
+    IdentifySinks --> PromptsLog1[prompts_and_responses.txt<br/>Phase 3ログ]
+    
     %% スタイル定義
-    classDef source fill:#bbdefb,stroke:#1565c0,stroke-width:2px
-    classDef phase fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px
-    classDef llm fill:#ffccbc,stroke:#d84315,stroke-width:2px
-    classDef output fill:#fff9c4,stroke:#f57f17,stroke-width:2px
-
-    %% ソースコード
-    SRC[ソースコード<br/>.c/.h]:::source
-
-    %% Phase 0-2
-    SRC --> P0[Phase 0<br/>ビルド]:::phase
-    P0 --> CCDB[compile_commands.json]
-    CCDB --> P12[Phase 1-2<br/>AST解析]:::phase
-    P12 --> P12JSON[ta_phase12.json]
-
-    %% Phase 3 (LLM)
-    P12JSON --> P3[Phase 3<br/>シンク特定]:::llm
-    P3 --> SINKS[ta_sinks.json]
-    P3 -.-> LOG1[prompts_and_responses.txt]
-
-    %% Phase 3.4-3.7
-    SINKS --> P34[Phase 3.4-3.7<br/>静的解析]:::phase
-    CCDB --> P34
-    P34 --> VD[vulnerable_destinations.json]
-    P34 --> CG[call_graph.json]
-    P34 --> CHAINS[chains.json]
-
-    %% Phase 5
-    CHAINS --> P5[Phase 5<br/>フロー抽出]:::phase
-    P5 --> FLOWS[candidate_flows.json]
-
-    %% Phase 6 (LLM)
-    FLOWS --> P6[Phase 6<br/>テイント解析]:::llm
-    P12JSON --> P6
-    P6 --> VULN[vulnerabilities.json]
-    P6 -.-> LOG2[taint_analysis_log.txt]
-
-    %% Phase 7
-    VULN --> P7[Phase 7<br/>レポート生成]:::phase
-    P12JSON --> P7
-    LOG2 --> P7
-    P7 --> REPORT[vulnerability_report.html]:::output
-
-    %% 凡例
-    subgraph " "
-        L1[ソース]:::source
-        L2[解析フェーズ]:::phase
-        L3[LLM使用]:::llm
-        L4[最終出力]:::output
-    end
+    classDef input fill:#fcc,stroke:#333,stroke-width:2px
+    classDef process fill:#ccf,stroke:#333,stroke-width:2px
+    classDef data fill:#cfc,stroke:#333,stroke-width:2px
+    classDef output fill:#ffc,stroke:#333,stroke-width:2px
+    classDef external fill:#fcf,stroke:#333,stroke-width:2px
+    
+    class TASource,DevKit,TEEDocs,LLMConfig,SinkPrompts,VulnPrompts,SourceSpec,HTMLTemplate input
+    class Build,Classifier,IdentifySinks,FindSinkCalls,GenCallGraph,FuncCallChains,ExtractSinkCalls,GenCandidateFlows,TaintAnalyzer,GenReport process
+    class CompileDB,Phase12JSON,SinksJSON,VDJSON1,VDJSON2,CallGraphJSON,ChainsJSON,CandidateFlows,VulnJSON,TaintLog,PromptsLog1 data
+    class HTMLReport output
+    class RAGSystem,VectorDB,LLMClient external
 ```
