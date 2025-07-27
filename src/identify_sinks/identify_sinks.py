@@ -12,6 +12,10 @@ import re
 import argparse
 from pathlib import Path
 from typing import Optional
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# その後でrule_engineをインポート
+from rule_engine.pattern_matcher import PatternMatcher
 
 class PromptManager:
     """プロンプトテンプレートを管理するクラス"""
@@ -208,7 +212,10 @@ def main():
     
     # 新しいLLMクライアントを初期化
     client = init_client()
-    
+
+    #Rule EngineのPatternMatcherを初期化
+    matcher = PatternMatcher()
+
     # プロバイダーが指定されていれば切り替え
     if args.provider:
         print(f"LLMプロバイダーを {args.provider} に切り替えます...")
@@ -246,9 +253,38 @@ def main():
     # 解析
     print("外部 API 関数をシンクとして解析中...")
     all_sinks = []
+    # デバッグ: PatternMatcherの状態を確認
+    print("\n[DEBUG] PatternMatcher initialized")
+    print(f"[DEBUG] Loaded rules count: {len(matcher.spec.get('rules', []))}")
+    print(f"[DEBUG] Known functions in index: {len(matcher._index)}")
+
     for func_name in sorted(called_external_funcs):
-        sinks = analyze_external_function_as_sink(client, func_name, log_file, use_rag)
-        all_sinks.extend(sinks)
+        print(f"\n[DEBUG] Analyzing: {func_name}")
+        print(f"  - Is known: {matcher.is_known(func_name)}")
+        print(f"  - Is sink: {matcher.is_sink(func_name)}")
+        print(f"  - Dangerous params: {matcher.dangerous_params(func_name)}")
+        print(f"  - Rule IDs: {matcher.rules_for(func_name)}")
+        if matcher.is_sink(func_name):
+            # === ❶ ルールエンジンで確定したパラメータ ===
+            for idx in matcher.dangerous_params(func_name):
+                all_sinks.append({
+                    "kind": "function",
+                    "name": func_name,
+                    "param_index": idx,
+                    "reason": "DITING-rule",      # or matcher.rules_for(func_name)
+                    "by": "rule_engine"
+                })
+            # === ❷ LLM-Lite で追加確認したい場合はコメントアウト外す ===
+            lite_sinks = analyze_external_function_as_sink(
+                client, func_name, log_file, use_rag=False
+            )
+            all_sinks.extend(lite_sinks)
+        else:
+            # === ❸ 未知 API → 従来どおり LLM/RAG ===
+            sinks = analyze_external_function_as_sink(client, func_name, log_file, use_rag)
+            for s in sinks:
+                s["by"] = "llm"
+            all_sinks.extend(sinks)
     
     print(f"抽出されたシンク候補: {len(all_sinks)} 個")
     
