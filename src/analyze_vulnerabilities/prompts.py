@@ -20,6 +20,14 @@ except ImportError:
     RAG_AVAILABLE = False
     print("[WARN] RAG module not available. Using standard prompts.")
 
+# CodeQLルールエンジンをインポート
+try:
+    from rule_engine.codeql_converter import get_rules_for_sink_function
+    CODEQL_AVAILABLE = True
+except ImportError:
+    CODEQL_AVAILABLE = False
+    print("[WARN] CodeQL rule engine not available.")
+
 
 class PromptManager:
     """プロンプトテンプレートを管理するクラス"""
@@ -110,6 +118,34 @@ class PromptManager:
         except Exception as e:
             print(f"[WARN] RAG search failed: {e}")
             return None
+    
+    def get_codeql_context_for_function(self, function_name: str) -> Optional[str]:
+        """特定の関数に関連するCodeQLルールのコンテキストを取得"""
+        if not CODEQL_AVAILABLE:
+            return None
+            
+        try:
+            rules = get_rules_for_sink_function(function_name)
+            if not rules:
+                return None
+            
+            context = f"### DITING Rules for {function_name}:\n"
+            for rule in rules:
+                context += f"- **{rule['name']}** (Severity: {rule['severity']}): {rule['description']}\n"
+            
+            return context
+        except Exception as e:
+            print(f"[WARN] Failed to get CodeQL rules for {function_name}: {e}")
+            return None
+    
+    def enhance_prompt_with_codeql(self, base_prompt: str, function_name: str) -> str:
+        """プロンプトにCodeQLルールのコンテキストを追加"""
+        codeql_context = self.get_codeql_context_for_function(function_name)
+        if codeql_context:
+            # プロンプトの適切な位置にCodeQLコンテキストを挿入
+            enhanced_prompt = base_prompt + "\n\n" + codeql_context
+            return enhanced_prompt
+        return base_prompt
 
 
 # グローバルなプロンプトマネージャーインスタンス
@@ -204,6 +240,20 @@ def get_end_prompt() -> str:
     return _prompt_manager.load_prompt("taint_end.txt")
 
 
+def get_middle_prompt_with_codeql(source_function: str, param_name: str, code: str, 
+                                 sink_function: Optional[str] = None, 
+                                 param_index: Optional[int] = None) -> str:
+    """CodeQLルール情報を含む中間プロンプトを生成"""
+    # 基本プロンプトを生成
+    base_prompt = get_middle_prompt(source_function, param_name, code, sink_function, param_index)
+    
+    # シンク関数がある場合、CodeQLルールで強化
+    if sink_function:
+        base_prompt = _prompt_manager.enhance_prompt_with_codeql(base_prompt, sink_function)
+    
+    return base_prompt
+
+
 def reload_prompts():
     """プロンプトを再読み込み（開発時のデバッグ用）"""
     _prompt_manager.clear_cache()
@@ -212,6 +262,11 @@ def reload_prompts():
 def is_rag_available() -> bool:
     """RAGが利用可能かチェック"""
     return _prompt_manager._rag_client is not None
+
+
+def is_codeql_available() -> bool:
+    """CodeQLルールエンジンが利用可能かチェック"""
+    return CODEQL_AVAILABLE
 
 
 # カスタムディレクトリを指定してプロンプトマネージャーを作成する関数
@@ -261,6 +316,9 @@ def main():
     
     # RAGの状態確認
     print(f"RAG available: {is_rag_available()}")
+    
+    # CodeQLの状態確認
+    print(f"CodeQL available: {is_codeql_available()}")
     
     # 各プロンプトのテスト
     print("\n=== Testing Prompts ===")

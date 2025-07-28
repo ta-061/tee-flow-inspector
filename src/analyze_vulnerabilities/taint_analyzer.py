@@ -166,10 +166,21 @@ def ask_llm(client: UnifiedLLMClient, messages: list, max_retries: int = 3) -> s
     
     return "[ERROR] Maximum retries exceeded"
 
+def load_diting_rules_json(json_path: Path) -> dict:
+    """
+    DITING ルール JSON を読み込む。存在しない・壊れている場合は例外。
+    """
+    if not json_path.is_file():
+        raise FileNotFoundError(f"DITING rules JSON not found: {json_path}")
+    try:
+        return json.loads(json_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise RuntimeError(f"Failed to load DITING rules JSON: {json_path} ({e})")
 
 def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict, 
                       phase12_data: dict, log_file: Path, 
-                      source_params: list[str] | None = None) -> dict:
+                      source_params: list[str] | None = None,
+                      use_diting_rules: bool = True) -> dict:
     """
     単一のコールチェーンに対してテイント解析を実行
     param_indicesが存在する場合は、統合された解析として扱う
@@ -183,6 +194,32 @@ def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict,
     
     # 会話履歴を保持するリスト
     conversation_history = []
+    
+    # DITINGルールのシステムプロンプトを追加（最初のメッセージとして）
+    if use_diting_rules:
+        # プロンプトファイルを読み込み
+        diting_prompt_path = Path(__file__).parent.parent.parent / "prompts" / "vulnerabilities_prompt" / "codeql_rules_system.txt"
+        if diting_prompt_path.exists():
+            diting_template = diting_prompt_path.read_text(encoding="utf-8")
+
+            # DITINGルール JSON をファイルから取得（必須）
+            rules_dir = Path(__file__).parent.parent.parent / "rules"
+            json_path = rules_dir / "codeql_rules.json"
+            diting_rules = load_diting_rules_json(json_path)
+
+            # テンプレートに”厳密なJSON文字列”として埋め込む
+            system_prompt = diting_template.format(
+                diting_rules_json=json.dumps(diting_rules, ensure_ascii=False)
+            )
+            conversation_history.append({"role": "system", "content": system_prompt})
+            
+            # ログに記録
+            with open(log_file, "a", encoding="utf-8") as lf:
+                lf.write(f"### DITING Rules System Prompt:\n")
+                lf.write(f"Total rules loaded: {diting_rules.get('total_rules', 0)}\n")
+                lf.write(f"Target sink function: {vd['sink']}\n\n")
+        else:
+            print(f"[WARN] DITING system prompt file not found: {diting_prompt_path}")
     
     # 複数のparam_indexを処理
     if "param_indices" in vd:
@@ -372,6 +409,7 @@ def main():
     parser.add_argument("--phase12", required=True, help="フェーズ1-2の結果JSON")
     parser.add_argument("--output", required=True, help="出力脆弱性レポートJSON")
     parser.add_argument("--provider", help="使用するLLMプロバイダー (openai, claude, deepseek, local)")
+    parser.add_argument("--no-diting-rules", action="store_true", help="DITINGルールを使用しない")
     args = parser.parse_args()
     
     # 出力ディレクトリを準備
@@ -411,7 +449,11 @@ def main():
             print(f"  [{i+1}/{len(flows_data)}] チェーン: {' -> '.join(chain)}")
             
             # テイント解析を実行
-            result = analyze_taint_flow(client, chain, vd, phase12_data, log_file, flow.get("source_params"))
+            result = analyze_taint_flow(
+                client, chain, vd, phase12_data, log_file, 
+                flow.get("source_params"),
+                use_diting_rules=not args.no_diting_rules
+            )
             
             # 脆弱性が見つかった場合のみ結果に追加
             is_vuln, meta = parse_vuln_response(result["vulnerability"])
