@@ -1,381 +1,283 @@
-# tee-flow-inspector
+# TEE Flow Inspector
 
-1. chmod +x docker/entrypoint.sh
-2. docker compose -f .devcontainer/docker-compose.yml build
+LLMとRAGを活用したTrustZone OP-TEE Trusted Application向けの高度な脆弱性検出システム
 
-python3 ./src/main.py -p benchmark/acipher
+## 概要
 
-python3 ./src/main.py \
-  -p benchmark/acipher \
-  -p benchmark/aes \
-  -p benchmark/hotp \
-  -p benchmark/random \
-  -p benchmark/secure_storage \
-  -p benchmark/secvideo_demo \
-  -p benchmark/optee-fiovb \
-  -p benchmark/optee-sdp \
-  -p benchmark/Lenet5_in_OPTEE \
-  -p benchmark/bad-partitioning \
-  -p benchmark/basicAlg_use \
-  --verbose 2>&1 | tee log.txt
+TEE Flow Inspectorは、ARM TrustZoneのOP-TEE環境で動作するTrusted Application (TA)のセキュリティ脆弱性を自動検出するシステムです。従来の静的解析ツールでは検出が困難な複雑なデータフロー脆弱性を、大規模言語モデル（LLM）とRetrieval-Augmented Generation（RAG）技術を組み合わせることで高精度に検出します。
 
-  -p benchmark/darknetz \
+### 主な特徴
 
-tee-flow-inspector % tree -I "optee_client|optee_os|results|benchmark|answers"
-.
-├── Carent_Flow.md
-├── config.mk
-├── Data_Flow.md
-├── docker
-│   ├── Dockerfile
-│   ├── entrypoint.sh
-│   ├── requirements.txt
-│   └── scripts
-│       ├── llm_config.sh
-│       └── llm_setup.sh
-├── LLM_Flow.md
-├── log.txt
-├── prompts
-│   ├── sinks_prompt
-│   │   └── sink_identification.txt
-│   └── vulnerabilities_prompt
-│       ├── taint_end.txt
-│       ├── taint_middle_multi_params.txt
-│       ├── taint_middle.txt
-│       └── taint_start.txt
-├── README.md
-├── src
-│   ├── __pycache__
-│   │   └── build.cpython-310.pyc
-│   ├── analyze_vulnerabilities
-│   │   ├── __init__.py
-│   │   ├── __pycache__
-│   │   │   └── prompts.cpython-310.pyc
-│   │   ├── prompts.py
-│   │   ├── taint_analyzer.py
-│   │   └── taint_analyzer.py.backup
-│   ├── api_key.json.backup
-│   ├── build.py
-│   ├── classify
-│   │   ├── __pycache__
-│   │   │   └── classifier.cpython-310.pyc
-│   │   └── classifier.py
-│   ├── identify_flows
-│   │   ├── generate_candidate_flows.py
-│   │   └── identify_flow.md
-│   ├── identify_sinks
-│   │   ├── extract_sink_calls.py
-│   │   ├── find_sink_calls.py
-│   │   ├── function_call_chains.py
-│   │   ├── generate_call_graph.py
-│   │   ├── identify_sinks.py
-│   │   ├── identify_sinks.py.backup
-│   │   └── prompts
-│   ├── llm_settings
-│   │   ├── __init__.py
-│   │   ├── __pycache__
-│   │   │   ├── __init__.cpython-310.pyc
-│   │   │   ├── adapter.cpython-310.pyc
-│   │   │   ├── config_manager.cpython-310.pyc
-│   │   │   └── llm_cli.cpython-310.pyc
-│   │   ├── adapter.py
-│   │   ├── config_manager.py
-│   │   ├── llm_cli.py
-│   │   ├── llm_config.json
-│   │   └── migrate_code.py
-│   ├── main.py
-│   ├── parsing
-│   │   ├── __init__.py
-│   │   ├── __pycache__
-│   │   │   ├── __init__.cpython-310.pyc
-│   │   │   ├── parse_utils.cpython-310.pyc
-│   │   │   └── parsing.cpython-310.pyc
-│   │   ├── parse_utils.py
-│   │   └── parsing.py
-│   └── report
-│       ├── __init__.py
-│       ├── generate_report.py
-│       └── html_template.html
-├── V1_Flow.md
-├── V2_Flow.md
-└── V3_Flow.md
+- **AIドリブンなテイント解析**: LLMによる段階的なデータフロー追跡
+- **TEE知識ベースの活用**: GlobalPlatform仕様書から自動的に知識を抽出
+- **マルチLLMプロバイダー対応**: OpenAI、Claude、DeepSeek、ローカルLLMをサポート
+- **会話型解析**: 関数チェーンを順次解析し、コンテキストを保持
+- **インタラクティブレポート**: AI対話履歴を含む詳細なHTMLレポート
 
+## システム要件
 
-13 directories, 35 files
+### 必須要件
+- Python 3.10以上
+- Docker（推奨）またはローカル環境
+- 8GB以上のRAM
+- libclang（Clang 14以上）
 
+### 依存関係
+```
+# 主要なPythonパッケージ
+langchain>=0.1.0
+langchain-community>=0.1.0
+langchain-huggingface>=0.0.3
+chromadb>=0.4.0
+PyPDF2>=3.0.0
+pdfplumber>=0.10.0
+clang>=14.0
+openai>=1.0.0
+anthropic>=0.18.0
+```
 
-| ディレクトリ                                                                  | Makefile / build.sh                      | 依存ツールチェーン                        | 典型的に必要なもの                                   | ひとこと判定                       |
-| ----------------------------------------------------------------------- | ---------------------------------------- | -------------------------------- | ------------------------------------------- | ---------------------------- |
-| **acipher**<br>**aes**<br>**hotp**<br>**random**<br>**secure\_storage** | `ta/Makefile` と簡易 `host/Makefile`        | OP-TEE dev-kit (arm-clang / GCC) | `export TA_DEV_KIT_DIR=<…/export-ta_arm32>` | **◯** 開発環境があれば素直に通る          |
-| **bad-partitioning**                                                    | `ta/Makefile` だけ                         | 同上                               | 同上                                          | **◯**                        |
-| **basicAlg\_use**                                                       | 固有スクリプト `build_ta_cryverify_qemu.sh`     | QEMU 用 dev-kit + patch適用         | `bash ./build_ta_cryverify_qemu.sh`         | **△** スクリプトが前提               |
-| **darknetz**                                                            | CUDA 付き巨大 Makefile / `ta/` に多数 c         | arm-cross + CUDA stub            | `make -C ta`：ヘッダ欠如を手当てすれば可                  | **△** 環境依存が強い                |
-| **Lenet5\_in\_OPTEE**                                                   | `ta/Makefile`                            | dev-kit + 数学 libc へのリンク          | `make -C ta`                                | **◯**                        |
-| **optee-fiovb**                                                         | ルートが CMake、`ta/` に独自 Makefile            | dev-kit、OpenSSL ヘッダ              | `make -C ta`                                | **◯**                        |
-| **secvideo\_demo**                                                      | `ta/Makefile` のみ                         | dev-kit                          | 同上                                          | **◯**                        |
-| **optee-sdp**                                                           | `ta/Makefile` が **TA\_DEV\_KIT\_DIR 依存** | dev-kit を必ず指定                    | `export TA_DEV_KIT_DIR=...` → `make -C ta`  | **△** Dev-kit が無いと空ビルド       |
-| **external\_rk\_tee\_user**                                             | `ta/` に **ソース無し・prebuilt .bin**          | —                                | ―                                           | **✕** TA の再ビルド不可（署名済みバイナリのみ） |
+## インストール
 
-
-# LLMテイント解析システム 使用ガイド
-
-## 🚀 クイックスタート
-
-### 1. 初回起動時の設定
-
-Dockerコンテナ起動後、以下のコマンドで初期設定を行います：
-
+### Dockerを使用する場合（推奨）
 ```bash
-# 設定ガイドを表示
-llm-setup
+# リポジトリのクローン
+git clone https://github.com/your-org/tee-flow-inspector.git
+cd tee-flow-inspector
 
-# 現在の設定状態を確認
-llm_config status
+# Docker環境の構築
+docker build -t tee-flow-inspector docker/
+
+# コンテナの起動
+docker run -it -v $(pwd):/workspace tee-flow-inspector
 ```
 
-### 2. LLMプロバイダーの設定
-
-#### OpenAI（推奨）
+### ローカル環境へのインストール
 ```bash
-# OpenAIのAPIキーを設定
-llm_config configure openai
+# 依存関係のインストール
+pip install -r docker/requirements.txt
 
-# 以下の情報を入力：
-# - APIキー: sk-... (OpenAIダッシュボードから取得)
-# - モデル: gpt-4o-mini (デフォルト、コスト効率が良い)
-# - その他はEnterでデフォルト値を使用
+# LLM設定のセットアップ
+cd src/llm_settings
+python llm_cli.py --setup
 ```
 
-#### Claude (Anthropic)
+## 使用方法
+
+### 基本的な使用法
 ```bash
-# Claudeを使用する場合
-llm_config configure claude
+# TAプロジェクトの解析
+python src/main.py -p /path/to/ta/project
 
-# 以下の情報を入力：
-# - APIキー: sk-ant-... (Anthropicコンソールから取得)
-# - モデル: claude-3-opus-20240229 (高精度)
+# 複数プロジェクトの解析
+python src/main.py -p project1 -p project2 --skip project3
+
+# LLMプロバイダーを指定
+python src/main.py -p project --provider claude
 ```
 
-### 3. 接続テスト
-
+### 環境変数の設定
 ```bash
-# 設定したプロバイダーの接続を確認
-llm_config test
+# TA開発キットのパス（自動検出も可能）
+export TA_DEV_KIT_DIR=/path/to/optee_os/out/arm/export-ta_arm32
+
+# LLM APIキー（llm_cli.pyでも設定可能）
+export OPENAI_API_KEY=your-api-key
+export ANTHROPIC_API_KEY=your-api-key
 ```
 
-### 4. テイント解析の実行
+## 処理フェーズ
 
+### フェーズ1: ビルド情報取得
+- **目的**: TAプロジェクトのビルド情報を収集
+- **処理内容**:
+  - `bear`コマンドまたはCMakeを使用して`compile_commands.json`を生成
+  - ビルド失敗時はソースファイルからダミーDBを生成
+- **出力**: `compile_commands.json`
+
+### フェーズ2: 関数分類
+- **目的**: TA内の関数を分類・整理
+- **処理内容**:
+  - libclangを使用したAST解析
+  - ユーザ定義関数と外部宣言（API関数、マクロ）の分類
+- **出力**: `phase12.json`
+
+### フェーズ3: シンク同定 & CG/候補抽出
+- **目的**: 危険な外部API（シンク）の特定とコールグラフ生成
+- **処理内容**:
+  1. **シンク識別**: LLM+RAGで危険なAPIを特定
+  2. **呼び出し箇所検索**: シンク関数の呼び出し位置を特定
+  3. **コールグラフ生成**: 関数間の呼び出し関係を構築
+  4. **チェイン生成**: データフロー解析による呼び出しチェーン構築
+- **出力**: 
+  - `sinks.json`: シンク候補リスト
+  - `call_graph.json`: 関数呼び出しグラフ
+  - `vulnerable_destinations.json`: 脆弱な呼び出し箇所
+  - `chains.json`: 関数呼び出しチェーン
+
+### フェーズ4: 危険フロー抽出
+- **目的**: エントリポイントから始まる危険なデータフローパスの抽出
+- **処理内容**:
+  - エントリポイント（`TA_InvokeCommandEntryPoint`等）からの到達可能性解析
+  - 重複・サブチェーンの除去
+  - 複数パラメータの統合処理
+- **出力**: `candidate_flows.json`
+
+### フェーズ5: テイント解析
+- **目的**: LLMによる詳細なデータフロー脆弱性解析
+- **処理内容**:
+  - 会話型テイント解析（関数チェーンを順次解析）
+  - RAGによる脆弱性パターン情報の提供
+  - 複数パラメータの同時追跡
+- **出力**: 
+  - `vulnerabilities.json`: 検出された脆弱性
+  - `taint_analysis_log.txt`: LLM対話履歴
+
+### フェーズ6: レポート生成
+- **目的**: 解析結果の可視化
+- **処理内容**:
+  - 脆弱性情報の整理
+  - AI対話履歴の抽出と整形
+  - インタラクティブHTMLの生成
+- **出力**: `vulnerability_report.html`
+
+## ディレクトリ構造
+
+```
+tee-flow-inspector/
+├── docker/                 # Docker環境設定
+│   ├── Dockerfile
+│   └── requirements.txt
+├── prompts/               # LLMプロンプトテンプレート
+│   ├── sinks_prompt/      # シンク識別用
+│   └── vulnerabilities_prompt/  # 脆弱性解析用
+├── src/
+│   ├── main.py           # メインエントリポイント
+│   ├── build.py          # ビルド管理
+│   ├── classify/         # 関数分類モジュール
+│   ├── identify_sinks/   # シンク識別モジュール
+│   ├── identify_flows/   # フロー生成モジュール
+│   ├── analyze_vulnerabilities/  # 脆弱性解析
+│   ├── parsing/          # AST解析ユーティリティ
+│   ├── llm_settings/     # LLM設定管理
+│   ├── rag/              # RAGシステム
+│   └── report/           # レポート生成
+└── results/              # 解析結果（自動生成）
+```
+
+## RAGシステムの設定
+
+### TEE仕様書の配置
 ```bash
-# サンプルプロジェクトで解析を実行
-cd /workspace
-python src/main.py -p projects/01_storage_ta_no_cmac --verbose
+# GlobalPlatform仕様書PDFを配置
+cp GPD_TEE_Internal_Core_API_Specification_v1.3.1.pdf \
+   src/rag/documents/
 ```
 
-## 📋 基本的な使い方
-
-### LLM設定コマンド一覧
-
+### RAGインデックスの構築
 ```bash
-# 設定状態の確認
-llm_config status
-
-# アクティブなプロバイダーを変更
-llm_config set openai
-llm_config set claude
-
-# プロバイダーの詳細設定
-llm_config configure openai
-
-# 接続テスト
-llm_config test
-llm_config test --provider claude
-
-# 設定のエクスポート/インポート
-llm_config export my_config.json
-llm_config import my_config.json
+# 初回実行時に自動構築されるが、手動でも可能
+python -c "
+from src.rag.rag_client import TEERAGClient
+client = TEERAGClient()
+client.build_index(force_rebuild=True)
+"
 ```
 
-### 解析の実行方法
+## LLM設定
 
-#### 基本的な実行
+### 対話型設定
 ```bash
-# プロジェクトを指定して実行
-python src/main.py -p projects/PROJECT_NAME --verbose
+cd src/llm_settings
+python llm_cli.py
 
-# 複数プロジェクトを一度に解析
-python src/main.py -p projects/proj1 -p projects/proj2 --verbose
+# 利用可能なコマンド:
+# - status: 現在の設定を表示
+# - switch <provider>: プロバイダーを切り替え
+# - add-key <provider>: APIキーを追加
+# - test: 接続テスト
 ```
 
-#### プロバイダーを指定した実行
-```bash
-# Phase 3（シンク特定）でClaudeを使用
-python src/identify_sinks/identify_sinks.py \
-    -i path/to/ta_phase12.json \
-    -o path/to/ta_sinks.json \
-    --provider claude
-
-# Phase 6（テイント解析）でOpenAIを使用
-python src/analyze_vulnerabilities/taint_analyzer.py \
-    --flows path/to/ta_candidate_flows.json \
-    --phase12 path/to/ta_phase12.json \
-    --output path/to/ta_vulnerabilities.json \
-    --provider openai
-```
-
-## 🔄 LLMプロバイダーの切り替え
-
-### 方法1: グローバル設定の変更
-```bash
-# Claudeに切り替え
-llm_config set claude
-
-# 確認
-llm_config status
-
-# 解析を実行（Claudeが使用される）
-python src/main.py -p projects/01_storage_ta_no_cmac
-```
-
-### 方法2: 実行時に指定
-```bash
-# コマンドラインオプションで一時的に切り替え
-python src/identify_sinks/identify_sinks.py \
-    -i input.json -o output.json \
-    --provider deepseek
-```
-
-## 💰 コスト最適化のヒント
-
-### プロバイダー別の特徴
-
-| プロバイダー | 速度 | 精度 | コスト | 推奨用途 |
-|------------|------|------|--------|---------|
-| OpenAI (GPT-4o-mini) | 速い | 高 | 低 | 一般的な解析、大量処理 |
-| Claude (Opus) | 普通 | 最高 | 高 | 複雑な脆弱性の詳細解析 |
-| Claude (Sonnet) | 速い | 高 | 中 | バランス重視 |
-| DeepSeek | 速い | 中 | 最低 | 初期スクリーニング |
-| Local (Ollama) | 遅い | 低 | 無料 | テスト、学習用途 |
-
-### 推奨ワークフロー
-
-1. **開発・テスト時**: Local LLM (Ollama)
-   ```bash
-   llm_config set local
-   ```
-
-2. **本番解析時**: OpenAI GPT-4o-mini
-   ```bash
-   llm_config set openai
-   ```
-
-3. **高精度が必要な場合**: Claude Opus
-   ```bash
-   llm_config set claude
-   ```
-
-## 📁 出力ファイルの場所
-
-解析結果は以下の場所に保存されます：
-
-```
-projects/PROJECT_NAME/ta/results/
-├── ta_phase12.json              # 関数分類結果
-├── ta_sinks.json                # シンク候補
-├── ta_call_graph.json           # コールグラフ
-├── ta_candidate_flows.json      # 危険フロー候補
-├── ta_vulnerabilities.json      # 検出された脆弱性
-├── ta_vulnerability_report.html # HTMLレポート
-├── prompts_and_responses.txt    # Phase3のLLM対話ログ
-└── taint_analysis_log.txt       # Phase6のLLM対話ログ
-```
-
-## 🔧 トラブルシューティング
-
-### APIキーエラー
-```bash
-# APIキーを再設定
-llm_config configure openai
-```
-
-### レート制限エラー
-```bash
-# 設定ファイルを編集してリトライ間隔を調整
-vi src/llm_settings/llm_config.json
-# "retry_delay" を 5 に変更
-```
-
-### プロバイダーが見つからない
-```bash
-# 利用可能なプロバイダーを確認
-llm_config status
-
-# 正しいプロバイダー名を指定
-llm_config set openai  # openAI ではなく openai
-```
-
-### 元の動作に戻す
-```bash
-# バックアップから復元
-cp src/identify_sinks/identify_sinks.py.backup src/identify_sinks/identify_sinks.py
-cp src/analyze_vulnerabilities/taint_analyzer.py.backup src/analyze_vulnerabilities/taint_analyzer.py
-```
-
-## 📚 詳細情報
-
-### 設定ファイルの構造
-設定は `src/llm_settings/llm_config.json` に保存されます：
-
+### 設定ファイル
+`src/llm_settings/llm_config.json`で詳細設定が可能:
 ```json
 {
-  "active_provider": "openai",
   "providers": {
     "openai": {
-      "api_key": "sk-...",
-      "model": "gpt-4o-mini",
-      "temperature": 0.0,
-      "max_tokens": 4096
-    },
-    ...
+      "enabled": true,
+      "api_key_env": "OPENAI_API_KEY",
+      "model": "gpt-4-turbo-preview",
+      "temperature": 0.3
+    }
   }
 }
 ```
 
-### 環境変数での設定（上級者向け）
+## 出力ファイル
+
+### JSON形式の出力
+- **phase12.json**: 関数分類結果
+- **sinks.json**: シンク関数リスト
+- **vulnerabilities.json**: 検出された脆弱性の詳細
+
+### HTMLレポート
+`vulnerability_report.html`には以下が含まれます:
+- 検出された脆弱性の概要
+- 各脆弱性の詳細（CWE分類、重要度）
+- 関数呼び出しチェーンの可視化
+- AI解析の対話履歴（展開可能）
+
+## トラブルシューティング
+
+### ビルドエラー
 ```bash
-export LLM_PROVIDER=claude
-export CLAUDE_API_KEY=sk-ant-...
+# compile_commands.jsonが生成されない場合
+# 環境変数を確認
+export TA_DEV_KIT_DIR=/path/to/export-ta_arm32
+
+# または手動でダミーDBを生成
+python src/build.py --ta-dir /path/to/ta --force-dummy
 ```
 
-### カスタムスクリプトでの使用
-```python
-from llm_settings.config_manager import UnifiedLLMClient
-
-# クライアントを初期化
-client = UnifiedLLMClient()
-
-# プロバイダーを切り替え
-client.switch_provider("claude")
-
-# LLMを呼び出し
-response = client.chat_completion([
-    {"role": "user", "content": "Analyze this code..."}
-])
-```
-
-## 🆘 ヘルプ
-
-質問や問題がある場合は、以下のコマンドでヘルプを確認：
-
+### RAGエラー
 ```bash
-# CLIのヘルプ
-llm_config --help
+# FAISSエラーが発生する場合
+export FAISS_ALLOW_DANGEROUS_DESERIALIZATION=true
 
-# 各コマンドのヘルプ
-llm_config configure --help
-llm_config test --help
+# ChromaDBエラーの場合、キャッシュをクリア
+rm -rf src/rag/vector_stores/chroma
 ```
 
----
+### LLMエラー
+```bash
+# APIキーを再設定
+python src/llm_settings/llm_cli.py add-key openai
 
-**注意**: APIキーは機密情報です。設定ファイルをGitにコミットしないよう注意してください。
-    
+# レート制限エラーの場合、プロバイダーを切り替え
+python src/main.py -p project --provider deepseek
+```
+
+## 制限事項
+
+- C言語のTAのみサポート（C++は部分的にサポート）
+- マクロの展開は限定的
+- 間接的な関数呼び出しの追跡は不完全
+- LLMの出力は確率的であり、100%の精度は保証されない
+
+## ライセンス
+
+本プロジェクトはMITライセンスで公開されています。
+
+## 貢献
+
+バグ報告、機能要望、プルリクエストを歓迎します。
+詳細は[CONTRIBUTING.md](CONTRIBUTING.md)を参照してください。
+
+## 参考文献
+
+- GlobalPlatform TEE Internal Core API Specification
+- LATTE: Large Language Models for Automated Taint Analysis（インスピレーション元）
+- OP-TEE Documentation: https://optee.readthedocs.io/
+
+## 連絡先
+
+質問や問題がある場合は、GitHubのIssueトラッカーをご利用ください。
