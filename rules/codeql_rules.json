@@ -1,618 +1,103 @@
 {
-  "total_rules": 7,
-  "rules": [
-    {
-      "file": "dataflow.ql",
-      "id": "cpp/ta-invoke-command-fourth-param-flow",
-      "name": "TA_InvokeCommandEntryPoint fourth parameter flow",
-      "severity": "warning",
-      "type": "query",
-      "imports_count": 3,
-      "key_imports": [
-        "semmle.code.cpp.dataflow.new.DataFlow",
-        "semmle.code.cpp.dataflow.new.TaintTracking"
-      ],
-      "has_dataflow": true,
-      "queries_count": 1,
-      "targets": [
-        "TA_InvokeCommandEntryPoint"
-      ],
-      "modules": [],
-      "diting": {
-        "sources": [
-          {
-            "id": "tee_param_size",
-            "match": "params[<i>].memref.size",
-            "kind": "length"
-          },
-          {
-            "id": "tee_param_buf",
-            "match": "params[<i>].memref.buffer",
-            "kind": "pointer"
-          },
-          {
-            "id": "tee_param_val",
-            "match": "params[<i>].value.(a|b)",
-            "kind": "scalar"
-          },
-          {
-            "id": "param_types",
-            "match": "param_types",
-            "kind": "type_tag"
-          }
-        ],
-        "sinks": [],
-        "sanitizers": [
-          {
-            "id": "types_exact",
-            "match": "param_types == TEE_PARAM_TYPES(<spec>)",
-            "untaint": [
-              "param_types"
-            ]
-          },
-          {
-            "id": "nonnull",
-            "match": "x != NULL",
-            "untaint": [
-              "x"
-            ]
-          }
-        ],
-        "propagation": [
-          {
-            "rule": "assign",
-            "pattern": "y = x"
-          },
-          {
-            "rule": "arith",
-            "pattern": "y = f(x,...)"
-          },
-          {
-            "rule": "call_passthrough_len",
-            "fn": [
-              "TEE_MemMove",
-              "TEE_GenerateRandom"
-            ],
-            "from": [
-              "len"
-            ],
-            "to": []
-          }
-        ],
-        "execution_order": [
-          "propagation",
-          "apply_sanitizers",
-          "evaluate_sinks"
-        ]
-      }
+  "name": "tee_vuln_detection_pipeline",
+  "version": "1.0.0",
+  "purpose": "Aggregate multiple CodeQL query outputs via keyed joins, tag sinks, classify by param types, and apply heuristics to detect 3 categories of weaknesses.",
+  "total_rules": 3,
+  "inputs": {
+    "codeql_outputs": [
+      {"name": "host.ql", "role": "param_kind_mask_per_function"},
+      {"name": "switch.ql", "role": "callee_id_to_func_name"},
+      {"name": "arrayaccess.ql", "role": "array_access_keys"},
+      {"name": "ifstmt.ql", "role": "if_statement_keys"},
+      {"name": "dataflow.ql", "role": "arg_to_sink_flows"},
+      {"name": "memory.ql", "role": "mem_and_output_operations"}
+    ]
+  },
+  "config": {
+    "db_name": "tee_example",
+    "query_dir": "../../query",
+    "out_dir": "./out",
+    "line_threshold_unenc": 195,
+    "line_threshold_input": 195,
+    "crypto_markers": ["aes", "enc"],
+    "sink_markers": ["snprintf", "TEE_MemMove", "="],
+    "shared_param_values": [12, 13, 14, 15],
+    "exclude_shared_tokens": ["TEE_MemMove", "TEE_CheckMemoryAccessRights"],
+    "exclude_symbols_shared": [">", "<", "+", "?", "-"]
+  },
+  "keying": {
+    "from_dataflow": {
+      "fields": ["srcIdx", "paramIdx", "calleeId", "pos", "sinkText"],
+      "compose": "key = `${srcIdx}_${paramIdx}_${funcName}` where funcName = switch[calleeId]"
     },
-    {
-      "file": "arrayaccess.ql",
-      "id": "cpp/access-array",
-      "name": "Access array",
-      "severity": "warning",
-      "type": "query",
-      "imports_count": 3,
-      "key_imports": [
-        "semmle.code.cpp.dataflow.new.DataFlow",
-        "semmle.code.cpp.dataflow.new.TaintTracking"
-      ],
-      "has_dataflow": true,
-      "queries_count": 2,
-      "targets": [],
-      "modules": [],
-      "diting": {
-        "sources": [
-          {
-            "id": "tee_param_vals",
-            "match": "params[<i>].value.(a|b)",
-            "kind": "scalar"
-          },
-          {
-            "id": "tee_param_size",
-            "match": "params[<i>].memref.size",
-            "kind": "length"
-          }
-        ],
-        "sinks": [
-          {
-            "id": "array_index",
-            "match": "A[index]",
-            "cwe": [
-              "CWE-129",
-              "CWE-125"
-            ],
-            "danger_when": [
-              "index:TAINTED && !(0 <= index && index < bound)",
-              "index:TAINTED && bound:UNKNOWN"
-            ]
-          }
-        ],
-        "sanitizers": [
-          {
-            "id": "idx_range",
-            "match": "0 <= index && index < bound",
-            "untaint": [
-              "index"
-            ]
-          },
-          {
-            "id": "non_negative",
-            "match": "index >= 0",
-            "untaint": [
-              "index"
-            ]
-          }
-        ],
-        "propagation": [
-          {
-            "rule": "assign",
-            "pattern": "y = index"
-          },
-          {
-            "rule": "arith",
-            "pattern": "index = index + k"
-          }
-        ],
-        "execution_order": [
-          "propagation",
-          "apply_sanitizers",
-          "evaluate_sinks"
-        ]
-      }
-    },
-    {
-      "file": "ifstmt.ql",
-      "id": "cpp/if-stmt",
-      "name": "If stmt",
-      "severity": "warning",
-      "type": "query",
-      "imports_count": 1,
-      "key_imports": [],
-      "has_dataflow": false,
-      "queries_count": 1,
-      "targets": [],
-      "modules": [],
-      "diting": {
-        "sources": [],
-        "sinks": [],
-        "sanitizers": [
-          {
-            "id": "types_exact",
-            "match": "if (param_types == TEE_PARAM_TYPES(<spec>)) { ... }",
-            "untaint": [
-              "param_types"
-            ]
-          },
-          {
-            "id": "len_upper_bound",
-            "match": "if (0 <= len && len <= CONST_MAX) { ... }",
-            "untaint": [
-              "len"
-            ]
-          },
-          {
-            "id": "len_le_memref",
-            "match": "if (len <= params[<i>].memref.size) { ... }",
-            "untaint": [
-              "len"
-            ]
-          },
-          {
-            "id": "idx_range",
-            "match": "if (0 <= index && index < bound) { ... }",
-            "untaint": [
-              "index"
-            ]
-          }
-        ],
-        "propagation": [],
-        "execution_order": [
-          "propagation",
-          "apply_sanitizers",
-          "evaluate_sinks"
-        ]
-      }
-    },
-    {
-      "file": "switch.ql",
-      "id": "cpp/switch-paramtypes",
-      "name": "Switch on param_types",
-      "severity": "warning",
-      "type": "query",
-      "imports_count": 1,
-      "key_imports": [],
-      "has_dataflow": false,
-      "queries_count": 1,
-      "targets": [],
-      "modules": [],
-      "diting": {
-        "sources": [],
-        "sinks": [],
-        "sanitizers": [
-          {
-            "id": "switch_types",
-            "match": "switch(param_types) { case TEE_PARAM_TYPES(<spec>): ... }",
-            "untaint": [
-              "param_types"
-            ]
-          }
-        ],
-        "propagation": [],
-        "execution_order": [
-          "propagation",
-          "apply_sanitizers",
-          "evaluate_sinks"
-        ]
-      }
-    },
-    {
-      "file": "memflow.ql",
-      "id": "cpp/tee-buffer-flow",
-      "name": "TEE buffer flow",
-      "severity": "warning",
-      "type": "query",
-      "imports_count": 3,
-      "key_imports": [
-        "semmle.code.cpp.dataflow.new.DataFlow",
-        "semmle.code.cpp.dataflow.new.TaintTracking"
-      ],
-      "has_dataflow": true,
-      "queries_count": 1,
-      "targets": [],
-      "modules": [],
-      "diting": {
-        "sources": [
-          {
-            "id": "tee_param_size",
-            "match": "params[<i>].memref.size",
-            "kind": "length"
-          },
-          {
-            "id": "tee_param_buf",
-            "match": "params[<i>].memref.buffer",
-            "kind": "pointer"
-          }
-        ],
-        "sinks": [
-          {
-            "id": "mem_copy_move",
-            "fn": [
-              "TEE_MemMove",
-              "TEE_MemCopy",
-              "memcpy",
-              "memmove"
-            ],
-            "args": {
-              "dst": 0,
-              "src": 1,
-              "len": 2
-            },
-            "cwe": [
-              "CWE-787",
-              "CWE-119"
-            ],
-            "danger_when": [
-              "len:TAINTED && !sanitized(len)"
-            ]
-          },
-          {
-            "id": "mem_set_fill",
-            "fn": [
-              "TEE_MemFill",
-              "memset"
-            ],
-            "args": {
-              "dst": 0,
-              "len": 2
-            },
-            "cwe": [
-              "CWE-787"
-            ],
-            "danger_when": [
-              "len:TAINTED && !sanitized(len)"
-            ]
-          }
-        ],
-        "sanitizers": [
-          {
-            "id": "len_le_memref",
-            "match": "len <= params[<i>].memref.size",
-            "untaint": [
-              "len"
-            ]
-          },
-          {
-            "id": "upper_bound",
-            "match": "0 <= len && len <= CONST_MAX",
-            "untaint": [
-              "len"
-            ]
-          },
-          {
-            "id": "nonnull_dst_src",
-            "match": "dst != NULL && src != NULL",
-            "untaint": [
-              "dst",
-              "src"
-            ]
-          }
-        ],
-        "propagation": [
-          {
-            "rule": "assign",
-            "pattern": "y = x"
-          },
-          {
-            "rule": "arith",
-            "pattern": "y = f(x,...)"
-          },
-          {
-            "rule": "call_passthrough_len",
-            "fn": [
-              "TEE_MemMove",
-              "TEE_MemCopy",
-              "memcpy",
-              "memmove"
-            ],
-            "from": [
-              "len"
-            ],
-            "to": []
-          }
-        ],
-        "execution_order": [
-          "propagation",
-          "apply_sanitizers",
-          "evaluate_sinks"
-        ]
-      }
-    },
-    {
-      "file": "host.ql",
-      "id": "cpp/host-entry",
-      "name": "Host callsites (TEEC_InvokeCommand/paramTypes)",
-      "severity": "warning",
-      "type": "query",
-      "imports_count": 1,
-      "key_imports": [],
-      "has_dataflow": false,
-      "queries_count": 3,
-      "targets": [
-        "TEEC_InvokeCommand",
-        "paramTypes"
-      ],
-      "modules": [],
-      "diting": {
-        "sources": [
-          {
-            "id": "nw_param_types",
-            "match": "op.paramTypes",
-            "kind": "type_tag"
-          },
-          {
-            "id": "nw_tmpref_size",
-            "match": "op.params[<i>].tmpref.size",
-            "kind": "length"
-          },
-          {
-            "id": "nw_tmpref_buf",
-            "match": "op.params[<i>].tmpref.buffer",
-            "kind": "pointer"
-          },
-          {
-            "id": "nw_memref_size",
-            "match": "op.params[<i>].memref.size",
-            "kind": "length"
-          },
-          {
-            "id": "nw_memref_buf",
-            "match": "op.params[<i>].memref.parent",
-            "kind": "pointer"
-          }
-        ],
-        "sinks": [],
-        "sanitizers": [
-          {
-            "id": "host_types_consistency",
-            "match": "paramTypes == TEE_PARAM_TYPES(<spec>)",
-            "untaint": [
-              "paramTypes"
-            ]
-          }
-        ],
-        "propagation": [
-          {
-            "rule": "assign",
-            "pattern": "y = x"
-          }
-        ],
-        "execution_order": [
-          "propagation",
-          "apply_sanitizers",
-          "evaluate_sinks"
-        ]
-      }
-    },
-    {
-      "file": "memory.ql",
-      "id": "cpp/tee-output-flow",
-      "name": "TEE output flow",
-      "severity": "warning",
-      "type": "query",
-      "imports_count": 3,
-      "key_imports": [
-        "semmle.code.cpp.dataflow.new.DataFlow",
-        "semmle.code.cpp.dataflow.new.TaintTracking"
-      ],
-      "has_dataflow": true,
-      "queries_count": 1,
-      "targets": [],
-      "modules": [],
-      "diting": {
-        "sources": [
-          {
-            "id": "tee_param_size",
-            "match": "params[<i>].memref.size",
-            "kind": "length"
-          },
-          {
-            "id": "tee_param_buf",
-            "match": "params[<i>].memref.buffer",
-            "kind": "pointer"
-          },
-          {
-            "id": "tee_param_val",
-            "match": "params[<i>].value.(a|b)",
-            "kind": "scalar"
-          },
-          {
-            "id": "param_types",
-            "match": "param_types",
-            "kind": "type_tag"
-          }
-        ],
-        "sinks": [
-          {
-            "id": "mem_copy_move",
-            "fn": [
-              "TEE_MemMove",
-              "TEE_MemCopy",
-              "memcpy",
-              "memmove"
-            ],
-            "args": {
-              "dst": 0,
-              "src": 1,
-              "len": 2
-            },
-            "cwe": [
-              "CWE-787",
-              "CWE-119"
-            ],
-            "danger_when": [
-              "len:TAINTED && !sanitized(len)"
-            ]
-          },
-          {
-            "id": "tee_genrand",
-            "fn": [
-              "TEE_GenerateRandom"
-            ],
-            "args": {
-              "buf": 0,
-              "len": 1
-            },
-            "cwe": [
-              "CWE-787"
-            ],
-            "danger_when": [
-              "len:TAINTED && !sanitized(len)"
-            ]
-          },
-          {
-            "id": "alloc_size",
-            "fn": [
-              "TEE_Malloc",
-              "malloc",
-              "calloc",
-              "realloc"
-            ],
-            "args": {
-              "size": 0
-            },
-            "cwe": [
-              "CWE-400"
-            ],
-            "danger_when": [
-              "size:TAINTED && !sanitized(size)"
-            ]
-          },
-          {
-            "id": "unencrypted_output",
-            "fn": ["TEE_MemMove","memcpy","memmove","snprintf"],
-            "args": {"dst": 0, "src": 1, "len": 2},
-            "cwe": ["CWE-200"],
-            "danger_when": [
-              "dst:is_shared_memref && src:is_sensitive && !path_contains_crypto"
-            ]
-          }
-        ],
-        "sanitizers": [
-          {
-            "id": "types_exact",
-            "match": "param_types == TEE_PARAM_TYPES(<spec>)",
-            "untaint": [
-              "param_types"
-            ]
-          },
-          {
-            "id": "len_le_memref",
-            "match": "len <= params[<i>].memref.size",
-            "untaint": [
-              "len"
-            ]
-          },
-          {
-            "id": "upper_bound",
-            "match": "0 <= len && len <= CONST_MAX",
-            "untaint": [
-              "len"
-            ]
-          },
-          {
-            "id": "nonnull_dst",
-            "match": "dst != NULL",
-            "untaint": [
-              "dst"
-            ]
-          },
-          {
-            "id": "random_is_non_sensitive",
-            "match": "src:derived_from(TEE_GenerateRandom)",
-            "untaint": ["src"],
-            "note": "乱数は既定で機微扱いしない（暗号学的PRNGの出力）"
-          },
-          {
-            "id": "crypto_transform",
-            "match": "path_contains(TEE_AEEncrypt|TEE_CipherDoFinal|TEE_AEUpdate|TEE_CipherUpdate)",
-            "untaint": ["src"],
-            "note": "暗号変換を経たデータは平文露出の対象外"
-          },
-          {
-            "id": "shared_memref_guard",
-            "match": "dst == params[<i>].memref.buffer && len == params[<i>].memref.size && param_types_has_MEMREF_OUTPUT",
-            "untaint": ["len"],
-            "note": "仕様どおりのOUT MEMREFへの境界内コピーはOOB観点で安全"
-          }
-        ],
-        "propagation": [
-          {
-            "rule": "assign",
-            "pattern": "y = x"
-          },
-          {
-            "rule": "arith",
-            "pattern": "y = f(x,...)"
-          },
-          {
-            "rule": "call_passthrough_len",
-            "fn": [
-              "TEE_MemMove",
-              "TEE_GenerateRandom"
-            ],
-            "from": [
-              "len"
-            ],
-            "to": []
-          }
-        ],
-        "execution_order": [
-          "propagation",
-          "apply_sanitizers",
-          "evaluate_sinks"
-        ]
-      }
+    "tags": [
+      {"from": "arrayaccess.ql", "on": "pos", "append_to": "sinkText", "value": "accesstoarray"},
+      {"from": "ifstmt.ql", "on": "pos", "append_to": "sinkText", "value": "if"}
+    ],
+    "classification": {
+      "source": "host.ql",
+      "logic": "if param_kind in shared_param_values -> params_shared else params_input"
     }
+  },
+  "detection_rules": [
+    {
+      "rule_id": "unencrypted_output",
+      "source": "memory.ql",
+      "aggregation": "concat consecutive rows with same key",
+      "positive_if": {
+        "any_contains": {"field": "row_text", "tokens": ["snprintf", "TEE_MemMove", "="]},
+        "and_not_contains_in_buffer": {"buffer": "key_concat_text", "tokens": ["aes", "enc"]},
+        "and_line_lt": {"field": "pos_line", "value": 195}
+      },
+      "output": ["pos"]
+    },
+    {
+      "rule_id": "weak_input_validation",
+      "source": "params_input",
+      "iteration_order": "ascending by occurrence",
+      "state_var": "check_buffer",
+      "positive_if_any": [
+        {
+          "all": [
+            {"contains_any": {"field": "item_text", "tokens": ["accesstoarray", "Malloc"]}},
+            {"not_contains": {"buffer": "check_buffer", "token": "if"}},
+            {"line_gt": {"field": "pos_line", "value": 195}}
+          ]
+        },
+        {
+          "all": [
+            {"contains": {"field": "item_text", "token": "MemMove"}},
+            {"not_contains": {"buffer": "check_buffer", "token": "Malloc"}},
+            {"not_contains": {"buffer": "check_buffer", "token": "if"}},
+            {"line_gt": {"field": "pos_line", "value": 195}}
+          ]
+        }
+      ],
+      "deduplicate": true,
+      "output": ["pos"]
+    },
+    {
+      "rule_id": "shared_memory_overwrite",
+      "source": "params_shared",
+      "positive_if": {
+        "not_contains_any": {"field": "item_text", "tokens": ["TEE_MemMove", "TEE_CheckMemoryAccessRights", ">", "<", "+", "?", "-"]}
+      },
+      "deduplicate": true,
+      "output": ["pos"]
+    }
+  ],
+  "outputs": {
+    "format": "object",
+    "fields": [
+      {"name": "unencrypted_output", "type": "array", "items": "location"},
+      {"name": "weak_input_validation", "type": "array", "items": "location"},
+      {"name": "shared_memory_overwrite", "type": "array", "items": "location"},
+      {"name": "counts", "type": "object", "fields": ["unencrypted_output", "weak_input_validation", "shared_memory_overwrite"]}
+    ]
+  },
+  "assumptions_and_limits": [
+    "The line cutoff 195 is a heuristic and should be configurable.",
+    "The presence of 'if' is checked by string accumulation, not structural control-flow.",
+    "Crypto detection relies on tokens ['aes','enc']; prefer CodeQL-side crypto API flags to reduce false positives."
   ]
 }

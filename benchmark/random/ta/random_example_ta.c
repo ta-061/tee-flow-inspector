@@ -90,6 +90,10 @@ static TEE_Result random_number_generate(uint32_t param_types,
 	TEE_GenerateRandom(buf, params[0].memref.size);
 	TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size);
 	TEE_Free(buf);
+	char *str[1024] = {0};
+	for(int i = 0; i < params[0].memref.size; i++) {
+		str[i] = params[2].memref.buffer[i];
+	}
 
 	return TEE_SUCCESS;
 }

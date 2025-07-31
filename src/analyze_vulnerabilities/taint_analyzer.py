@@ -15,6 +15,7 @@ import json
 import argparse
 from pathlib import Path
 import time
+import string
 
 # 新しいLLM設定システムをインポート
 sys.path.append(str(Path(__file__).parent.parent))
@@ -22,6 +23,23 @@ from llm_settings.config_manager import UnifiedLLMClient
 
 from prompts import get_start_prompt, get_middle_prompt, get_end_prompt, get_middle_prompt_multi_params
 
+def build_system_prompt(diting_template: str, diting_rules: dict) -> str:
+    """
+    テンプレート中の {diting_rules_json} または $diting_rules_json を
+    安全に埋め込む。その他の { ... } を .format が解釈して落ちるのを防ぐ。
+    """
+    rules_json = json.dumps(diting_rules, ensure_ascii=False, separators=(',', ':'))
+    # 1) まずは文字列置換（最も安全）
+    if "{diting_rules_json}" in diting_template:
+        return diting_template.replace("{diting_rules_json}", rules_json)
+    # 2) string.Template 形（$diting_rules_json）にも対応
+    try:
+        return string.Template(diting_template).safe_substitute(diting_rules_json=rules_json)
+    except Exception:
+        # 3) フォールバック: すべての波括弧をエスケープしてから format する
+        esc = diting_template.replace('{', '{{').replace('}', '}}')
+        esc = esc.replace('{{diting_rules_json}}', '{diting_rules_json}')
+        return esc.format(diting_rules_json=rules_json)
 
 def init_client():
     """新しいLLM設定システムを使用したクライアント初期化"""
@@ -75,8 +93,9 @@ def extract_and_clean_code(func: dict, project_root: Path) -> str:
     in_function = False
     
     for i, line in enumerate(lines[start_line:], start=start_line):
-        code_lines.append(line)
-        
+        numbered_line = f"{i + 1}: {line}"
+        code_lines.append(numbered_line)
+
         # 関数本体の開始を検出
         if "{" in line and not in_function:
             in_function = True
@@ -208,16 +227,13 @@ def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict,
             diting_rules = load_diting_rules_json(json_path)
 
             # テンプレートに”厳密なJSON文字列”として埋め込む
-            system_prompt = diting_template.format(
-                diting_rules_json=json.dumps(diting_rules, ensure_ascii=False)
-            )
+            system_prompt = build_system_prompt(diting_template, diting_rules)
             conversation_history.append({"role": "system", "content": system_prompt})
             
             # ログに記録
             with open(log_file, "a", encoding="utf-8") as lf:
                 lf.write(f"### DITING Rules System Prompt:\n")
-                lf.write(f"Total rules loaded: {diting_rules.get('total_rules', 0)}\n")
-                lf.write(f"Target sink function: {vd['sink']}\n\n")
+                lf.write(system_prompt + "\n\n")
         else:
             print(f"[WARN] DITING system prompt file not found: {diting_prompt_path}")
     

@@ -218,13 +218,19 @@ class TEERAGClient:
                 and pattern.search(doc.page_content)
             ]
 
-
-            # API定義を追加
+            MAX_CHARS = 3000
+            used = 0
+            # API定義
             if api_definitions:
                 context_parts.append("## API Definition:\n")
                 for doc in api_definitions:
-                    context_parts.append(doc.page_content.strip())
-                    context_parts.append(f"\n[Source: {doc.metadata.get('file_name', 'Unknown')}, Page {doc.metadata.get('page', 'N/A')}]\n\n")
+                    text = doc.page_content.strip()
+                    snippet = text[:1200]  # 定義は先頭から短く
+                    meta = f"[Source: {doc.metadata.get('file_name','Unknown')}, Page {doc.metadata.get('page','N/A')}]"
+                    chunk = snippet + f"\n\n{meta}\n\n"
+                    if used + len(chunk) <= MAX_CHARS:
+                        context_parts.append(chunk)
+                        used += len(chunk)
             
             # セキュリティ関連情報を追加
             security_docs = [doc for doc in other_docs if any(
@@ -232,92 +238,174 @@ class TEERAGClient:
                 for keyword in ["security", "vulnerability", "validation", "check", "overflow", "buffer", "size", "length"]
             )]
             
-            if security_docs:
+            # Security Considerations
+            if security_docs and used < MAX_CHARS:
                 context_parts.append("## Security Considerations:\n")
-                for doc in security_docs[:3]:  # 最大3つ
-                    context_parts.append(doc.page_content.strip())
-                    context_parts.append(f"\n[Source: {doc.metadata.get('file_name', 'Unknown')}, Page {doc.metadata.get('page', 'N/A')}]\n\n")
-            
-            # その他の関連情報
-            remaining_docs = [doc for doc in other_docs if doc not in security_docs]
-            if remaining_docs:
-                context_parts.append("## Additional Information:\n")
-                for doc in remaining_docs[:2]:  # 最大2つ
-                    context_parts.append(doc.page_content.strip())
-                    context_parts.append(f"\n[Source: {doc.metadata.get('file_name', 'Unknown')}, Page {doc.metadata.get('page', 'N/A')}]\n\n")
-            
+                for doc in security_docs[:3]:
+                    text = doc.page_content or ""
+                    # API名近辺の±500抽出（見つからなければ先頭1200）
+                    m = pattern.search(text)
+                    if m:
+                        s = max(0, m.start() - 500); e = min(len(text), m.end() + 500)
+                        snippet = text[s:e].strip()
+                    else:
+                        snippet = text.strip()[:1200]
+                    meta = f"[Source: {doc.metadata.get('file_name','Unknown')}, Page {doc.metadata.get('page','N/A')}]"
+                    chunk = snippet + f"\n\n{meta}\n\n"
+                    if used + len(chunk) <= MAX_CHARS:
+                        context_parts.append(chunk)
+                        used += len(chunk)
             return "\n".join(context_parts)
             
         except Exception as e:
             print(f"[ERROR] Search failed: {e}")
             return f"[ERROR] Failed to search for {api_name}: {e}"
         
-    def search_for_vulnerability_analysis(self, 
-                                        code_snippet: str,
-                                        sink_function: str,
-                                        param_index: int) -> str:
+    def search_for_vulnerability_analysis(
+        self,
+        code_snippet: str,
+        sink_function: str,
+        param_index: int
+    ) -> str:
         """
-        脆弱性解析用の検索を実行し、LLMプロンプト用のコンテキストを生成
-        
-        Args:
-            code_snippet: 解析対象のコード
-            sink_function: シンク関数名
-            param_index: 問題のパラメータインデックス
-            
-        Returns:
-            str: LLMプロンプトに含めるコンテキスト
+        脆弱性解析用の検索を実行し、LLM プロンプト用の高精度コンテキストを生成
+        - シンク関数の厳密一致（正規表現・大小無視・別名対応）
+        - 関連度再ランク + ノイズ抑制（±ウィンドウ抽出・重複除去）
+        - カテゴリ別に最大件数を制限
         """
+        # RAG未初期化ならプロンプト汚染を避けて空返し
         if not self.is_initialized:
-            error_msg = "[ERROR] RAG index not initialized. Cannot retrieve vulnerability information."
-            if self._initialization_error:
-                error_msg += f" Initialization error: {self._initialization_error}"
-            return error_msg
-        
+            return ""
+
         try:
-            # 脆弱性解析用の検索
-            documents = self.retriever.retrieve_for_vulnerability_analysis(
+            docs = self.retriever.retrieve_for_vulnerability_analysis(
                 code_snippet, sink_function, param_index
             )
-            
-            if not documents:
-                return f"No vulnerability information found for {sink_function}."
-            
-            # コンテキストを構築
-            context_parts = [f"=== TEE Security Documentation ===\n"]
-            
-            # シンク関数の詳細
-            sink_docs = [doc for doc in documents if sink_function in doc.page_content]
+            if not docs:
+                return ""
+
+            import re
+
+            # ---- 別名・正規表現（大小無視） ----
+            sink_aliases = {
+                "tee_memmove": [r"\bTEE_MemMove\s*\("],
+                "tee_malloc": [r"\bTEE_Malloc\s*\("],
+                "tee_generaterandom": [r"\bTEE_GenerateRandom\s*\("],
+                "tee_asymmetricencrypt": [r"\bTEE_AsymmetricEncrypt\s*\("],
+                "memcpy": [r"\bmemcpy\s*\("],
+                "memmove": [r"\bmemmove\s*\("],
+                "snprintf": [r"\bsnprintf\s*\("],
+            }
+            def build_sink_patterns(name: str):
+                pats = sink_aliases.get((name or "").lower(), [])
+                # name 自体でも正規表現を追加（API名に大小混在があっても拾う）
+                pats.append(r"\b" + re.escape(name) + r"\s*\(")
+                return [re.compile(p, re.IGNORECASE) for p in pats]
+
+            sink_patterns = build_sink_patterns(sink_function)
+
+            # ---- 関連度スコアリング ----
+            def score_doc(doc):
+                t = doc.page_content or ""
+                tl = t.lower()
+                score = float(doc.metadata.get("score", 0))
+                if any(p.search(t) for p in sink_patterns):
+                    score += 2.0
+                elif sink_function and sink_function.lower() in tl:
+                    score += 1.0
+                if re.search(r"\b(size|length|len|buffer|offset|index|tee_param)\b", tl):
+                    score += 1.0
+                if re.search(r"\b(overflow|bounds|validation|cwe|attack|exploit)\b", tl):
+                    score += 1.0
+                return score
+
+            docs_sorted = sorted(docs, key=score_doc, reverse=True)
+
+            # ---- 判定関数群 ----
+            def is_sink_doc(doc):
+                t = doc.page_content or ""
+                return any(p.search(t) for p in sink_patterns)
+
+            def is_param_doc(doc):
+                tl = (doc.page_content or "").lower()
+                return re.search(r"\b(size|length|len|buffer|offset|index|tee_param)\b", tl) is not None
+
+            def is_vuln_doc(doc):
+                tl = (doc.page_content or "").lower()
+                return re.search(r"\b(overflow|bounds|validation|cwe|attack|exploit)\b", tl) is not None
+
+            # ---- 重複除去（同一ファイル・ページ） ----
+            def dedup(docs_iter):
+                seen = set()
+                for d in docs_iter:
+                    k = (d.metadata.get("file_name", ""), d.metadata.get("page", ""))
+                    if k in seen:
+                        continue
+                    seen.add(k)
+                    yield d
+
+            # ---- ウィンドウ抽出（シンク周辺のみ） ----
+            def window_extract(text: str, patterns, win: int = 500):
+                for p in patterns:
+                    m = p.search(text)
+                    if m:
+                        s = max(0, m.start() - win)
+                        e = min(len(text), m.end() + win)
+                        return text[s:e].strip()
+                return None
+
+            sink_docs  = list(dedup(d for d in docs_sorted if is_sink_doc(d)))[:2]
+            param_docs = list(dedup(d for d in docs_sorted if is_param_doc(d)))[:2]
+            vuln_docs  = list(dedup(d for d in docs_sorted if is_vuln_doc(d)))[:2]
+
+            MAX_CHARS = 3000
+            used = 0
+            parts = []
+            parts.append(
+                "=== TEE Security Documentation (RAG) ===\n"
+                "- Use ONLY the following context. If a fact is not present here, answer \"unknown\".\n"
+                "- Do NOT invent external citations or page numbers.\n"
+            )
+
+            # Sink情報
             if sink_docs:
-                context_parts.append(f"## {sink_function} Security Information:\n")
-                for doc in sink_docs[:2]:
-                    context_parts.append(doc.page_content.strip())
-                    context_parts.append(f"\n[Source: {doc.metadata.get('file_name', 'Unknown')}, Page {doc.metadata.get('page', 'N/A')}]\n\n")
-            
-            # パラメータ固有の情報
-            param_docs = [doc for doc in documents if f"parameter" in doc.page_content.lower()]
-            if param_docs:
-                context_parts.append(f"## Parameter Validation Guidelines:\n")
-                for doc in param_docs[:2]:
-                    context_parts.append(doc.page_content.strip())
-                    context_parts.append(f"\n[Source: {doc.metadata.get('file_name', 'Unknown')}, Page {doc.metadata.get('page', 'N/A')}]\n\n")
-            
+                parts.append(f"\n## {sink_function} Security Information:\n")
+                for d in sink_docs:
+                    text = d.page_content or ""
+                    snippet = window_extract(text, sink_patterns, win=500) or text[:1200]
+                    meta = f"[Source: {d.metadata.get('file_name','Unknown')}, Page {d.metadata.get('page','N/A')}]"
+                    chunk = snippet.strip() + f"\n\n{meta}\n\n"
+                    if used + len(chunk) <= MAX_CHARS:
+                        parts.append(chunk)
+                        used += len(chunk)
+
+            # Parameterガイド
+            if param_docs and used < MAX_CHARS:
+                parts.append("## Parameter Validation Guidelines:\n")
+                for d in param_docs:
+                    text = (d.page_content or "").strip()[:1200]
+                    meta = f"[Source: {d.metadata.get('file_name','Unknown')}, Page {d.metadata.get('page','N/A')}]"
+                    chunk = text + f"\n\n{meta}\n\n"
+                    if used + len(chunk) <= MAX_CHARS:
+                        parts.append(chunk)
+                        used += len(chunk)
+
             # 既知の脆弱性パターン
-            vuln_docs = [doc for doc in documents if any(
-                keyword in doc.page_content.lower()
-                for keyword in ["vulnerability", "cwe", "exploit", "attack", "overflow", "validation"]
-            )]
-            
-            if vuln_docs:
-                context_parts.append("## Known Vulnerability Patterns:\n")
-                for doc in vuln_docs[:2]:
-                    context_parts.append(doc.page_content.strip())
-                    context_parts.append(f"\n[Source: {doc.metadata.get('file_name', 'Unknown')}, Page {doc.metadata.get('page', 'N/A')}]\n\n")
-            
-            return "\n".join(context_parts)
-            
-        except Exception as e:
-            print(f"[ERROR] Vulnerability search failed: {e}")
-            return f"[ERROR] Failed to search vulnerability information for {sink_function}: {e}"
+            if vuln_docs and used < MAX_CHARS:
+                parts.append("## Known Vulnerability Patterns:\n")
+                for d in vuln_docs:
+                    text = (d.page_content or "").strip()[:1200]
+                    meta = f"[Source: {d.metadata.get('file_name','Unknown')}, Page {d.metadata.get('page','N/A')}]"
+                    chunk = text + f"\n\n{meta}\n\n"
+                    if used + len(chunk) <= MAX_CHARS:
+                        parts.append(chunk)
+                        used += len(chunk)
+
+            return "".join(parts) if parts else ""
+
+        except Exception:
+            # RAG失敗時は静かに空返し（プロンプト汚染を避ける）
+            return ""
 
     def search(self, 
                 query: str,

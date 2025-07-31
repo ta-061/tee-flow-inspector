@@ -10,6 +10,15 @@ from pathlib import Path
 from typing import Optional
 import sys
 import os
+import re
+
+def _fill_template(template: str, **values) -> str:
+    """
+    指定キーのみ {key} を安全に置換する。
+    デフォルト: source_function, param_name, code, rag_context, param_indices
+    """
+    pattern = re.compile(r"\{(source_function|param_name|code|rag_context|param_indices)\}")
+    return pattern.sub(lambda m: str(values.get(m.group(1), m.group(0))), template)
 
 # RAGシステムをインポート
 sys.path.append(str(Path(__file__).parent.parent))
@@ -155,12 +164,12 @@ _prompt_manager = PromptManager()
 def get_start_prompt(source_function: str, param_name: str, code: str) -> str:
     """スタートプロンプトを生成"""
     template = _prompt_manager.load_prompt("taint_start.txt")
-    return template.format(
+    return _fill_template(
+        template,
         source_function=source_function,
         param_name=param_name,
         code=code
     )
-
 
 def get_middle_prompt(source_function: str, param_name: str, code: str, 
                      sink_function: Optional[str] = None, 
@@ -181,7 +190,8 @@ def get_middle_prompt(source_function: str, param_name: str, code: str,
         try:
             template = _prompt_manager.load_prompt("taint_middle_with_rag.txt")
             print(f"[DEBUG] Using RAG template for {sink_function}")
-            return template.format(
+            return _fill_template(
+                template,
                 source_function=source_function,
                 param_name=param_name,
                 code=code,
@@ -193,11 +203,13 @@ def get_middle_prompt(source_function: str, param_name: str, code: str,
             print(f"[WARN] Failed to use RAG template, falling back to standard: {e}")
     
     # 通常のテンプレート
-    template = _prompt_manager.load_prompt("taint_middle.txt")
-    return template.format(
+    template = _prompt_manager.load_prompt("taint_middle.txt")  # or with RAG
+    return _fill_template(
+        template,
         source_function=source_function,
         param_name=param_name,
-        code=code
+        code=code,
+        rag_context=rag_context if rag_context else ""
     )
 
 def get_middle_prompt_multi_params(source_function: str, param_name: str, code: str,
@@ -216,7 +228,8 @@ def get_middle_prompt_multi_params(source_function: str, param_name: str, code: 
         try:
             template = _prompt_manager.load_prompt("taint_middle_multi_params_with_rag.txt")
             print(f"[DEBUG] Using multi-param RAG template for {sink_function}")
-            return template.format(
+            return _fill_template(
+                template,
                 source_function=source_function,
                 param_name=param_name,
                 code=code,
@@ -229,7 +242,8 @@ def get_middle_prompt_multi_params(source_function: str, param_name: str, code: 
     
     # 通常のテンプレート
     template = _prompt_manager.load_prompt("taint_middle_multi_params.txt")
-    return template.format(
+    return _fill_template(
+        template,
         source_function=source_function,
         param_name=param_name,
         code=code
