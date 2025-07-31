@@ -40,15 +40,7 @@ Function to analyze: TA_InvokeCommandEntryPoint
 Tainted parameters: <param_types>, <params>
 
 You MUST respond first with a one-line JSON (no code fences):
-{"function":"TA_InvokeCommandEntryPoint",
- "propagation":[],
- "sanitizers":[],
- "sinks":[],
- "loop_index_risks":[],
- "local_risks":[],
- "evidence":[],
- "rule_matches":[],
- "expert_flags":[]}
+{"function":"TA_InvokeCommandEntryPoint","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
 
 Tasks:
 1) Using ONLY the provided code, list taint propagation steps (LHS <- RHS) into "propagation".
@@ -73,24 +65,10 @@ Code to analyze:
 113: }
 
 ### Response:
-{"function":"TA_InvokeCommandEntryPoint",
- "propagation":[
-     "params[0] <- param_types",
-     "params[1] <- param_types",
-     "params[2] <- param_types",
-     "params[3] <- param_types"
- ],
- "sanitizers":[],
- "sinks":[],
- "loop_index_risks":[],
- "local_risks":[],
- "evidence":[],
- "rule_matches":[],
- "expert_flags":[]}
+{"function":"TA_InvokeCommandEntryPoint","propagation":[],"sanitizers":["TEE_ERROR_BAD_PARAMETERS: 111"],"sinks":[],"evidence":[],"rule_matches":[]}
 
-- No sanitization checks are present in the provided code.
-- No concrete sinks are identified in the function.
-- The function does not match any DITING rules based on the provided criteria.
+- The function checks for valid command IDs and returns an error for invalid parameters, but there are no sanitizers for the `params` array itself.
+- No direct taint propagation or sinks are identified in the provided code.
 
 ## Function 2: random_number_generate
 ### Prompt:
@@ -100,17 +78,14 @@ Function to analyze: random_number_generate
 Tainted input: params (from previous function)
 
 You MUST respond first with a one-line JSON (no code fences):
-{"function":"random_number_generate","propagation":[],"sanitizers":[],"sinks":[],"loop_index_risks":[],"evidence":[],"rule_matches":[],"expert_flags":[]}
+{"function":"random_number_generate","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
 
 Instructions:
 1) Using ONLY the provided code, track how the tainted input flows; append steps (LHS <- RHS) to "propagation". If control depends on tainted values, add "implicit:<var>".
-2) Record validations/sanitizers that constrain the relevant length/index (bounds, type, access rights) in "sanitizers" with evidence "<file>:<line>" or "unknown".
+2) Record any validations/sanitizers that constrain the tainted value (bounds, type, access rights) in "sanitizers" with evidence "<file>:<line>" or "unknown".
 3) List concrete sinks (e.g., TEE_MemMove, snprintf) in "sinks" with evidence lines.
-4) **Loop & Index check (MANDATORY):** If a loop bound is derived from tainted data (e.g., `params[*].memref.size`) and that bound controls indexing/writes into a fixed-size buffer/array, add an entry to "loop_index_risks" with:
-   {"array":"<name or unknown>","capacity":"<const or unknown>","index_expr":"<expr>","bound_source":"<expr>","taint_source":"<expr>","check_present":true|false,"cwe":"CWE-787 or CWE-125 (best guess)","evidence":["<file>:<line-loop>","<file>:<line-write>"]}
-   Treat indirect influence (tainted loop bound -> array index) as risky even without external API sinks.
-5) If any DITING rule matches, list its `id` in "rule_matches" and add supporting evidence. If no rule matches but "loop_index_risks" contains an unbounded write/read, append "expert_flags":["tainted_loop_bound_array_index"].
-6) Keep the JSON minimal; then add up to 3 concise bullet points with key insights.
+4) If any DITING rule matches, list its `id` in "rule_matches" and add supporting evidence.
+5) Keep the JSON minimal; then add up to 3 concise bullet points with key insights.
 
 Code to analyze:
 64: static TEE_Result random_number_generate(uint32_t param_types,
@@ -135,49 +110,21 @@ Code to analyze:
 90: 	TEE_GenerateRandom(buf, params[0].memref.size);
 91: 	TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size);
 92: 	TEE_Free(buf);
-93: 	char *str[1024] = {0};
-94: 	for(int i = 0; i < params[0].memref.size; i++) {
-95: 		str[i] = params[2].memref.buffer[i];
-96: 	}
+93: 	
+94: 	
+95: 	
+96: 	
 97: 
 98: 	return TEE_SUCCESS;
 99: }
 
 
 ### Response:
-{"function":"random_number_generate",
- "propagation":[
-     "params[0].memref.size <- params[0]",
-     "params[0].memref.buffer <- params[0]",
-     "implicit:params[0].memref.size"
- ],
- "sanitizers":[
-     "unknown:76"
- ],
- "sinks":[
-     "TEE_Malloc:78",
-     "TEE_GenerateRandom:90",
-     "TEE_MemMove:91"
- ],
- "loop_index_risks":[
-     {
-         "array":"str",
-         "capacity":"1024",
-         "index_expr":"i",
-         "bound_source":"params[0].memref.size",
-         "taint_source":"params[0].memref.size",
-         "check_present":true,
-         "cwe":"CWE-787",
-         "evidence":["unknown","unknown"]
-     }
- ],
- "evidence":[],
- "rule_matches":[],
- "expert_flags":["tainted_loop_bound_array_index"]}
+{"function":"random_number_generate","propagation":["param_types <- param_types","params <- params"],"sanitizers":["TEE_ERROR_BAD_PARAMETERS: 76"],"sinks":["TEE_MemMove: 91"],"evidence":[],"rule_matches":[]}
 
-- The function checks if `param_types` matches the expected value, which is a form of validation.
-- The size of the buffer allocated and the loop index depend on `params[0].memref.size`, which is tainted.
-- The function does not match any DITING rules, but the loop index is derived from tainted data, leading to a potential risk.
+- The function checks if `param_types` matches the expected type, which is a form of validation.
+- The `params` array is used directly without further validation on its contents, which could lead to vulnerabilities if the input is untrusted.
+- The sink `TEE_MemMove` is present, indicating a potential risk if the input is not properly validated.
 
 ## Function 3: TEE_Malloc
 ### Prompt:
@@ -227,20 +174,11 @@ buf = TEE_Malloc(params[0].memref.size, 0);
 
 
 ### Response:
-{"function":"TEE_Malloc",
- "propagation":[
-     "buf <- params[0].memref.size"
- ],
- "sanitizers":[],
- "sinks":[
-     "TEE_Malloc:buf"
- ],
- "evidence":[],
- "rule_matches":[]}
+{"function":"TEE_Malloc","propagation":["buf <- params[0].memref.size"],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
 
-- The function `TEE_Malloc` is called with `params[0].memref.size`, which is tainted from the previous function.
-- There are no explicit validations or sanitizers present in the provided code for the size parameter.
-- The function does not match any DITING rules based on the provided criteria.
+- The tainted input `params[0].memref.size` is directly used in the allocation, which could lead to vulnerabilities if the size is controlled by untrusted input.
+- There are no explicit validations or sanitizers applied to the size before calling `TEE_Malloc`.
+- No sinks are present in this function call, but the allocation itself could lead to issues if the size is invalid.
 
 ## Vulnerability Analysis
 ### Prompt:
@@ -260,31 +198,23 @@ Based on the taint analysis above, decide if there is an ACTUAL vulnerability in
 
 No other text on line 1.
 
-**Line 2 MUST be a compact one-line JSON with supporting meta (no code fences):**
-{"rule_ids":[],"evidence":[],"confidence":"low|medium|high","cwe":"","path":""}
-- Populate with matched rule IDs (if any) and minimal evidence as "<file>:<line>". Use "unknown" if unavailable. Omit empty fields if unknown.
-
-**Starting from line 3**, provide a brief explanation *only if needed*:
-- If "yes": state the failing condition and why mitigations fail.
-- If "no": state why the flow is safe (validation, unreachable sink, encrypted path, etc.).
+**Starting from line 2**, provide an explanation *only* if needed:
+- If "yes": briefly state CWE-XXX, exact code path, and why mitigations fail.
+- If "no": briefly state why the flow is safe (validation, unreachable sink, etc.).
 
 ## Correct Examples
 
 Vulnerable:
 {"vulnerability_found":"yes"}
-{"rule_ids":["weak_input_validation"],"evidence":["core/a.c:120"],"confidence":"high","cwe":"CWE-787","path":"foo()->bar()->TEE_MemMove"}
-Tainted length `len` used in `memcpy(dst, src, len)` without bounds check.
+CWE-787: Tainted length `len` used in `memcpy(dst, src, len)` without bounds check in `foo()->bar()->TEE_MemMove`.
 
 Not Vulnerable:
 {"vulnerability_found":"no"}
-{"rule_ids":[],"evidence":["unknown"],"confidence":"medium"}
 Length validated (`len <= sizeof(buf)`) before copy; data encrypted before leaving secure world.
-
 
 ### Response:
 {"vulnerability_found":"yes"}
-{"rule_ids":["weak_input_validation"],"evidence":["unknown"],"confidence":"high","cwe":"CWE-787","path":"TA_InvokeCommandEntryPoint()->random_number_generate()->TEE_Malloc()"}
-The tainted size from `params[0].memref.size` is used in `TEE_Malloc` without proper validation, leading to a potential buffer overflow if the size is controlled by an attacker.
+CWE-787: Tainted size `params[0].memref.size` used in `TEE_Malloc` without validation, leading to potential memory allocation issues in `random_number_generate()`. There are no checks to ensure the size is safe before allocation, allowing for exploitation.
 
 ### Conversation turns: 8
 ### DITING Rules System Prompt:
@@ -329,15 +259,7 @@ Function to analyze: TA_InvokeCommandEntryPoint
 Tainted parameters: <param_types>, <params>
 
 You MUST respond first with a one-line JSON (no code fences):
-{"function":"TA_InvokeCommandEntryPoint",
- "propagation":[],
- "sanitizers":[],
- "sinks":[],
- "loop_index_risks":[],
- "local_risks":[],
- "evidence":[],
- "rule_matches":[],
- "expert_flags":[]}
+{"function":"TA_InvokeCommandEntryPoint","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
 
 Tasks:
 1) Using ONLY the provided code, list taint propagation steps (LHS <- RHS) into "propagation".
@@ -362,21 +284,10 @@ Code to analyze:
 113: }
 
 ### Response:
-{"function":"TA_InvokeCommandEntryPoint",
- "propagation":[
-     "params <- param_types"
- ],
- "sanitizers":[],
- "sinks":[],
- "loop_index_risks":[],
- "local_risks":[],
- "evidence":[],
- "rule_matches":[],
- "expert_flags":[]}
+{"function":"TA_InvokeCommandEntryPoint","propagation":[],"sanitizers":["TEE_ERROR_BAD_PARAMETERS:111"],"sinks":[],"evidence":[],"rule_matches":[]}
 
-- The function propagates the `param_types` to the `params` array, which could be a source of taint.
-- There are no explicit sanitization checks or sinks identified in the provided code.
-- The function returns an error for unrecognized command IDs, but this does not mitigate taint risks.
+- The function checks for valid command IDs and returns an error for invalid parameters, but there are no sanitizers for the `params` array itself.
+- No direct taint propagation or sinks are identified in the provided code.
 
 ## Function 2: random_number_generate
 ### Prompt:
@@ -386,17 +297,14 @@ Function to analyze: random_number_generate
 Tainted input: params (from previous function)
 
 You MUST respond first with a one-line JSON (no code fences):
-{"function":"random_number_generate","propagation":[],"sanitizers":[],"sinks":[],"loop_index_risks":[],"evidence":[],"rule_matches":[],"expert_flags":[]}
+{"function":"random_number_generate","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
 
 Instructions:
 1) Using ONLY the provided code, track how the tainted input flows; append steps (LHS <- RHS) to "propagation". If control depends on tainted values, add "implicit:<var>".
-2) Record validations/sanitizers that constrain the relevant length/index (bounds, type, access rights) in "sanitizers" with evidence "<file>:<line>" or "unknown".
+2) Record any validations/sanitizers that constrain the tainted value (bounds, type, access rights) in "sanitizers" with evidence "<file>:<line>" or "unknown".
 3) List concrete sinks (e.g., TEE_MemMove, snprintf) in "sinks" with evidence lines.
-4) **Loop & Index check (MANDATORY):** If a loop bound is derived from tainted data (e.g., `params[*].memref.size`) and that bound controls indexing/writes into a fixed-size buffer/array, add an entry to "loop_index_risks" with:
-   {"array":"<name or unknown>","capacity":"<const or unknown>","index_expr":"<expr>","bound_source":"<expr>","taint_source":"<expr>","check_present":true|false,"cwe":"CWE-787 or CWE-125 (best guess)","evidence":["<file>:<line-loop>","<file>:<line-write>"]}
-   Treat indirect influence (tainted loop bound -> array index) as risky even without external API sinks.
-5) If any DITING rule matches, list its `id` in "rule_matches" and add supporting evidence. If no rule matches but "loop_index_risks" contains an unbounded write/read, append "expert_flags":["tainted_loop_bound_array_index"].
-6) Keep the JSON minimal; then add up to 3 concise bullet points with key insights.
+4) If any DITING rule matches, list its `id` in "rule_matches" and add supporting evidence.
+5) Keep the JSON minimal; then add up to 3 concise bullet points with key insights.
 
 Code to analyze:
 64: static TEE_Result random_number_generate(uint32_t param_types,
@@ -421,38 +329,21 @@ Code to analyze:
 90: 	TEE_GenerateRandom(buf, params[0].memref.size);
 91: 	TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size);
 92: 	TEE_Free(buf);
-93: 	char *str[1024] = {0};
-94: 	for(int i = 0; i < params[0].memref.size; i++) {
-95: 		str[i] = params[2].memref.buffer[i];
-96: 	}
+93: 	
+94: 	
+95: 	
+96: 	
 97: 
 98: 	return TEE_SUCCESS;
 99: }
 
 
 ### Response:
-{"function":"random_number_generate",
- "propagation":[
-     "params[0].memref.size <- params",
-     "buf <- TEE_Malloc(params[0].memref.size, 0)",
-     "i <- 0 to params[0].memref.size"
- ],
- "sanitizers":[
-     "unknown:76"
- ],
- "sinks":[
-     "TEE_MemMove:91"
- ],
- "loop_index_risks":[
-     {"array":"str","capacity":"1024","index_expr":"i","bound_source":"params[0].memref.size","taint_source":"params[0].memref.size","check_present":true,"cwe":"CWE-787","evidence":["unknown","94"]}
- ],
- "evidence":[],
- "rule_matches":[],
- "expert_flags":[]}
+{"function":"random_number_generate","propagation":["param_types <- param_types","params <- params"],"sanitizers":["TEE_ERROR_BAD_PARAMETERS:76"],"sinks":["TEE_MemMove:91"],"evidence":[],"rule_matches":[]}
 
-- The function checks if `param_types` matches the expected type, which is a form of sanitization.
-- The size of the memory reference from `params[0]` is used to allocate memory and control a loop, creating a risk of out-of-bounds access if `params[0].memref.size` is tainted.
-- The function uses `TEE_MemMove` as a sink, which could lead to vulnerabilities if the size is not properly validated.
+- The function checks if `param_types` matches the expected value, which is a form of validation.
+- The `params` array is used directly without further validation on its contents, which could lead to vulnerabilities if the input is untrusted.
+- The function allocates memory and moves data to the output buffer, which are potential points of concern for tainted data.
 
 ## Function 3: TEE_GenerateRandom
 ### Prompt:
@@ -494,24 +385,11 @@ TEE_GenerateRandom(buf, params[0].memref.size);
 
 
 ### Response:
-{"function":"TEE_GenerateRandom",
- "propagation":[
-     "randomBuffer <- buf",
-     "randomBufferLen <- params[0].memref.size"
- ],
- "sanitizers":[
-     "unknown"
- ],
- "sinks":[
-     "TEE_GenerateRandom:TEE_GenerateRandom"
- ],
- "evidence":[],
- "rule_matches":[],
- "expert_flags":[]}
+{"function":"TEE_GenerateRandom","propagation":["randomBuffer <- buf","randomBufferLen <- params[0].memref.size"],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
 
-- The function uses `params[0].memref.size` as the length for the random data generation, which is potentially tainted.
-- There are no explicit sanitization checks for the parameters in the provided context.
-- The function is a sink that could lead to vulnerabilities if the size is not properly validated, as it directly uses the potentially tainted length.
+- The function `TEE_GenerateRandom` does not perform any internal validation on the parameters, which could lead to vulnerabilities if `params[0].memref.size` is tainted or improperly set.
+- The `randomBuffer` is allocated in the previous function, and if it is not properly validated, it may lead to unsafe memory operations.
+- No DITING rules match for this function based on the provided context and code.
 
 ## Vulnerability Analysis
 ### Prompt:
@@ -531,32 +409,24 @@ Based on the taint analysis above, decide if there is an ACTUAL vulnerability in
 
 No other text on line 1.
 
-**Line 2 MUST be a compact one-line JSON with supporting meta (no code fences):**
-{"rule_ids":[],"evidence":[],"confidence":"low|medium|high","cwe":"","path":""}
-- Populate with matched rule IDs (if any) and minimal evidence as "<file>:<line>". Use "unknown" if unavailable. Omit empty fields if unknown.
-
-**Starting from line 3**, provide a brief explanation *only if needed*:
-- If "yes": state the failing condition and why mitigations fail.
-- If "no": state why the flow is safe (validation, unreachable sink, encrypted path, etc.).
+**Starting from line 2**, provide an explanation *only* if needed:
+- If "yes": briefly state CWE-XXX, exact code path, and why mitigations fail.
+- If "no": briefly state why the flow is safe (validation, unreachable sink, etc.).
 
 ## Correct Examples
 
 Vulnerable:
 {"vulnerability_found":"yes"}
-{"rule_ids":["weak_input_validation"],"evidence":["core/a.c:120"],"confidence":"high","cwe":"CWE-787","path":"foo()->bar()->TEE_MemMove"}
-Tainted length `len` used in `memcpy(dst, src, len)` without bounds check.
+CWE-787: Tainted length `len` used in `memcpy(dst, src, len)` without bounds check in `foo()->bar()->TEE_MemMove`.
 
 Not Vulnerable:
 {"vulnerability_found":"no"}
-{"rule_ids":[],"evidence":["unknown"],"confidence":"medium"}
 Length validated (`len <= sizeof(buf)`) before copy; data encrypted before leaving secure world.
-
 Note: Multiple parameters (indices: [0, 1]) of the sink function 'TEE_GenerateRandom' are potentially tainted. Analyze if ANY of these parameters could lead to a vulnerability.
 
 ### Response:
 {"vulnerability_found":"yes"}
-{"rule_ids":[],"evidence":[],"confidence":"high","cwe":"CWE-787","path":"TA_InvokeCommandEntryPoint()->random_number_generate()->TEE_GenerateRandom"}
-The size parameter `params[0].memref.size` is tainted and used directly in `TEE_GenerateRandom` without validation, leading to a potential out-of-bounds write.
+CWE-787: Tainted size `params[0].memref.size` used in `TEE_GenerateRandom(buf, params[0].memref.size)` without validation, allowing potential buffer overflow.
 
 ### Conversation turns: 8
 ### DITING Rules System Prompt:
@@ -601,15 +471,7 @@ Function to analyze: TA_InvokeCommandEntryPoint
 Tainted parameters: <param_types>, <params>
 
 You MUST respond first with a one-line JSON (no code fences):
-{"function":"TA_InvokeCommandEntryPoint",
- "propagation":[],
- "sanitizers":[],
- "sinks":[],
- "loop_index_risks":[],
- "local_risks":[],
- "evidence":[],
- "rule_matches":[],
- "expert_flags":[]}
+{"function":"TA_InvokeCommandEntryPoint","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
 
 Tasks:
 1) Using ONLY the provided code, list taint propagation steps (LHS <- RHS) into "propagation".
@@ -634,24 +496,12 @@ Code to analyze:
 113: }
 
 ### Response:
-{"function":"TA_InvokeCommandEntryPoint",
- "propagation":[
-     "params[0] <- param_types",
-     "params[1] <- param_types",
-     "params[2] <- param_types",
-     "params[3] <- param_types"
- ],
- "sanitizers":[],
- "sinks":[],
- "loop_index_risks":[],
- "local_risks":[],
- "evidence":[],
- "rule_matches":[],
- "expert_flags":[]}
+{"function":"TA_InvokeCommandEntryPoint","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
 
-- No sanitization checks are present in the provided code.
+- No taint propagation steps are present as there are no assignments or data flow from untrusted sources to sinks.
+- No sanitizers or checks are evident in the provided code.
 - No concrete sinks are identified in the function.
-- The function returns an error for unrecognized command IDs, but this does not mitigate taint risks from `params`.
+- No DITING rules match based on the provided evidence.
 
 ## Function 2: random_number_generate
 ### Prompt:
@@ -661,17 +511,14 @@ Function to analyze: random_number_generate
 Tainted input: params (from previous function)
 
 You MUST respond first with a one-line JSON (no code fences):
-{"function":"random_number_generate","propagation":[],"sanitizers":[],"sinks":[],"loop_index_risks":[],"evidence":[],"rule_matches":[],"expert_flags":[]}
+{"function":"random_number_generate","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
 
 Instructions:
 1) Using ONLY the provided code, track how the tainted input flows; append steps (LHS <- RHS) to "propagation". If control depends on tainted values, add "implicit:<var>".
-2) Record validations/sanitizers that constrain the relevant length/index (bounds, type, access rights) in "sanitizers" with evidence "<file>:<line>" or "unknown".
+2) Record any validations/sanitizers that constrain the tainted value (bounds, type, access rights) in "sanitizers" with evidence "<file>:<line>" or "unknown".
 3) List concrete sinks (e.g., TEE_MemMove, snprintf) in "sinks" with evidence lines.
-4) **Loop & Index check (MANDATORY):** If a loop bound is derived from tainted data (e.g., `params[*].memref.size`) and that bound controls indexing/writes into a fixed-size buffer/array, add an entry to "loop_index_risks" with:
-   {"array":"<name or unknown>","capacity":"<const or unknown>","index_expr":"<expr>","bound_source":"<expr>","taint_source":"<expr>","check_present":true|false,"cwe":"CWE-787 or CWE-125 (best guess)","evidence":["<file>:<line-loop>","<file>:<line-write>"]}
-   Treat indirect influence (tainted loop bound -> array index) as risky even without external API sinks.
-5) If any DITING rule matches, list its `id` in "rule_matches" and add supporting evidence. If no rule matches but "loop_index_risks" contains an unbounded write/read, append "expert_flags":["tainted_loop_bound_array_index"].
-6) Keep the JSON minimal; then add up to 3 concise bullet points with key insights.
+4) If any DITING rule matches, list its `id` in "rule_matches" and add supporting evidence.
+5) Keep the JSON minimal; then add up to 3 concise bullet points with key insights.
 
 Code to analyze:
 64: static TEE_Result random_number_generate(uint32_t param_types,
@@ -696,49 +543,21 @@ Code to analyze:
 90: 	TEE_GenerateRandom(buf, params[0].memref.size);
 91: 	TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size);
 92: 	TEE_Free(buf);
-93: 	char *str[1024] = {0};
-94: 	for(int i = 0; i < params[0].memref.size; i++) {
-95: 		str[i] = params[2].memref.buffer[i];
-96: 	}
+93: 	
+94: 	
+95: 	
+96: 	
 97: 
 98: 	return TEE_SUCCESS;
 99: }
 
 
 ### Response:
-{"function":"random_number_generate",
- "propagation":[
-     "params[0].memref.size <- params[0]",
-     "params[0].memref.buffer <- params[0]",
-     "implicit:params[0].memref.size"
- ],
- "sanitizers":[
-     {"type":"parameter_check","evidence":"unknown"}
- ],
- "sinks":[
-     "TEE_Malloc:unknown",
-     "TEE_GenerateRandom:unknown",
-     "TEE_MemMove:unknown"
- ],
- "loop_index_risks":[
-     {
-         "array":"str",
-         "capacity":"1024",
-         "index_expr":"i",
-         "bound_source":"params[0].memref.size",
-         "taint_source":"params[0].memref.size",
-         "check_present":true,
-         "cwe":"CWE-787",
-         "evidence":["unknown","unknown"]
-     }
- ],
- "evidence":[],
- "rule_matches":[],
- "expert_flags":["tainted_loop_bound_array_index"]}
+{"function":"random_number_generate","propagation":["param_types <- param_types","params <- params"],"sanitizers":[{"check":"param_types validation","evidence":"unknown"}],"sinks":["TEE_MemMove","TEE_GenerateRandom"],"evidence":["64:static TEE_Result random_number_generate(uint32_t param_types, TEE_Param params[4])","75:if (param_types != exp_param_types)","91:TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size)"],"rule_matches":["weak_input_validation"]}
 
-- The function checks if `param_types` matches expected values, but does not validate the size of `params[0].memref.size`.
-- The loop iterates based on `params[0].memref.size`, which is tainted, leading to potential out-of-bounds access in the `str` array.
-- Multiple sinks are present, including memory allocation and data movement functions, which could be affected by tainted input.
+- The function checks if `param_types` matches the expected value, which is a form of input validation.
+- The `params` array is used directly in the `TEE_MemMove` sink, which could lead to vulnerabilities if not properly validated.
+- The `weak_input_validation` rule matches due to the lack of sufficient checks on the contents of `params`.
 
 ## Function 3: TEE_MemMove
 ### Prompt:
@@ -783,26 +602,12 @@ TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size);
 
 
 ### Response:
-{"function":"TEE_MemMove",
- "propagation":[
-     "arg0 <- params[0].memref.buffer",
-     "arg1 <- buf",
-     "arg2 <- params[0].memref.size"
- ],
- "sanitizers":[
-     {"type":"buffer_check","evidence":"unknown"},
-     {"type":"size_check","evidence":"unknown"}
- ],
- "sinks":[
-     "TEE_MemMove:unknown"
- ],
- "evidence":[],
- "rule_matches":[],
- "expert_flags":[]}
+{"function":"TEE_MemMove","propagation":["arg0 <- params[0].memref.buffer","arg1 <- buf","arg2 <- params[0].memref.size"],"sanitizers":[{"check":"params[0].memref.size validation","evidence":"unknown"}],"sinks":[],"evidence":["TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size)"],"rule_matches":["shared_memory_overwrite"]}
 
-- The function `TEE_MemMove` is called with potentially tainted parameters, specifically `params[0].memref.buffer` and `params[0].memref.size`.
-- There are no explicit validations or sanitizers present in the provided context for the parameters used in `TEE_MemMove`.
-- The size parameter (`params[0].memref.size`) is derived from tainted input, which could lead to vulnerabilities if it is not properly validated.
+- The first argument (`arg0`) is potentially tainted as it comes from `params[0].memref.buffer`, which is not validated beyond the size check.
+- The second argument (`arg1`) is a buffer allocated in the function, which is not tainted.
+- The third argument (`arg2`) is the size of the memory to move, which is also derived from the potentially tainted `params[0].memref.size`.
+- The `shared_memory_overwrite` rule matches because the function does not validate the contents of `params[0].memref.buffer` before using it.
 
 ## Vulnerability Analysis
 ### Prompt:
@@ -822,32 +627,24 @@ Based on the taint analysis above, decide if there is an ACTUAL vulnerability in
 
 No other text on line 1.
 
-**Line 2 MUST be a compact one-line JSON with supporting meta (no code fences):**
-{"rule_ids":[],"evidence":[],"confidence":"low|medium|high","cwe":"","path":""}
-- Populate with matched rule IDs (if any) and minimal evidence as "<file>:<line>". Use "unknown" if unavailable. Omit empty fields if unknown.
-
-**Starting from line 3**, provide a brief explanation *only if needed*:
-- If "yes": state the failing condition and why mitigations fail.
-- If "no": state why the flow is safe (validation, unreachable sink, encrypted path, etc.).
+**Starting from line 2**, provide an explanation *only* if needed:
+- If "yes": briefly state CWE-XXX, exact code path, and why mitigations fail.
+- If "no": briefly state why the flow is safe (validation, unreachable sink, etc.).
 
 ## Correct Examples
 
 Vulnerable:
 {"vulnerability_found":"yes"}
-{"rule_ids":["weak_input_validation"],"evidence":["core/a.c:120"],"confidence":"high","cwe":"CWE-787","path":"foo()->bar()->TEE_MemMove"}
-Tainted length `len` used in `memcpy(dst, src, len)` without bounds check.
+CWE-787: Tainted length `len` used in `memcpy(dst, src, len)` without bounds check in `foo()->bar()->TEE_MemMove`.
 
 Not Vulnerable:
 {"vulnerability_found":"no"}
-{"rule_ids":[],"evidence":["unknown"],"confidence":"medium"}
 Length validated (`len <= sizeof(buf)`) before copy; data encrypted before leaving secure world.
-
 Note: Multiple parameters (indices: [0, 1, 2]) of the sink function 'TEE_MemMove' are potentially tainted. Analyze if ANY of these parameters could lead to a vulnerability.
 
 ### Response:
 {"vulnerability_found":"yes"}
-{"rule_ids":["weak_input_validation"],"evidence":["unknown"],"confidence":"high","cwe":"CWE-787","path":"TA_InvokeCommandEntryPoint()->random_number_generate()->TEE_MemMove"}
-The size parameter `params[0].memref.size` is tainted and used in `TEE_MemMove` without proper validation, leading to potential out-of-bounds memory access.
+CWE-787: Tainted buffer `params[0].memref.buffer` used in `TEE_MemMove(arg0, arg1, arg2)` without sufficient validation, allowing potential memory overwrite.
 
 ### Conversation turns: 8
 ### DITING Rules System Prompt:
@@ -892,15 +689,7 @@ Function to analyze: TA_InvokeCommandEntryPoint
 Tainted parameters: <param_types>, <params>
 
 You MUST respond first with a one-line JSON (no code fences):
-{"function":"TA_InvokeCommandEntryPoint",
- "propagation":[],
- "sanitizers":[],
- "sinks":[],
- "loop_index_risks":[],
- "local_risks":[],
- "evidence":[],
- "rule_matches":[],
- "expert_flags":[]}
+{"function":"TA_InvokeCommandEntryPoint","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
 
 Tasks:
 1) Using ONLY the provided code, list taint propagation steps (LHS <- RHS) into "propagation".
@@ -925,24 +714,12 @@ Code to analyze:
 113: }
 
 ### Response:
-{"function":"TA_InvokeCommandEntryPoint",
- "propagation":[
-     "params[0] <- param_types",
-     "params[1] <- param_types",
-     "params[2] <- param_types",
-     "params[3] <- param_types"
- ],
- "sanitizers":[],
- "sinks":[],
- "loop_index_risks":[],
- "local_risks":[],
- "evidence":[],
- "rule_matches":[],
- "expert_flags":[]}
+{"function":"TA_InvokeCommandEntryPoint","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
 
-- No sanitization checks are present in the provided code.
-- No concrete sinks are identified in the function.
-- The function does not match any DITING rules based on the provided evidence.
+- No taint propagation steps were identified in the provided code.
+- There are no sanitization checks present in the function.
+- No concrete sinks were found in the function.
+- No DITING rules matched based on the evidence provided.
 
 ## Function 2: random_number_generate
 ### Prompt:
@@ -952,17 +729,14 @@ Function to analyze: random_number_generate
 Tainted input: params (from previous function)
 
 You MUST respond first with a one-line JSON (no code fences):
-{"function":"random_number_generate","propagation":[],"sanitizers":[],"sinks":[],"loop_index_risks":[],"evidence":[],"rule_matches":[],"expert_flags":[]}
+{"function":"random_number_generate","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
 
 Instructions:
 1) Using ONLY the provided code, track how the tainted input flows; append steps (LHS <- RHS) to "propagation". If control depends on tainted values, add "implicit:<var>".
-2) Record validations/sanitizers that constrain the relevant length/index (bounds, type, access rights) in "sanitizers" with evidence "<file>:<line>" or "unknown".
+2) Record any validations/sanitizers that constrain the tainted value (bounds, type, access rights) in "sanitizers" with evidence "<file>:<line>" or "unknown".
 3) List concrete sinks (e.g., TEE_MemMove, snprintf) in "sinks" with evidence lines.
-4) **Loop & Index check (MANDATORY):** If a loop bound is derived from tainted data (e.g., `params[*].memref.size`) and that bound controls indexing/writes into a fixed-size buffer/array, add an entry to "loop_index_risks" with:
-   {"array":"<name or unknown>","capacity":"<const or unknown>","index_expr":"<expr>","bound_source":"<expr>","taint_source":"<expr>","check_present":true|false,"cwe":"CWE-787 or CWE-125 (best guess)","evidence":["<file>:<line-loop>","<file>:<line-write>"]}
-   Treat indirect influence (tainted loop bound -> array index) as risky even without external API sinks.
-5) If any DITING rule matches, list its `id` in "rule_matches" and add supporting evidence. If no rule matches but "loop_index_risks" contains an unbounded write/read, append "expert_flags":["tainted_loop_bound_array_index"].
-6) Keep the JSON minimal; then add up to 3 concise bullet points with key insights.
+4) If any DITING rule matches, list its `id` in "rule_matches" and add supporting evidence.
+5) Keep the JSON minimal; then add up to 3 concise bullet points with key insights.
 
 Code to analyze:
 64: static TEE_Result random_number_generate(uint32_t param_types,
@@ -987,48 +761,21 @@ Code to analyze:
 90: 	TEE_GenerateRandom(buf, params[0].memref.size);
 91: 	TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size);
 92: 	TEE_Free(buf);
-93: 	char *str[1024] = {0};
-94: 	for(int i = 0; i < params[0].memref.size; i++) {
-95: 		str[i] = params[2].memref.buffer[i];
-96: 	}
+93: 	
+94: 	
+95: 	
+96: 	
 97: 
 98: 	return TEE_SUCCESS;
 99: }
 
 
 ### Response:
-{"function":"random_number_generate",
- "propagation":[
-     "params[0].memref.size <- params",
-     "params[0].memref.buffer <- params",
-     "implicit:params[0].memref.size"
- ],
- "sanitizers":[
-     {"type":"parameter_check","evidence":"unknown"}
- ],
- "sinks":[
-     "TEE_MemMove <- params[0].memref.buffer",
-     "TEE_GenerateRandom <- params[0].memref.size"
- ],
- "loop_index_risks":[
-     {
-         "array":"str",
-         "capacity":"1024",
-         "index_expr":"i",
-         "bound_source":"params[0].memref.size",
-         "taint_source":"params[0].memref.size",
-         "check_present":true,
-         "cwe":"CWE-125",
-         "evidence":["unknown","unknown"]
-     }
- ],
- "evidence":[],
- "rule_matches":[],
- "expert_flags":["tainted_loop_bound_array_index"]}
+{"function":"random_number_generate","propagation":["param_types <- param_types","params <- params"],"sanitizers":[{"check":"param_types != exp_param_types","evidence":"unknown"}],"sinks":["TEE_MemMove","TEE_GenerateRandom"],"evidence":["64:65","76:76","90:90","91:91"],"rule_matches":["unencrypted_output"]}
 
-- The function checks if `param_types` matches the expected type, but does not validate the size of `params[0].memref.size`.
-- The loop iterates based on `params[0].memref.size`, which is tainted, leading to a potential out-of-bounds write in the `str` array.
-- No DITING rules matched, but the loop index risk is significant due to the tainted size.
+- The function checks if `param_types` matches the expected type, which is a form of validation.
+- The `TEE_MemMove` sink is used to copy potentially tainted data to an output buffer.
+- The function matches the `unencrypted_output` rule due to the presence of `TEE_MemMove` without encryption checks.
 
 ## Function 3: TEE_Free
 ### Prompt:
@@ -1075,11 +822,11 @@ TEE_Free(buf);
 
 
 ### Response:
-{"function":"TEE_Free","propagation":["implicit:buf"],"sanitizers":[],"sinks":["TEE_Free <- buf"],"evidence":[],"rule_matches":[]}
+{"function":"TEE_Free","propagation":["buf <- arg0"],"sanitizers":[],"sinks":[],"evidence":["unknown"],"rule_matches":[]}
 
-- The function `TEE_Free` is called with `buf`, which is tainted from the previous function.
-- There are no validations or sanitizers present in the provided code for the `buf` parameter.
-- No DITING rules matched based on the evidence provided.
+- The function `TEE_Free` is called with `buf`, which is the pointer to the memory block allocated earlier.
+- There are no explicit validations or sanitizers present in the function call.
+- No concrete sinks are identified in the context of `TEE_Free`.
 
 ## Vulnerability Analysis
 ### Prompt:
@@ -1099,30 +846,22 @@ Based on the taint analysis above, decide if there is an ACTUAL vulnerability in
 
 No other text on line 1.
 
-**Line 2 MUST be a compact one-line JSON with supporting meta (no code fences):**
-{"rule_ids":[],"evidence":[],"confidence":"low|medium|high","cwe":"","path":""}
-- Populate with matched rule IDs (if any) and minimal evidence as "<file>:<line>". Use "unknown" if unavailable. Omit empty fields if unknown.
-
-**Starting from line 3**, provide a brief explanation *only if needed*:
-- If "yes": state the failing condition and why mitigations fail.
-- If "no": state why the flow is safe (validation, unreachable sink, encrypted path, etc.).
+**Starting from line 2**, provide an explanation *only* if needed:
+- If "yes": briefly state CWE-XXX, exact code path, and why mitigations fail.
+- If "no": briefly state why the flow is safe (validation, unreachable sink, etc.).
 
 ## Correct Examples
 
 Vulnerable:
 {"vulnerability_found":"yes"}
-{"rule_ids":["weak_input_validation"],"evidence":["core/a.c:120"],"confidence":"high","cwe":"CWE-787","path":"foo()->bar()->TEE_MemMove"}
-Tainted length `len` used in `memcpy(dst, src, len)` without bounds check.
+CWE-787: Tainted length `len` used in `memcpy(dst, src, len)` without bounds check in `foo()->bar()->TEE_MemMove`.
 
 Not Vulnerable:
 {"vulnerability_found":"no"}
-{"rule_ids":[],"evidence":["unknown"],"confidence":"medium"}
 Length validated (`len <= sizeof(buf)`) before copy; data encrypted before leaving secure world.
-
 
 ### Response:
 {"vulnerability_found":"yes"}
-{"rule_ids":["weak_input_validation"],"evidence":["unknown"],"confidence":"high","cwe":"CWE-125","path":"TA_InvokeCommandEntryPoint()->random_number_generate()->TEE_Free"}
-The tainted size `params[0].memref.size` is used in a loop without proper validation, leading to a potential out-of-bounds write in the `str` array, which can be exploited.
+CWE-787: Tainted data from `params[0].memref.size` is used in `TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size)` without proper validation of the size, leading to potential buffer overflow. The only validation checks the `param_types`, which does not ensure the integrity of the size parameter.
 
 ### Conversation turns: 8
