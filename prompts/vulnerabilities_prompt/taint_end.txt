@@ -3,27 +3,40 @@ Based on the taint analysis above, decide if there is an ACTUAL vulnerability in
 ## Decision Criteria
 1. Does tainted data actually reach a dangerous sink?
 2. Are there validation / sanitization steps that stop exploitation?
+3. What specific conditions make this exploitable?
 
 ---
 
 ## OUTPUT CONTRACT (STRICT - FOLLOW EXACTLY)
 
-**Line 1 MUST be EXACTLY one of the following (no code fences, no backticks, no leading spaces):**
-{"vulnerability_found":"yes"}
-{"vulnerability_found":"no"}
+**Line 1 MUST be the vulnerability decision JSON:**
+{"vulnerability_found":"yes"|"no"}
 
-No other text on line 1.
-
-**Starting from line 2**, provide an explanation *only* if needed:
-- If "yes": briefly state CWE-XXX, exact code path, and why mitigations fail.
-- If "no": briefly state why the flow is safe (validation, unreachable sink, etc.).
-
-## Correct Examples
-
-Vulnerable:
-{"vulnerability_found":"yes"}
-CWE-787: Tainted length `len` used in `memcpy(dst, src, len)` without bounds check in `foo()->bar()->TEE_MemMove`.
-
-Not Vulnerable:
-{"vulnerability_found":"no"}
-Length validated (`len <= sizeof(buf)`) before copy; data encrypted before leaving secure world.
+**Starting from line 2, provide a structured analysis in JSON format:**
+{
+  "vulnerability_type": "CWE-XXX",
+  "severity": "low|medium|high|critical",
+  "taint_flow_summary": {
+    "source": "description of tainted input source",
+    "propagation_path": ["step1", "step2", "step3"],
+    "sink": "final dangerous operation"
+  },
+  "exploitation_analysis": {
+    "preconditions": ["condition1", "condition2"],
+    "attack_scenario": "step-by-step exploitation description",
+    "impact": "what attacker can achieve"
+  },
+  "missing_mitigations": [
+    {
+      "type": "bounds_check|type_validation|access_control|encryption",
+      "location": "function:line",
+      "recommendation": "specific fix suggestion"
+    }
+  ],
+  "confidence_factors": {
+    "positive_indicators": ["evidence supporting vulnerability"],
+    "negative_indicators": ["factors that might prevent exploitation"],
+    "confidence_level": "high|medium|low"
+  },
+  "decision_rationale": "Detailed explanation of why this is/isn't a vulnerability"
+}

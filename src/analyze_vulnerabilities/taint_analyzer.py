@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-フェーズ6: LLMによるテイント解析と脆弱性検査
+フェーズ6: LLMによるテイント解析と脆弱性検査（改良版）
 使い方:
   python taint_analyzer.py \
     --flows <ta_candidate_flows.json> \
@@ -16,6 +16,8 @@ import argparse
 from pathlib import Path
 import time
 import string
+import re
+from typing import Optional, Dict, List, Tuple, Any
 
 # 新しいLLM設定システムをインポート
 sys.path.append(str(Path(__file__).parent.parent))
@@ -155,7 +157,6 @@ def extract_function_code(func_name: str, phase12_data: dict, vd: dict = None) -
     # その他の外部関数
     return f"// External function: {func_name}"
 
-
 def ask_llm(client: UnifiedLLMClient, messages: list, max_retries: int = 3) -> str:
     """新しいLLM設定システムを使用したLLM呼び出し（エラーハンドリング付き）"""
     for attempt in range(max_retries):
@@ -196,19 +197,355 @@ def load_diting_rules_json(json_path: Path) -> dict:
     except Exception as e:
         raise RuntimeError(f"Failed to load DITING rules JSON: {json_path} ({e})")
 
+def parse_vuln_response(resp: str) -> tuple[bool, dict]:
+    """
+    resp: LLM から返ってきたテキスト全体
+    戻り値: (is_vulnerable, parsed_json)
+    """
+    import re
+    
+    # 複数の形式に対応
+    # 1. マークダウンコードブロック内のJSON
+    json_match = re.search(r'```(?:json)?\s*({.*?})\s*```', resp, re.DOTALL)
+    if json_match:
+        try:
+            data = json.loads(json_match.group(1))
+            flag = str(data.get("vulnerability_found", "")).lower()
+            return flag == "yes", data
+        except json.JSONDecodeError:
+            pass
+    
+    # 2. 最初の行に直接JSON
+    lines = resp.strip().splitlines()
+    if lines:
+        first_line = lines[0].strip()
+        try:
+            data = json.loads(first_line)
+            flag = str(data.get("vulnerability_found", "")).lower()
+            return flag == "yes", data
+        except json.JSONDecodeError:
+            pass
+    
+    # 3. テキスト内のどこかにJSON風の文字列
+    json_pattern = re.search(r'{\s*"vulnerability_found"\s*:\s*"(yes|no)"\s*}', resp)
+    if json_pattern:
+        try:
+            data = json.loads(json_pattern.group(0))
+            flag = str(data.get("vulnerability_found", "")).lower()
+            return flag == "yes", data
+        except json.JSONDecodeError:
+            pass
+    
+    # JSON が見つからない、または解析できない場合は非脆弱扱い
+    return False, {}
+
+def parse_first_json_line(resp: str) -> dict | None:
+    import json, re
+    lines = [l.strip() for l in (resp or "").splitlines() if l.strip()]
+    if not lines:
+        return None
+    try:
+        return json.loads(lines[0])
+    except json.JSONDecodeError:
+        # ```json ブロック内にも対応（先頭最優先）
+        m = re.search(r'```(?:json)?\s*({.*?})\s*```', resp, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group(1))
+            except json.JSONDecodeError:
+                return None
+    return None
+
+def validate_line_number(file_path: str, line_num: int, project_root: Path = None) -> bool:
+    """行番号が有効かチェック"""
+    if line_num <= 0:
+        return False
+    
+    try:
+        if project_root and not Path(file_path).is_absolute():
+            file_path = project_root / file_path
+        
+        if Path(file_path).exists():
+            with open(file_path, 'r') as f:
+                total_lines = sum(1 for _ in f)
+                return 1 <= line_num <= total_lines
+    except:
+        pass
+    
+    return True 
+
+def extract_inline_findings(resp: str, func_name: str, chain: list[str], vd: dict, project_root: Path = None) -> list[dict]:
+    import re, json
+    findings = []
+
+    # 1) 新: FINDINGS=<json>
+    mjson = re.search(r'^\s*FINDINGS\s*=\s*(\{.*\})\s*$', resp or "", re.MULTILINE | re.DOTALL)
+    if mjson:
+        try:
+            obj = json.loads(mjson.group(1))
+            for it in obj.get("items", []):
+                # 行番号の検証
+                line_num = int(it.get("line", 0))
+                file_path = it.get("file") or vd.get("file")
+                
+                if line_num == 0:
+                    # LLMが行番号を提供しなかった場合
+                    print(f"[WARN] No line number provided for {func_name}")
+                    continue
+                
+                if not validate_line_number(file_path, line_num, project_root):
+                    print(f"[WARN] Invalid line number {line_num} for {file_path}")
+                    continue
+                
+                findings.append({
+                    "chain": chain,
+                    "function": func_name,
+                    "category": it.get("rule"),
+                    "file": file_path,
+                    "line": line_num,
+                    "message": it.get("why") or "",
+                    "source": "FINDINGS_JSON"
+                })
+        except Exception as e:
+            print(f"[WARN] Failed to parse FINDINGS JSON: {e}")
+        
+        if findings:
+            return findings
+
+    # 2) 旧: FINDINGS: 箇条書き
+    m = re.search(r'^\s*FINDINGS:\s*(.*?)$', resp or "", re.IGNORECASE | re.MULTILINE | re.DOTALL)
+    if m:
+        block = m.group(1).strip()
+        for line in block.splitlines():
+            line = line.strip()
+            mm = re.match(
+                r'-\s*\[(?P<cat>unencrypted_output|weak_input_validation|shared_memory_overwrite)\]\s*<(?P<file>[^:>]+):(?P<line>\d+)>\s*:\s*(?P<msg>.+)$',
+                line
+            )
+            if mm:
+                d = mm.groupdict()
+                line_num = int(d["line"])
+                file_path = d["file"]
+                
+                # 行番号の検証
+                if not validate_line_number(file_path, line_num, project_root):
+                    print(f"[WARN] Invalid line number {line_num} for {file_path}")
+                    continue
+                    
+                findings.append({
+                    "chain": chain,
+                    "function": func_name,
+                    "category": d["cat"],
+                    "file": file_path,
+                    "line": line_num,
+                    "message": d["msg"],
+                    "source": "FINDINGS_BULLETS"
+                })
+        if findings:
+            return findings
+
+    # 3) 互換: 1行JSONの rule_matches から疑似生成
+    j = parse_first_json_line(resp)
+    if j:
+        rule_matches = j.get("rule_matches", []) or []
+        sinks = j.get("sinks", []) or []
+        ev = j.get("evidence", []) or []
+        default_file = vd.get("file")
+        default_line = vd.get("line")
+        evidence_lines = []
+        for e in ev:
+            m2 = re.match(r'(?P<line>\d+)\s*:\s*(?P<what>.+)', str(e))
+            if m2:
+                evidence_lines.append(int(m2.group("line")))
+        line_hint = evidence_lines[0] if evidence_lines else default_line
+        
+        for cat in rule_matches:
+            # 行番号の検証
+            if line_hint and not validate_line_number(default_file, line_hint, project_root):
+                print(f"[WARN] Invalid line number {line_hint} for {default_file}")
+                continue
+                
+            findings.append({
+                "chain": chain,
+                "function": func_name,
+                "category": cat,
+                "file": default_file,
+                "line": line_hint or 0,
+                "message": "; ".join(map(str, sinks)) if sinks else "",
+                "source": "rule_matches"
+            })
+    
+    # 最後の不要なコードを削除！
+    return findings
+
+def extract_taint_state(response: str) -> dict:
+    """
+    関数解析レスポンスからテイント状態を抽出
+    """
+    try:
+        # 1行目のJSONから抽出
+        first_line = response.strip().split('\n')[0]
+        data = json.loads(first_line)
+        return {
+            "propagated_values": data.get("propagation", []),
+            "applied_sanitizers": data.get("sanitizers", []),
+            "reached_sinks": data.get("sinks", [])
+        }
+    except:
+        return {}
+
+def extract_security_observations(response: str) -> list:
+    """
+    セキュリティ関連の観察事項を抽出
+    """
+    observations = []
+    
+    # FINDINGSから抽出
+    findings_match = re.search(r'FINDINGS\s*=\s*({.*})', response)
+    if findings_match:
+        try:
+            findings = json.loads(findings_match.group(1))
+            for item in findings.get("items", []):
+                observations.append({
+                    "type": item.get("rule"),
+                    "observation": item.get("why"),
+                    "location": f"{item.get('file')}:{item.get('line')}"
+                })
+        except:
+            pass
+    
+    return observations
+
+def extract_risk_indicators(response: str) -> list:
+    """
+    レスポンスからリスク指標を抽出
+    """
+    risk_indicators = []
+    
+    # JSONからrule_matchesを取得
+    try:
+        first_line = response.strip().split('\n')[0]
+        data = json.loads(first_line)
+        rule_matches = data.get("rule_matches", [])
+        if rule_matches:
+            risk_indicators.extend([f"Matched rule: {rule}" for rule in rule_matches])
+    except:
+        pass
+    
+    # テキストから危険なパターンを検出
+    dangerous_patterns = [
+        (r"no\s+bounds?\s+check", "No bounds checking detected"),
+        (r"no\s+validation", "No validation detected"),
+        (r"untrusted\s+input", "Untrusted input detected"),
+        (r"without\s+sanitization", "Missing sanitization"),
+        (r"buffer\s+overflow", "Potential buffer overflow")
+    ]
+    
+    for pattern, indicator in dangerous_patterns:
+        if re.search(pattern, response, re.IGNORECASE):
+            risk_indicators.append(indicator)
+    
+    return risk_indicators
+
+def parse_detailed_vuln_response(resp: str) -> dict:
+    """
+    LLMの脆弱性判定レスポンスから詳細情報を抽出
+    """
+    import re
+    import json
+    
+    lines = resp.strip().split('\n')
+    
+    # 1行目の判定結果
+    vuln_decision = {}
+    if lines:
+        try:
+            vuln_decision = json.loads(lines[0])
+        except:
+            pass
+    
+    # 2行目以降の詳細分析
+    details = {}
+    if len(lines) > 1:
+        try:
+            # JSON形式の詳細情報を探す
+            remaining_text = '\n'.join(lines[1:])
+            
+            # 複数のJSONブロックパターンに対応
+            json_patterns = [
+                r'\{[\s\S]*"vulnerability_type"[\s\S]*\}',  # 詳細分析JSON
+                r'\{[\s\S]*"severity"[\s\S]*\}',            # 別形式
+                r'\{[\s\S]*\}'                               # 任意のJSON
+            ]
+            
+            for pattern in json_patterns:
+                json_match = re.search(pattern, remaining_text)
+                if json_match:
+                    try:
+                        details = json.loads(json_match.group(0))
+                        break
+                    except:
+                        continue
+            
+            # JSONが見つからない場合は構造化解析
+            if not details:
+                details = parse_structured_explanation(remaining_text)
+                
+        except Exception as e:
+            # エラー時はテキストとして保存
+            details = {"raw_explanation": '\n'.join(lines[1:]), "parse_error": str(e)}
+    
+    return {
+        "decision": vuln_decision,
+        "details": details,
+        "full_response": resp
+    }
+
+def parse_structured_explanation(text: str) -> dict:
+    """
+    構造化されたテキスト説明から情報を抽出
+    """
+    result = {
+        "vulnerability_type": "Unknown",
+        "severity": "Unknown",
+        "description": text
+    }
+    
+    # CWE番号の抽出
+    cwe_match = re.search(r'CWE-(\d+)', text)
+    if cwe_match:
+        result["vulnerability_type"] = f"CWE-{cwe_match.group(1)}"
+    
+    # 重要度の抽出
+    severity_match = re.search(r'(critical|high|medium|low)\s+severity', text, re.IGNORECASE)
+    if severity_match:
+        result["severity"] = severity_match.group(1).lower()
+    
+    # 攻撃シナリオの抽出
+    if "attack" in text.lower() or "exploit" in text.lower():
+        attack_section = re.search(r'(attack|exploit)[^.]*\.([^.]*\.){0,3}', text, re.IGNORECASE)
+        if attack_section:
+            result["attack_scenario"] = attack_section.group(0)
+    
+    return result
+
 def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict, 
                       phase12_data: dict, log_file: Path, 
                       source_params: list[str] | None = None,
-                      use_diting_rules: bool = True) -> dict:
+                      use_diting_rules: bool = True,
+                      use_enhanced_prompts: bool = True) -> dict:
     """
-    単一のコールチェーンに対してテイント解析を実行
+    単一のコールチェーンに対してテイント解析を実行（改良版）
     param_indicesが存在する場合は、統合された解析として扱う
     """
     results = {
         "chain": chain,
         "vd": vd,
         "taint_analysis": [],
-        "vulnerability": None
+        "inline_findings": [],
+        "vulnerability": None,
+        "vulnerability_details": None,  # 新規追加
+        "reasoning_trace": []           # 新規追加
     }
     
     # 会話履歴を保持するリスト
@@ -226,7 +563,7 @@ def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict,
             json_path = rules_dir / "codeql_rules.json"
             diting_rules = load_diting_rules_json(json_path)
 
-            # テンプレートに”厳密なJSON文字列”として埋め込む
+            # テンプレートに"厳密なJSON文字列"として埋め込む
             system_prompt = build_system_prompt(diting_template, diting_rules)
             conversation_history.append({"role": "system", "content": system_prompt})
             
@@ -345,13 +682,29 @@ def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict,
             "analysis": response
         })
         taint_summaries.append(f"Function {func_name}: {response}")
+
+        # 推論過程を記録（改良版）
+        reasoning_step = {
+            "function": func_name,
+            "position_in_chain": i,
+            "taint_state": extract_taint_state(response),
+            "security_observations": extract_security_observations(response),
+            "risk_indicators": extract_risk_indicators(response)
+        }
+        results["reasoning_trace"].append(reasoning_step)
+
+        # インライン脆弱性の抽出
+        try:
+            _found = extract_inline_findings(response, func_name, chain, vd)
+            if _found:
+                results["inline_findings"].extend(_found)
+        except Exception as _e:
+            # ログのみ。解析不能でも他処理は継続
+            with open(log_file, "a", encoding="utf-8") as lf:
+                lf.write(f"[WARN] inline findings parse failed at {func_name}: {_e}\n")
     
-    # 脆弱性解析プロンプト
-    if len(param_indices) > 1:
-        additional_context = f"\nNote: Multiple parameters (indices: {param_indices}) of the sink function '{vd['sink']}' are potentially tainted. Analyze if ANY of these parameters could lead to a vulnerability."
-        end_prompt = get_end_prompt() + additional_context
-    else:
-        end_prompt = get_end_prompt()
+
+    end_prompt = get_end_prompt()
     
     # 会話履歴にエンドプロンプトを追加
     conversation_history.append({"role": "user", "content": end_prompt})
@@ -373,59 +726,79 @@ def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict,
     
     results["vulnerability"] = vuln_response
     
+    # 詳細な脆弱性情報を解析（改良版）
+    vuln_details = parse_detailed_vuln_response(vuln_response)
+    results["vulnerability_details"] = vuln_details
+    
     return results
 
-
-def parse_vuln_response(resp: str) -> tuple[bool, dict]:
+def generate_vulnerability_summary(vuln_data: dict) -> str:
     """
-    resp: LLM から返ってきたテキスト全体
-    戻り値: (is_vulnerable, parsed_json)
+    脆弱性の判定理由を人間が理解しやすい形式で生成
     """
-    import re
+    details = vuln_data.get("vulnerability_details", {}).get("details", {})
     
-    # 複数の形式に対応
-    # 1. マークダウンコードブロック内のJSON
-    json_match = re.search(r'```(?:json)?\s*\n?({[^}]+})\s*\n?```', resp, re.DOTALL)
-    if json_match:
-        try:
-            data = json.loads(json_match.group(1))
-            flag = str(data.get("vulnerability_found", "")).lower()
-            return flag == "yes", data
-        except json.JSONDecodeError:
-            pass
-    
-    # 2. 最初の行に直接JSON
-    lines = resp.strip().splitlines()
-    if lines:
-        first_line = lines[0].strip()
-        try:
-            data = json.loads(first_line)
-            flag = str(data.get("vulnerability_found", "")).lower()
-            return flag == "yes", data
-        except json.JSONDecodeError:
-            pass
-    
-    # 3. テキスト内のどこかにJSON風の文字列
-    json_pattern = re.search(r'{\s*"vulnerability_found"\s*:\s*"(yes|no)"\s*}', resp)
-    if json_pattern:
-        try:
-            data = json.loads(json_pattern.group(0))
-            flag = str(data.get("vulnerability_found", "")).lower()
-            return flag == "yes", data
-        except json.JSONDecodeError:
-            pass
-    
-    # JSON が見つからない、または解析できない場合は非脆弱扱い
-    return False, {}
+    summary = f"""
+# Vulnerability Analysis Summary
 
+## Detected: {details.get('vulnerability_type', 'Unknown')} (Severity: {details.get('severity', 'Unknown')})
+
+## Taint Flow:
+{format_taint_flow(details.get('taint_flow_summary', {}))}
+
+## Why This Is Vulnerable:
+{details.get('decision_rationale', 'No rationale provided')}
+
+## Attack Scenario:
+{details.get('exploitation_analysis', {}).get('attack_scenario', 'No scenario provided')}
+
+## Missing Security Controls:
+{format_mitigations(details.get('missing_mitigations', []))}
+
+## Confidence: {details.get('confidence_factors', {}).get('confidence_level', 'Unknown')}
+"""
+    return summary
+
+def format_taint_flow(flow_summary: dict) -> str:
+    """テイントフローを整形"""
+    if not flow_summary:
+        return "No taint flow information available"
+    
+    result = []
+    result.append(f"Source: {flow_summary.get('source', 'Unknown')}")
+    
+    propagation = flow_summary.get('propagation_path', [])
+    if propagation:
+        result.append("Propagation Path:")
+        for i, step in enumerate(propagation, 1):
+            result.append(f"  {i}. {step}")
+    
+    result.append(f"Sink: {flow_summary.get('sink', 'Unknown')}")
+    
+    return '\n'.join(result)
+
+def format_mitigations(mitigations: list) -> str:
+    """推奨される対策を整形"""
+    if not mitigations:
+        return "No specific mitigations recommended"
+    
+    result = []
+    for mit in mitigations:
+        result.append(f"- Type: {mit.get('type', 'Unknown')}")
+        result.append(f"  Location: {mit.get('location', 'Unknown')}")
+        result.append(f"  Recommendation: {mit.get('recommendation', 'No recommendation')}")
+    
+    return '\n'.join(result)
 
 def main():
-    parser = argparse.ArgumentParser(description="フェーズ6: テイント解析と脆弱性検査")
+    parser = argparse.ArgumentParser(description="フェーズ6: テイント解析と脆弱性検査（改良版）")
     parser.add_argument("--flows", required=True, help="フェーズ5の候補フローJSON")
     parser.add_argument("--phase12", required=True, help="フェーズ1-2の結果JSON")
     parser.add_argument("--output", required=True, help="出力脆弱性レポートJSON")
     parser.add_argument("--provider", help="使用するLLMプロバイダー (openai, claude, deepseek, local)")
     parser.add_argument("--no-diting-rules", action="store_true", help="DITINGルールを使用しない")
+    parser.add_argument("--no-enhanced-prompts", action="store_true", help="改良版プロンプトを使用しない")
+    parser.add_argument("--generate-summary", action="store_true", help="人間が読みやすいサマリーも生成")
     args = parser.parse_args()
     
     # 出力ディレクトリを準備
@@ -454,6 +827,7 @@ def main():
     
     # 各候補フローに対してテイント解析を実行
     vulnerabilities = []
+    all_inline_findings = []
     
     print(f"[taint_analyzer] {len(flows_data)} 個の候補フローを解析中...")
     
@@ -464,25 +838,57 @@ def main():
         for chain in chains:
             print(f"  [{i+1}/{len(flows_data)}] チェーン: {' -> '.join(chain)}")
             
-            # テイント解析を実行
+            # テイント解析を実行（改良版）
             result = analyze_taint_flow(
                 client, chain, vd, phase12_data, log_file, 
                 flow.get("source_params"),
-                use_diting_rules=not args.no_diting_rules
+                use_diting_rules=not args.no_diting_rules,
+                use_enhanced_prompts=not args.no_enhanced_prompts
             )
             
             # 脆弱性が見つかった場合のみ結果に追加
             is_vuln, meta = parse_vuln_response(result["vulnerability"])
             if is_vuln:
-                # LLM が付けてきた追加情報を持たせても便利
+                # LLM が付けてきた追加情報を持たせる
                 result["meta"] = meta
                 vulnerabilities.append(result)
+
+            # チェーン内の inline_findings を収集
+            if result.get("inline_findings"):
+                all_inline_findings.extend(result["inline_findings"])
     
-    # 結果を出力
+    # 近似重複排除
+    def _dedup(items: list[dict], window: int = 2) -> list[dict]:
+        seen = set()
+        out = []
+        for it in items:
+            key = (it.get("file"), it.get("category"), it.get("function"),
+                   # 近似: 行を window で丸めて同一視
+                   int(it.get("line") or 0) // max(1, window))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(it)
+        return out
+
+    inline_findings = _dedup(all_inline_findings, window=2)
+
+    # 統計情報を追加（改良版）
+    statistics = {
+        "analysis_date": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "llm_provider": client.get_current_provider(),
+        "diting_rules_used": not args.no_diting_rules,
+        "enhanced_prompts_used": not args.no_enhanced_prompts,
+        "total_chains_analyzed": sum(len(flow.get("chains", [])) for flow in flows_data),
+        "functions_analyzed": sum(len(v["reasoning_trace"]) for v in vulnerabilities),
+    }
+
     output_data = {
+        "statistics": statistics,  # 新規追加
         "total_flows_analyzed": len(flows_data),
         "vulnerabilities_found": len(vulnerabilities),
-        "vulnerabilities": vulnerabilities
+        "vulnerabilities": vulnerabilities,
+        "inline_findings": inline_findings
     }
     
     out_path.write_text(
@@ -493,6 +899,21 @@ def main():
     print(f"[taint_analyzer] 解析完了: {len(vulnerabilities)} 件の脆弱性を検出")
     print(f"  結果: {out_path}")
     print(f"  ログ: {log_file}")
+    
+    # オプション：人間が読みやすいサマリーを生成
+    if args.generate_summary:
+        summary_path = out_dir / "vulnerability_summary.md"
+        with open(summary_path, "w", encoding="utf-8") as sf:
+            sf.write("# Vulnerability Analysis Summary Report\n\n")
+            sf.write(f"Generated: {statistics['analysis_date']}\n")
+            sf.write(f"Total vulnerabilities found: {len(vulnerabilities)}\n\n")
+            
+            for i, vuln in enumerate(vulnerabilities, 1):
+                sf.write(f"## Vulnerability {i}\n")
+                sf.write(generate_vulnerability_summary(vuln))
+                sf.write("\n---\n\n")
+        
+        print(f"  サマリー: {summary_path}")
 
 
 if __name__ == "__main__":

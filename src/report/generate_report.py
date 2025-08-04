@@ -262,6 +262,24 @@ def format_vulnerability(vuln: dict, idx: int, chat_hist: dict) -> str:
     key = " -> ".join(chain)
     if chat_hist and key in chat_hist:
         parts.append(format_chat_history(chat_hist[key]))
+
+        # Judge/Refuter meta (Phase 6 で vulnerability.meta に格納されている想定)
+    meta = vuln.get("meta", {})
+    judge = meta.get("judge")
+    refuter = meta.get("refuter")
+
+    if judge:
+        parts.append('<div class="taint-analysis">')
+        parts.append('<h4>Judge 分類結果</h4>')
+        parts.append(f'<pre style="white-space: pre-wrap;">{html.escape(json.dumps(judge, ensure_ascii=False, indent=2))}</pre>')
+        parts.append('</div>')
+
+    if refuter:
+        parts.append('<div class="taint-analysis">')
+        parts.append('<h4>Refuter 反証</h4>')
+        parts.append(f'<pre style="white-space: pre-wrap;">{html.escape(json.dumps(refuter, ensure_ascii=False, indent=2))}</pre>')
+        parts.append('</div>')
+
     
     # メタ情報
     parts += [
@@ -274,6 +292,39 @@ def format_vulnerability(vuln: dict, idx: int, chat_hist: dict) -> str:
     
     return "\n".join(parts)
 
+def format_inline_findings(items: list[dict]) -> str:
+    if not items:
+        return '<div class="no-inline">Inline findings はありません。</div>'
+
+    # 並び: file, line, category
+    items_sorted = sorted(
+        items,
+        key=lambda x: (str(x.get("file") or ""), int(x.get("line") or 0), str(x.get("category") or ""))
+    )
+
+    rows = []
+    rows.append('<table class="inline-findings-table">')
+    rows.append('<thead><tr>'
+                '<th>区分</th><th>ファイル</th><th>行</th>'
+                '<th>関数</th><th>メッセージ</th>'
+                '</tr></thead><tbody>')
+    for it in items_sorted:
+        cat = html.escape(str(it.get("category") or ""))
+        path = html.escape(str(it.get("file") or ""))
+        line = html.escape(str(it.get("line") or ""))
+        fn   = html.escape(str(it.get("function") or ""))
+        msg  = html.escape(str(it.get("message") or ""))
+        rows.append(f'<tr>'
+                    f'<td><code>{cat}</code></td>'
+                    f'<td class="mono">{path}</td>'
+                    f'<td class="mono">{line}</td>'
+                    f'<td>{fn}</td>'
+                    f'<td>{msg}</td>'
+                    f'</tr>')
+    rows.append('</tbody></table>')
+    return "\n".join(rows)
+
+
 # -----------------------------------------------------------------------------
 # 5) レポート生成本体
 # -----------------------------------------------------------------------------
@@ -285,6 +336,9 @@ def generate_report(vuln_data: dict, phase12: dict, project: str, chat_hist: dic
     count   = len(vulns)
     high    = sum(1 for v in vulns if extract_severity(v.get("vulnerability",""))=="high")
     funcs   = len(phase12.get("user_defined_functions",[]))
+
+    inline_items = vuln_data.get("inline_findings", [])
+    inline_html  = format_inline_findings(inline_items)
     
     body = ""
     if count == 0:
@@ -305,7 +359,8 @@ def generate_report(vuln_data: dict, phase12: dict, project: str, chat_hist: dic
         vuln_count      = count,
         high_risk       = high,
         func_count      = funcs,
-        vulnerabilities_html = body
+        vulnerabilities_html = body,
+        inline_findings_html = inline_html
     )
 
 # -----------------------------------------------------------------------------

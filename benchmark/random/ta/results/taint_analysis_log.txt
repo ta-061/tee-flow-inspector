@@ -1,31 +1,19 @@
 ### DITING Rules System Prompt:
-You are an expert in OP-TEE Trusted-Application taint analysis.
+You are analyzing code that runs as an OP-TEE Trusted Application (TA).
 
-## DITING Partitioning Rules (machine-readable, *DO NOT MODIFY*)
+OP-TEE Domain Facts (background only, non-prescriptive):
+- Architecture & trust boundary: OP-TEE separates the Normal World (REE) and the Trusted World (TEE). TAs run in the TEE. Data carried by TEE_Param originate from the Normal World.
+- TEE_Param and paramTypes: The four parameter slots are typed via TEE_PARAM_TYPES(). MEMREF_INPUT is read by the TA, MEMREF_OUTPUT is written by the TA, MEMREF_INOUT is both read and written.
+- Shared vs private memory: A memref’s .buffer usually refers to shared memory supplied by the Normal World client and mapped between worlds; memory allocated via TEE_Malloc() is private to the TA unless explicitly shared.
+- Memory operations: TEE_MemMove() and TEE_MemFill() behave like C memmove/memset; lengths use size_t (unsigned).
+- Randomness: TEE_GenerateRandom(void *buf, size_t len) fills a TA-provided buffer with random bytes generated inside the TEE.
+- Command dispatch: TA_InvokeCommandEntryPoint() dispatches by cmd_id; error codes (TEE_Result) are returned per the TA’s implementation.
+- Output intent: Writing to a MEMREF_OUTPUT parameter indicates the TA intends to return data to the caller; whether data require transformation depends on the TA’s design.
+
+DITING Partitioning Rules (machine-readable, DO NOT MODIFY)
 {"name":"tee_vuln_detection_pipeline","version":"1.0.0","purpose":"Aggregate multiple CodeQL query outputs via keyed joins, tag sinks, classify by param types, and apply heuristics to detect 3 categories of weaknesses.","total_rules":3,"inputs":{"codeql_outputs":[{"name":"host.ql","role":"param_kind_mask_per_function"},{"name":"switch.ql","role":"callee_id_to_func_name"},{"name":"arrayaccess.ql","role":"array_access_keys"},{"name":"ifstmt.ql","role":"if_statement_keys"},{"name":"dataflow.ql","role":"arg_to_sink_flows"},{"name":"memory.ql","role":"mem_and_output_operations"}]},"config":{"db_name":"tee_example","query_dir":"../../query","out_dir":"./out","line_threshold_unenc":195,"line_threshold_input":195,"crypto_markers":["aes","enc"],"sink_markers":["snprintf","TEE_MemMove","="],"shared_param_values":[12,13,14,15],"exclude_shared_tokens":["TEE_MemMove","TEE_CheckMemoryAccessRights"],"exclude_symbols_shared":[">","<","+","?","-"]},"keying":{"from_dataflow":{"fields":["srcIdx","paramIdx","calleeId","pos","sinkText"],"compose":"key = `${srcIdx}_${paramIdx}_${funcName}` where funcName = switch[calleeId]"},"tags":[{"from":"arrayaccess.ql","on":"pos","append_to":"sinkText","value":"accesstoarray"},{"from":"ifstmt.ql","on":"pos","append_to":"sinkText","value":"if"}],"classification":{"source":"host.ql","logic":"if param_kind in shared_param_values -> params_shared else params_input"}},"detection_rules":[{"rule_id":"unencrypted_output","source":"memory.ql","aggregation":"concat consecutive rows with same key","positive_if":{"any_contains":{"field":"row_text","tokens":["snprintf","TEE_MemMove","="]},"and_not_contains_in_buffer":{"buffer":"key_concat_text","tokens":["aes","enc"]},"and_line_lt":{"field":"pos_line","value":195}},"output":["pos"]},{"rule_id":"weak_input_validation","source":"params_input","iteration_order":"ascending by occurrence","state_var":"check_buffer","positive_if_any":[{"all":[{"contains_any":{"field":"item_text","tokens":["accesstoarray","Malloc"]}},{"not_contains":{"buffer":"check_buffer","token":"if"}},{"line_gt":{"field":"pos_line","value":195}}]},{"all":[{"contains":{"field":"item_text","token":"MemMove"}},{"not_contains":{"buffer":"check_buffer","token":"Malloc"}},{"not_contains":{"buffer":"check_buffer","token":"if"}},{"line_gt":{"field":"pos_line","value":195}}]}],"deduplicate":true,"output":["pos"]},{"rule_id":"shared_memory_overwrite","source":"params_shared","positive_if":{"not_contains_any":{"field":"item_text","tokens":["TEE_MemMove","TEE_CheckMemoryAccessRights",">","<","+","?","-"]}},"deduplicate":true,"output":["pos"]}],"outputs":{"format":"object","fields":[{"name":"unencrypted_output","type":"array","items":"location"},{"name":"weak_input_validation","type":"array","items":"location"},{"name":"shared_memory_overwrite","type":"array","items":"location"},{"name":"counts","type":"object","fields":["unencrypted_output","weak_input_validation","shared_memory_overwrite"]}]},"assumptions_and_limits":["The line cutoff 195 is a heuristic and should be configurable.","The presence of 'if' is checked by string accumulation, not structural control-flow.","Crypto detection relies on tokens ['aes','enc']; prefer CodeQL-side crypto API flags to reduce false positives."]}
 
-### Operating Principles (STRICT)
-- FIRST apply the rules above *deterministically*. For each claim, cite the matched rule `detection_rules[i].id` and the exact evidence (file:line).
-- THEN add expert reasoning *only* for scenarios not covered by the rules. Clearly label it as "expert_extension".
-- If a fact is unknown (e.g., API semantics not present in prompt), explicitly state "unknown" and do NOT invent documentation or page numbers.
-- Distinguish **taint presence** from **vulnerability**. Taint reaching a sink ≠ vulnerability unless a rule/condition is satisfied.
 
-### Evidence Policy
-- When you mention code, include minimal evidence `"<file>:<line>"` (or "unknown" if unavailable).
-- When you reference a rule, include `rule_id` (e.g., "weak_input_validation").
-
-### Output Policy per Turn
-- For each function analysis turn, return a short JSON first (no fences) with:
-  {"function":"<name>","propagation":[...],"sanitizers":[...],"sinks":[...],"evidence":[...],"rule_matches":[...]}
-  Then, if needed, add 1–3 concise bullet points.
-- For the final decision turn, obey the OUTPUT CONTRACT exactly.
-
-### Analysis Guidelines (keep existing bullets)
-- The rules above define specific patterns for TEE vulnerabilities
-- Focus on data flow from TEE_Param structures (untrusted input) to dangerous sinks
-- Check array index operations, buffer operations, and parameter validation
-- Consider both direct taint propagation and indirect data dependencies
-- TEE_Param contains data from the normal world and must be treated as untrusted
 
 
 
@@ -65,10 +53,7 @@ Code to analyze:
 113: }
 
 ### Response:
-{"function":"TA_InvokeCommandEntryPoint","propagation":[],"sanitizers":["TEE_ERROR_BAD_PARAMETERS: 111"],"sinks":[],"evidence":[],"rule_matches":[]}
-
-- The function checks for valid command IDs and returns an error for invalid parameters, but there are no sanitizers for the `params` array itself.
-- No direct taint propagation or sinks are identified in the provided code.
+{"function":"TA_InvokeCommandEntryPoint","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
 
 ## Function 2: random_number_generate
 ### Prompt:
@@ -79,6 +64,15 @@ Tainted input: params (from previous function)
 
 You MUST respond first with a one-line JSON (no code fences):
 {"function":"random_number_generate","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
+
+Additional output contract for inline findings:
+Immediately after the one-line JSON above, output EXACTLY ONE more line:
+FINDINGS={"items":[{"rule":"unencrypted_output|weak_input_validation|shared_memory_overwrite","file":"<path>","line":123,"why":"<one sentence>","evidence":"<file>:<line>","code_excerpt":"<short>"}]}
+Rules:
+- Always print the FINDINGS line, even when no items (use {"items":[]})
+- rule MUST be one of: unencrypted_output, weak_input_validation, shared_memory_overwrite
+- evidence MUST be "<file>:<line>" if known, else "unknown"
+- The FINDINGS line must be a single line with no extra prose
 
 Instructions:
 1) Using ONLY the provided code, track how the tainted input flows; append steps (LHS <- RHS) to "propagation". If control depends on tainted values, add "implicit:<var>".
@@ -110,21 +104,18 @@ Code to analyze:
 90: 	TEE_GenerateRandom(buf, params[0].memref.size);
 91: 	TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size);
 92: 	TEE_Free(buf);
-93: 	
-94: 	
-95: 	
-96: 	
+93: 	char *str[1024] = {0};
+94: 	for(int i = 0; i < params[0].memref.size; i++) {
+95: 		str[i] = params[2].memref.buffer[i];
+96: 	}
 97: 
 98: 	return TEE_SUCCESS;
 99: }
 
 
 ### Response:
-{"function":"random_number_generate","propagation":["param_types <- param_types","params <- params"],"sanitizers":["TEE_ERROR_BAD_PARAMETERS: 76"],"sinks":["TEE_MemMove: 91"],"evidence":[],"rule_matches":[]}
-
-- The function checks if `param_types` matches the expected type, which is a form of validation.
-- The `params` array is used directly without further validation on its contents, which could lead to vulnerabilities if the input is untrusted.
-- The sink `TEE_MemMove` is present, indicating a potential risk if the input is not properly validated.
+{"function":"random_number_generate","propagation":["buf <- TEE_Malloc(params[0].memref.size)","params[0].memref.size <- params[0].memref.size","params[0].memref.buffer <- params[0].memref.buffer","params[2].memref.buffer <- params[2].memref.buffer"],"sanitizers":["param_types check param_types != exp_param_types at line 75"],"sinks":["TEE_MemMove at line 91"],"evidence":["param_types check at line 75","TEE_MemMove at line 91"],"rule_matches":["unencrypted_output"]}  
+FINDINGS={"items":[{"rule":"unencrypted_output","file":"unknown","line":91,"why":"TEE_MemMove copies random data buffer to output parameter without encryption","evidence":"unknown:91","code_excerpt":"TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size);"}]}
 
 ## Function 3: TEE_Malloc
 ### Prompt:
@@ -161,6 +152,15 @@ TEE_Malloc(size); res =
 You MUST respond first with a one-line JSON (no code fences):
 {"function":"TEE_Malloc","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
 
+Additional output contract for inline findings:
+Immediately after the one-line JSON above, output EXACTLY ONE more line:
+FINDINGS={"items":[{"rule":"unencrypted_output|weak_input_validation|shared_memory_overwrite","file":"<path>","line":123,"why":"<one sentence>","evidence":"<file>:<line>","code_excerpt":"<short>"}]}
+Rules:
+- Always print the FINDINGS line, even when no items (use {"items":[]})
+- rule MUST be one of: unencrypted_output, weak_input_validation, shared_memory_overwrite
+- evidence MUST be "<file>:<line>" if known, else "unknown"
+- The FINDINGS line must be a single line with no extra prose
+
 Instructions:
 1) Use ONLY the code and the Documentation Context above when referencing API semantics. If a required detail is absent, write "unknown" and do NOT speculate.
 2) Track how the tainted input flows; append steps (LHS <- RHS) to "propagation". Add "implicit:<var>" for control-dependent flows.
@@ -174,11 +174,8 @@ buf = TEE_Malloc(params[0].memref.size, 0);
 
 
 ### Response:
-{"function":"TEE_Malloc","propagation":["buf <- params[0].memref.size"],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
-
-- The tainted input `params[0].memref.size` is directly used in the allocation, which could lead to vulnerabilities if the size is controlled by untrusted input.
-- There are no explicit validations or sanitizers applied to the size before calling `TEE_Malloc`.
-- No sinks are present in this function call, but the allocation itself could lead to issues if the size is invalid.
+{"function":"TEE_Malloc","propagation":["res <- size"],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}  
+FINDINGS={"items":[]}
 
 ## Vulnerability Analysis
 ### Prompt:
@@ -187,64 +184,104 @@ Based on the taint analysis above, decide if there is an ACTUAL vulnerability in
 ## Decision Criteria
 1. Does tainted data actually reach a dangerous sink?
 2. Are there validation / sanitization steps that stop exploitation?
+3. What specific conditions make this exploitable?
 
 ---
 
 ## OUTPUT CONTRACT (STRICT - FOLLOW EXACTLY)
 
-**Line 1 MUST be EXACTLY one of the following (no code fences, no backticks, no leading spaces):**
-{"vulnerability_found":"yes"}
-{"vulnerability_found":"no"}
+**Line 1 MUST be the vulnerability decision JSON:**
+{"vulnerability_found":"yes"|"no"}
 
-No other text on line 1.
-
-**Starting from line 2**, provide an explanation *only* if needed:
-- If "yes": briefly state CWE-XXX, exact code path, and why mitigations fail.
-- If "no": briefly state why the flow is safe (validation, unreachable sink, etc.).
-
-## Correct Examples
-
-Vulnerable:
-{"vulnerability_found":"yes"}
-CWE-787: Tainted length `len` used in `memcpy(dst, src, len)` without bounds check in `foo()->bar()->TEE_MemMove`.
-
-Not Vulnerable:
-{"vulnerability_found":"no"}
-Length validated (`len <= sizeof(buf)`) before copy; data encrypted before leaving secure world.
+**Starting from line 2, provide a structured analysis in JSON format:**
+{
+  "vulnerability_type": "CWE-XXX",
+  "severity": "low|medium|high|critical",
+  "taint_flow_summary": {
+    "source": "description of tainted input source",
+    "propagation_path": ["step1", "step2", "step3"],
+    "sink": "final dangerous operation"
+  },
+  "exploitation_analysis": {
+    "preconditions": ["condition1", "condition2"],
+    "attack_scenario": "step-by-step exploitation description",
+    "impact": "what attacker can achieve"
+  },
+  "missing_mitigations": [
+    {
+      "type": "bounds_check|type_validation|access_control|encryption",
+      "location": "function:line",
+      "recommendation": "specific fix suggestion"
+    }
+  ],
+  "confidence_factors": {
+    "positive_indicators": ["evidence supporting vulnerability"],
+    "negative_indicators": ["factors that might prevent exploitation"],
+    "confidence_level": "high|medium|low"
+  },
+  "decision_rationale": "Detailed explanation of why this is/isn't a vulnerability"
+}
 
 ### Response:
 {"vulnerability_found":"yes"}
-CWE-787: Tainted size `params[0].memref.size` used in `TEE_Malloc` without validation, leading to potential memory allocation issues in `random_number_generate()`. There are no checks to ensure the size is safe before allocation, allowing for exploitation.
+{
+  "vulnerability_type": "CWE-200",
+  "severity": "medium",
+  "taint_flow_summary": {
+    "source": "params[0].memref.buffer from Normal World input",
+    "propagation_path": [
+      "params[0].memref.size used as allocation size in TEE_Malloc",
+      "random data generated into private buffer",
+      "TEE_MemMove copies random data from private buffer to params[0].memref.buffer"
+    ],
+    "sink": "TEE_MemMove writing random data to output buffer without encryption"
+  },
+  "exploitation_analysis": {
+    "preconditions": [
+      "param_types must match expected MEMREF_OUTPUT type",
+      "params[0].memref.buffer is writable shared memory"
+    ],
+    "attack_scenario": "An attacker controlling the Normal World allocates a buffer and calls the TA command to generate random data, which is copied directly into the shared output buffer without encryption or integrity protection.",
+    "impact": "Potential leakage or misuse of random data; however, since data is random, direct sensitive data leakage is unlikely, but unencrypted output may violate security policies."
+  },
+  "missing_mitigations": [
+    {
+      "type": "encryption",
+      "location": "random_number_generate:91",
+      "recommendation": "Encrypt or authenticate random data before copying to shared output buffer if confidentiality or integrity is required"
+    }
+  ],
+  "confidence_factors": {
+    "positive_indicators": [
+      "TEE_MemMove used to copy data to output buffer",
+      "param_types checked but no encryption or integrity applied"
+    ],
+    "negative_indicators": [
+      "Data is random, not derived from sensitive input",
+      "param_types validation prevents misuse of parameter types"
+    ],
+    "confidence_level": "medium"
+  },
+  "decision_rationale": "The code copies generated random data directly to a shared output buffer without encryption, which matches the unencrypted_output rule. Although the data is random and not sensitive input, the lack of encryption or integrity checks on output data is a potential security weakness under certain threat models."
+}
 
 ### Conversation turns: 8
 ### DITING Rules System Prompt:
-You are an expert in OP-TEE Trusted-Application taint analysis.
+You are analyzing code that runs as an OP-TEE Trusted Application (TA).
 
-## DITING Partitioning Rules (machine-readable, *DO NOT MODIFY*)
+OP-TEE Domain Facts (background only, non-prescriptive):
+- Architecture & trust boundary: OP-TEE separates the Normal World (REE) and the Trusted World (TEE). TAs run in the TEE. Data carried by TEE_Param originate from the Normal World.
+- TEE_Param and paramTypes: The four parameter slots are typed via TEE_PARAM_TYPES(). MEMREF_INPUT is read by the TA, MEMREF_OUTPUT is written by the TA, MEMREF_INOUT is both read and written.
+- Shared vs private memory: A memref’s .buffer usually refers to shared memory supplied by the Normal World client and mapped between worlds; memory allocated via TEE_Malloc() is private to the TA unless explicitly shared.
+- Memory operations: TEE_MemMove() and TEE_MemFill() behave like C memmove/memset; lengths use size_t (unsigned).
+- Randomness: TEE_GenerateRandom(void *buf, size_t len) fills a TA-provided buffer with random bytes generated inside the TEE.
+- Command dispatch: TA_InvokeCommandEntryPoint() dispatches by cmd_id; error codes (TEE_Result) are returned per the TA’s implementation.
+- Output intent: Writing to a MEMREF_OUTPUT parameter indicates the TA intends to return data to the caller; whether data require transformation depends on the TA’s design.
+
+DITING Partitioning Rules (machine-readable, DO NOT MODIFY)
 {"name":"tee_vuln_detection_pipeline","version":"1.0.0","purpose":"Aggregate multiple CodeQL query outputs via keyed joins, tag sinks, classify by param types, and apply heuristics to detect 3 categories of weaknesses.","total_rules":3,"inputs":{"codeql_outputs":[{"name":"host.ql","role":"param_kind_mask_per_function"},{"name":"switch.ql","role":"callee_id_to_func_name"},{"name":"arrayaccess.ql","role":"array_access_keys"},{"name":"ifstmt.ql","role":"if_statement_keys"},{"name":"dataflow.ql","role":"arg_to_sink_flows"},{"name":"memory.ql","role":"mem_and_output_operations"}]},"config":{"db_name":"tee_example","query_dir":"../../query","out_dir":"./out","line_threshold_unenc":195,"line_threshold_input":195,"crypto_markers":["aes","enc"],"sink_markers":["snprintf","TEE_MemMove","="],"shared_param_values":[12,13,14,15],"exclude_shared_tokens":["TEE_MemMove","TEE_CheckMemoryAccessRights"],"exclude_symbols_shared":[">","<","+","?","-"]},"keying":{"from_dataflow":{"fields":["srcIdx","paramIdx","calleeId","pos","sinkText"],"compose":"key = `${srcIdx}_${paramIdx}_${funcName}` where funcName = switch[calleeId]"},"tags":[{"from":"arrayaccess.ql","on":"pos","append_to":"sinkText","value":"accesstoarray"},{"from":"ifstmt.ql","on":"pos","append_to":"sinkText","value":"if"}],"classification":{"source":"host.ql","logic":"if param_kind in shared_param_values -> params_shared else params_input"}},"detection_rules":[{"rule_id":"unencrypted_output","source":"memory.ql","aggregation":"concat consecutive rows with same key","positive_if":{"any_contains":{"field":"row_text","tokens":["snprintf","TEE_MemMove","="]},"and_not_contains_in_buffer":{"buffer":"key_concat_text","tokens":["aes","enc"]},"and_line_lt":{"field":"pos_line","value":195}},"output":["pos"]},{"rule_id":"weak_input_validation","source":"params_input","iteration_order":"ascending by occurrence","state_var":"check_buffer","positive_if_any":[{"all":[{"contains_any":{"field":"item_text","tokens":["accesstoarray","Malloc"]}},{"not_contains":{"buffer":"check_buffer","token":"if"}},{"line_gt":{"field":"pos_line","value":195}}]},{"all":[{"contains":{"field":"item_text","token":"MemMove"}},{"not_contains":{"buffer":"check_buffer","token":"Malloc"}},{"not_contains":{"buffer":"check_buffer","token":"if"}},{"line_gt":{"field":"pos_line","value":195}}]}],"deduplicate":true,"output":["pos"]},{"rule_id":"shared_memory_overwrite","source":"params_shared","positive_if":{"not_contains_any":{"field":"item_text","tokens":["TEE_MemMove","TEE_CheckMemoryAccessRights",">","<","+","?","-"]}},"deduplicate":true,"output":["pos"]}],"outputs":{"format":"object","fields":[{"name":"unencrypted_output","type":"array","items":"location"},{"name":"weak_input_validation","type":"array","items":"location"},{"name":"shared_memory_overwrite","type":"array","items":"location"},{"name":"counts","type":"object","fields":["unencrypted_output","weak_input_validation","shared_memory_overwrite"]}]},"assumptions_and_limits":["The line cutoff 195 is a heuristic and should be configurable.","The presence of 'if' is checked by string accumulation, not structural control-flow.","Crypto detection relies on tokens ['aes','enc']; prefer CodeQL-side crypto API flags to reduce false positives."]}
 
-### Operating Principles (STRICT)
-- FIRST apply the rules above *deterministically*. For each claim, cite the matched rule `detection_rules[i].id` and the exact evidence (file:line).
-- THEN add expert reasoning *only* for scenarios not covered by the rules. Clearly label it as "expert_extension".
-- If a fact is unknown (e.g., API semantics not present in prompt), explicitly state "unknown" and do NOT invent documentation or page numbers.
-- Distinguish **taint presence** from **vulnerability**. Taint reaching a sink ≠ vulnerability unless a rule/condition is satisfied.
 
-### Evidence Policy
-- When you mention code, include minimal evidence `"<file>:<line>"` (or "unknown" if unavailable).
-- When you reference a rule, include `rule_id` (e.g., "weak_input_validation").
-
-### Output Policy per Turn
-- For each function analysis turn, return a short JSON first (no fences) with:
-  {"function":"<name>","propagation":[...],"sanitizers":[...],"sinks":[...],"evidence":[...],"rule_matches":[...]}
-  Then, if needed, add 1–3 concise bullet points.
-- For the final decision turn, obey the OUTPUT CONTRACT exactly.
-
-### Analysis Guidelines (keep existing bullets)
-- The rules above define specific patterns for TEE vulnerabilities
-- Focus on data flow from TEE_Param structures (untrusted input) to dangerous sinks
-- Check array index operations, buffer operations, and parameter validation
-- Consider both direct taint propagation and indirect data dependencies
-- TEE_Param contains data from the normal world and must be treated as untrusted
 
 
 
@@ -284,10 +321,7 @@ Code to analyze:
 113: }
 
 ### Response:
-{"function":"TA_InvokeCommandEntryPoint","propagation":[],"sanitizers":["TEE_ERROR_BAD_PARAMETERS:111"],"sinks":[],"evidence":[],"rule_matches":[]}
-
-- The function checks for valid command IDs and returns an error for invalid parameters, but there are no sanitizers for the `params` array itself.
-- No direct taint propagation or sinks are identified in the provided code.
+{"function":"TA_InvokeCommandEntryPoint","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
 
 ## Function 2: random_number_generate
 ### Prompt:
@@ -298,6 +332,15 @@ Tainted input: params (from previous function)
 
 You MUST respond first with a one-line JSON (no code fences):
 {"function":"random_number_generate","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
+
+Additional output contract for inline findings:
+Immediately after the one-line JSON above, output EXACTLY ONE more line:
+FINDINGS={"items":[{"rule":"unencrypted_output|weak_input_validation|shared_memory_overwrite","file":"<path>","line":123,"why":"<one sentence>","evidence":"<file>:<line>","code_excerpt":"<short>"}]}
+Rules:
+- Always print the FINDINGS line, even when no items (use {"items":[]})
+- rule MUST be one of: unencrypted_output, weak_input_validation, shared_memory_overwrite
+- evidence MUST be "<file>:<line>" if known, else "unknown"
+- The FINDINGS line must be a single line with no extra prose
 
 Instructions:
 1) Using ONLY the provided code, track how the tainted input flows; append steps (LHS <- RHS) to "propagation". If control depends on tainted values, add "implicit:<var>".
@@ -329,21 +372,22 @@ Code to analyze:
 90: 	TEE_GenerateRandom(buf, params[0].memref.size);
 91: 	TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size);
 92: 	TEE_Free(buf);
-93: 	
-94: 	
-95: 	
-96: 	
+93: 	char *str[1024] = {0};
+94: 	for(int i = 0; i < params[0].memref.size; i++) {
+95: 		str[i] = params[2].memref.buffer[i];
+96: 	}
 97: 
 98: 	return TEE_SUCCESS;
 99: }
 
 
 ### Response:
-{"function":"random_number_generate","propagation":["param_types <- param_types","params <- params"],"sanitizers":["TEE_ERROR_BAD_PARAMETERS:76"],"sinks":["TEE_MemMove:91"],"evidence":[],"rule_matches":[]}
+{"function":"random_number_generate","propagation":["buf <- TEE_Malloc(params[0].memref.size)","params[0].memref.buffer <- buf (via TEE_MemMove)","str[i] <- params[2].memref.buffer[i]"],"sanitizers":["param_types check at line 75"],"sinks":["TEE_MemMove at line 91"],"evidence":["75","91"],"rule_matches":["unencrypted_output"]}  
+FINDINGS={"items":[{"rule":"unencrypted_output","file":"unknown","line":91,"why":"Random data is generated and copied to output buffer without encryption","evidence":"unknown:91","code_excerpt":"TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size);"}]}  
 
-- The function checks if `param_types` matches the expected value, which is a form of validation.
-- The `params` array is used directly without further validation on its contents, which could lead to vulnerabilities if the input is untrusted.
-- The function allocates memory and moves data to the output buffer, which are potential points of concern for tainted data.
+- The function checks param_types to ensure the first parameter is a MEMREF_OUTPUT, which is a sanitizer.  
+- Random bytes are generated into a private buffer and then copied to the output buffer (shared memory) via TEE_MemMove, a sink.  
+- The loop reading from params[2].memref.buffer is suspicious as params[2] is expected to be NONE; this may indicate a logic flaw or unused code.
 
 ## Function 3: TEE_GenerateRandom
 ### Prompt:
@@ -372,6 +416,15 @@ TEE_GenerateRandom( [out] void* randomBuffer, size_t randomBufferLen ); Descript
 You MUST respond first with a one-line JSON (no code fences):
 {"function":"TEE_GenerateRandom","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
 
+Additional output contract for inline findings:
+Immediately after the one-line JSON above, output EXACTLY ONE more line:
+FINDINGS={"items":[{"rule":"unencrypted_output|weak_input_validation|shared_memory_overwrite","file":"<path>","line":123,"why":"<one sentence>","evidence":"<file>:<line>","code_excerpt":"<short>"}]}
+Rules:
+- Always print the FINDINGS line, even when no items (use {"items":[]})
+- rule MUST be one of: unencrypted_output, weak_input_validation, shared_memory_overwrite
+- evidence MUST be "<file>:<line>" if known, else "unknown"
+- The FINDINGS line must be a single line with no extra prose
+
 Instructions:
 1) Use ONLY the code and the Documentation Context above when referencing API semantics. If a required detail is absent, write "unknown" and do NOT speculate.
 2) Analyze EACH listed parameter independently. Track taint for each and append steps (LHS <- RHS) to "propagation" (e.g., "arg0_len <- params[0].memref.size"). Add "implicit:<var>" for control-dependent flows.
@@ -385,11 +438,12 @@ TEE_GenerateRandom(buf, params[0].memref.size);
 
 
 ### Response:
-{"function":"TEE_GenerateRandom","propagation":["randomBuffer <- buf","randomBufferLen <- params[0].memref.size"],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
+{"function":"TEE_GenerateRandom","propagation":["arg0 <- buf","arg1 <- params[0].memref.size"],"sanitizers":[],"sinks":["arg0 (randomBuffer) used as output buffer"],"evidence":["unknown:TEE_GenerateRandom call"],"rule_matches":[]}  
+FINDINGS={"items":[]}  
 
-- The function `TEE_GenerateRandom` does not perform any internal validation on the parameters, which could lead to vulnerabilities if `params[0].memref.size` is tainted or improperly set.
-- The `randomBuffer` is allocated in the previous function, and if it is not properly validated, it may lead to unsafe memory operations.
-- No DITING rules match for this function based on the provided context and code.
+- The function generates random data into the buffer pointed by arg0 with length arg1.  
+- No explicit sanitization or validation of the buffer or length parameters is shown in the provided code snippet or documentation.  
+- The buffer arg0 is an output parameter receiving random data, which is a sink for tainted data flow analysis.
 
 ## Vulnerability Analysis
 ### Prompt:
@@ -398,65 +452,105 @@ Based on the taint analysis above, decide if there is an ACTUAL vulnerability in
 ## Decision Criteria
 1. Does tainted data actually reach a dangerous sink?
 2. Are there validation / sanitization steps that stop exploitation?
+3. What specific conditions make this exploitable?
 
 ---
 
 ## OUTPUT CONTRACT (STRICT - FOLLOW EXACTLY)
 
-**Line 1 MUST be EXACTLY one of the following (no code fences, no backticks, no leading spaces):**
-{"vulnerability_found":"yes"}
-{"vulnerability_found":"no"}
+**Line 1 MUST be the vulnerability decision JSON:**
+{"vulnerability_found":"yes"|"no"}
 
-No other text on line 1.
-
-**Starting from line 2**, provide an explanation *only* if needed:
-- If "yes": briefly state CWE-XXX, exact code path, and why mitigations fail.
-- If "no": briefly state why the flow is safe (validation, unreachable sink, etc.).
-
-## Correct Examples
-
-Vulnerable:
-{"vulnerability_found":"yes"}
-CWE-787: Tainted length `len` used in `memcpy(dst, src, len)` without bounds check in `foo()->bar()->TEE_MemMove`.
-
-Not Vulnerable:
-{"vulnerability_found":"no"}
-Length validated (`len <= sizeof(buf)`) before copy; data encrypted before leaving secure world.
-Note: Multiple parameters (indices: [0, 1]) of the sink function 'TEE_GenerateRandom' are potentially tainted. Analyze if ANY of these parameters could lead to a vulnerability.
+**Starting from line 2, provide a structured analysis in JSON format:**
+{
+  "vulnerability_type": "CWE-XXX",
+  "severity": "low|medium|high|critical",
+  "taint_flow_summary": {
+    "source": "description of tainted input source",
+    "propagation_path": ["step1", "step2", "step3"],
+    "sink": "final dangerous operation"
+  },
+  "exploitation_analysis": {
+    "preconditions": ["condition1", "condition2"],
+    "attack_scenario": "step-by-step exploitation description",
+    "impact": "what attacker can achieve"
+  },
+  "missing_mitigations": [
+    {
+      "type": "bounds_check|type_validation|access_control|encryption",
+      "location": "function:line",
+      "recommendation": "specific fix suggestion"
+    }
+  ],
+  "confidence_factors": {
+    "positive_indicators": ["evidence supporting vulnerability"],
+    "negative_indicators": ["factors that might prevent exploitation"],
+    "confidence_level": "high|medium|low"
+  },
+  "decision_rationale": "Detailed explanation of why this is/isn't a vulnerability"
+}
 
 ### Response:
 {"vulnerability_found":"yes"}
-CWE-787: Tainted size `params[0].memref.size` used in `TEE_GenerateRandom(buf, params[0].memref.size)` without validation, allowing potential buffer overflow.
+{
+  "vulnerability_type": "CWE-209 Information Exposure Through an Error Message or Unencrypted Output",
+  "severity": "medium",
+  "taint_flow_summary": {
+    "source": "params[0].memref.buffer (shared memory output buffer from Normal World)",
+    "propagation_path": [
+      "buf <- TEE_Malloc(params[0].memref.size)",
+      "TEE_GenerateRandom(buf, params[0].memref.size)",
+      "TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size)"
+    ],
+    "sink": "TEE_MemMove copying random data to shared output buffer"
+  },
+  "exploitation_analysis": {
+    "preconditions": [
+      "param_types matches expected MEMREF_OUTPUT for params[0]",
+      "params[0].memref.buffer is writable shared memory accessible by Normal World"
+    ],
+    "attack_scenario": "An attacker controlling the Normal World client calls the TA with a crafted param_types and params[0] buffer, causing the TA to generate random data and copy it unencrypted into the shared output buffer, potentially leaking sensitive random data.",
+    "impact": "Exposure of cryptographically strong random data to the Normal World, which may weaken cryptographic operations relying on this randomness."
+  },
+  "missing_mitigations": [
+    {
+      "type": "encryption",
+      "location": "random_number_generate:91",
+      "recommendation": "Encrypt or securely handle random data before copying to shared memory if confidentiality is required."
+    }
+  ],
+  "confidence_factors": {
+    "positive_indicators": [
+      "TEE_MemMove copies random data directly to shared output buffer",
+      "No encryption or obfuscation of random data before output",
+      "param_types check ensures output buffer is writable"
+    ],
+    "negative_indicators": [
+      "param_types validation prevents misuse of parameters",
+      "random data generation itself is correct and expected"
+    ],
+    "confidence_level": "high"
+  },
+  "decision_rationale": "The TA generates random data and copies it directly to a shared output buffer without encryption or additional protection, exposing sensitive random bytes to the Normal World. Although parameter types are validated, no sanitization or encryption is applied to the output, making this an information exposure vulnerability."
+}
 
 ### Conversation turns: 8
 ### DITING Rules System Prompt:
-You are an expert in OP-TEE Trusted-Application taint analysis.
+You are analyzing code that runs as an OP-TEE Trusted Application (TA).
 
-## DITING Partitioning Rules (machine-readable, *DO NOT MODIFY*)
+OP-TEE Domain Facts (background only, non-prescriptive):
+- Architecture & trust boundary: OP-TEE separates the Normal World (REE) and the Trusted World (TEE). TAs run in the TEE. Data carried by TEE_Param originate from the Normal World.
+- TEE_Param and paramTypes: The four parameter slots are typed via TEE_PARAM_TYPES(). MEMREF_INPUT is read by the TA, MEMREF_OUTPUT is written by the TA, MEMREF_INOUT is both read and written.
+- Shared vs private memory: A memref’s .buffer usually refers to shared memory supplied by the Normal World client and mapped between worlds; memory allocated via TEE_Malloc() is private to the TA unless explicitly shared.
+- Memory operations: TEE_MemMove() and TEE_MemFill() behave like C memmove/memset; lengths use size_t (unsigned).
+- Randomness: TEE_GenerateRandom(void *buf, size_t len) fills a TA-provided buffer with random bytes generated inside the TEE.
+- Command dispatch: TA_InvokeCommandEntryPoint() dispatches by cmd_id; error codes (TEE_Result) are returned per the TA’s implementation.
+- Output intent: Writing to a MEMREF_OUTPUT parameter indicates the TA intends to return data to the caller; whether data require transformation depends on the TA’s design.
+
+DITING Partitioning Rules (machine-readable, DO NOT MODIFY)
 {"name":"tee_vuln_detection_pipeline","version":"1.0.0","purpose":"Aggregate multiple CodeQL query outputs via keyed joins, tag sinks, classify by param types, and apply heuristics to detect 3 categories of weaknesses.","total_rules":3,"inputs":{"codeql_outputs":[{"name":"host.ql","role":"param_kind_mask_per_function"},{"name":"switch.ql","role":"callee_id_to_func_name"},{"name":"arrayaccess.ql","role":"array_access_keys"},{"name":"ifstmt.ql","role":"if_statement_keys"},{"name":"dataflow.ql","role":"arg_to_sink_flows"},{"name":"memory.ql","role":"mem_and_output_operations"}]},"config":{"db_name":"tee_example","query_dir":"../../query","out_dir":"./out","line_threshold_unenc":195,"line_threshold_input":195,"crypto_markers":["aes","enc"],"sink_markers":["snprintf","TEE_MemMove","="],"shared_param_values":[12,13,14,15],"exclude_shared_tokens":["TEE_MemMove","TEE_CheckMemoryAccessRights"],"exclude_symbols_shared":[">","<","+","?","-"]},"keying":{"from_dataflow":{"fields":["srcIdx","paramIdx","calleeId","pos","sinkText"],"compose":"key = `${srcIdx}_${paramIdx}_${funcName}` where funcName = switch[calleeId]"},"tags":[{"from":"arrayaccess.ql","on":"pos","append_to":"sinkText","value":"accesstoarray"},{"from":"ifstmt.ql","on":"pos","append_to":"sinkText","value":"if"}],"classification":{"source":"host.ql","logic":"if param_kind in shared_param_values -> params_shared else params_input"}},"detection_rules":[{"rule_id":"unencrypted_output","source":"memory.ql","aggregation":"concat consecutive rows with same key","positive_if":{"any_contains":{"field":"row_text","tokens":["snprintf","TEE_MemMove","="]},"and_not_contains_in_buffer":{"buffer":"key_concat_text","tokens":["aes","enc"]},"and_line_lt":{"field":"pos_line","value":195}},"output":["pos"]},{"rule_id":"weak_input_validation","source":"params_input","iteration_order":"ascending by occurrence","state_var":"check_buffer","positive_if_any":[{"all":[{"contains_any":{"field":"item_text","tokens":["accesstoarray","Malloc"]}},{"not_contains":{"buffer":"check_buffer","token":"if"}},{"line_gt":{"field":"pos_line","value":195}}]},{"all":[{"contains":{"field":"item_text","token":"MemMove"}},{"not_contains":{"buffer":"check_buffer","token":"Malloc"}},{"not_contains":{"buffer":"check_buffer","token":"if"}},{"line_gt":{"field":"pos_line","value":195}}]}],"deduplicate":true,"output":["pos"]},{"rule_id":"shared_memory_overwrite","source":"params_shared","positive_if":{"not_contains_any":{"field":"item_text","tokens":["TEE_MemMove","TEE_CheckMemoryAccessRights",">","<","+","?","-"]}},"deduplicate":true,"output":["pos"]}],"outputs":{"format":"object","fields":[{"name":"unencrypted_output","type":"array","items":"location"},{"name":"weak_input_validation","type":"array","items":"location"},{"name":"shared_memory_overwrite","type":"array","items":"location"},{"name":"counts","type":"object","fields":["unencrypted_output","weak_input_validation","shared_memory_overwrite"]}]},"assumptions_and_limits":["The line cutoff 195 is a heuristic and should be configurable.","The presence of 'if' is checked by string accumulation, not structural control-flow.","Crypto detection relies on tokens ['aes','enc']; prefer CodeQL-side crypto API flags to reduce false positives."]}
 
-### Operating Principles (STRICT)
-- FIRST apply the rules above *deterministically*. For each claim, cite the matched rule `detection_rules[i].id` and the exact evidence (file:line).
-- THEN add expert reasoning *only* for scenarios not covered by the rules. Clearly label it as "expert_extension".
-- If a fact is unknown (e.g., API semantics not present in prompt), explicitly state "unknown" and do NOT invent documentation or page numbers.
-- Distinguish **taint presence** from **vulnerability**. Taint reaching a sink ≠ vulnerability unless a rule/condition is satisfied.
 
-### Evidence Policy
-- When you mention code, include minimal evidence `"<file>:<line>"` (or "unknown" if unavailable).
-- When you reference a rule, include `rule_id` (e.g., "weak_input_validation").
-
-### Output Policy per Turn
-- For each function analysis turn, return a short JSON first (no fences) with:
-  {"function":"<name>","propagation":[...],"sanitizers":[...],"sinks":[...],"evidence":[...],"rule_matches":[...]}
-  Then, if needed, add 1–3 concise bullet points.
-- For the final decision turn, obey the OUTPUT CONTRACT exactly.
-
-### Analysis Guidelines (keep existing bullets)
-- The rules above define specific patterns for TEE vulnerabilities
-- Focus on data flow from TEE_Param structures (untrusted input) to dangerous sinks
-- Check array index operations, buffer operations, and parameter validation
-- Consider both direct taint propagation and indirect data dependencies
-- TEE_Param contains data from the normal world and must be treated as untrusted
 
 
 
@@ -498,11 +592,6 @@ Code to analyze:
 ### Response:
 {"function":"TA_InvokeCommandEntryPoint","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
 
-- No taint propagation steps are present as there are no assignments or data flow from untrusted sources to sinks.
-- No sanitizers or checks are evident in the provided code.
-- No concrete sinks are identified in the function.
-- No DITING rules match based on the provided evidence.
-
 ## Function 2: random_number_generate
 ### Prompt:
 Continue the taint analysis for the next function in the call chain.
@@ -512,6 +601,15 @@ Tainted input: params (from previous function)
 
 You MUST respond first with a one-line JSON (no code fences):
 {"function":"random_number_generate","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
+
+Additional output contract for inline findings:
+Immediately after the one-line JSON above, output EXACTLY ONE more line:
+FINDINGS={"items":[{"rule":"unencrypted_output|weak_input_validation|shared_memory_overwrite","file":"<path>","line":123,"why":"<one sentence>","evidence":"<file>:<line>","code_excerpt":"<short>"}]}
+Rules:
+- Always print the FINDINGS line, even when no items (use {"items":[]})
+- rule MUST be one of: unencrypted_output, weak_input_validation, shared_memory_overwrite
+- evidence MUST be "<file>:<line>" if known, else "unknown"
+- The FINDINGS line must be a single line with no extra prose
 
 Instructions:
 1) Using ONLY the provided code, track how the tainted input flows; append steps (LHS <- RHS) to "propagation". If control depends on tainted values, add "implicit:<var>".
@@ -543,21 +641,22 @@ Code to analyze:
 90: 	TEE_GenerateRandom(buf, params[0].memref.size);
 91: 	TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size);
 92: 	TEE_Free(buf);
-93: 	
-94: 	
-95: 	
-96: 	
+93: 	char *str[1024] = {0};
+94: 	for(int i = 0; i < params[0].memref.size; i++) {
+95: 		str[i] = params[2].memref.buffer[i];
+96: 	}
 97: 
 98: 	return TEE_SUCCESS;
 99: }
 
 
 ### Response:
-{"function":"random_number_generate","propagation":["param_types <- param_types","params <- params"],"sanitizers":[{"check":"param_types validation","evidence":"unknown"}],"sinks":["TEE_MemMove","TEE_GenerateRandom"],"evidence":["64:static TEE_Result random_number_generate(uint32_t param_types, TEE_Param params[4])","75:if (param_types != exp_param_types)","91:TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size)"],"rule_matches":["weak_input_validation"]}
+{"function":"random_number_generate","propagation":["buf <- TEE_Malloc(params[0].memref.size)","params[0].memref.buffer <- buf (via TEE_MemMove)","str[i] <- params[2].memref.buffer[i]"],"sanitizers":["param_types check at line 75"],"sinks":["TEE_MemMove at line 91"],"evidence":["75","91"],"rule_matches":["unencrypted_output"]}  
+FINDINGS={"items":[{"rule":"unencrypted_output","file":"unknown","line":91,"why":"TEE_MemMove copies random data to params[0].memref.buffer without encryption","evidence":"unknown:91","code_excerpt":"TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size);"}]}  
 
-- The function checks if `param_types` matches the expected value, which is a form of input validation.
-- The `params` array is used directly in the `TEE_MemMove` sink, which could lead to vulnerabilities if not properly validated.
-- The `weak_input_validation` rule matches due to the lack of sufficient checks on the contents of `params`.
+- The function validates param_types strictly before proceeding, ensuring expected parameter layout.  
+- Random data is generated into a private buffer and then copied to the output memref buffer (shared memory).  
+- The loop reading from params[2].memref.buffer is suspicious as params[2] is expected to be NONE; this may indicate a logic error or potential weak input validation.
 
 ## Function 3: TEE_MemMove
 ### Prompt:
@@ -589,6 +688,15 @@ TEE Internal Core API Specification  Public Release v1.3.1 275 / 375 8.7.6 TEE_B
 You MUST respond first with a one-line JSON (no code fences):
 {"function":"TEE_MemMove","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
 
+Additional output contract for inline findings:
+Immediately after the one-line JSON above, output EXACTLY ONE more line:
+FINDINGS={"items":[{"rule":"unencrypted_output|weak_input_validation|shared_memory_overwrite","file":"<path>","line":123,"why":"<one sentence>","evidence":"<file>:<line>","code_excerpt":"<short>"}]}
+Rules:
+- Always print the FINDINGS line, even when no items (use {"items":[]})
+- rule MUST be one of: unencrypted_output, weak_input_validation, shared_memory_overwrite
+- evidence MUST be "<file>:<line>" if known, else "unknown"
+- The FINDINGS line must be a single line with no extra prose
+
 Instructions:
 1) Use ONLY the code and the Documentation Context above when referencing API semantics. If a required detail is absent, write "unknown" and do NOT speculate.
 2) Analyze EACH listed parameter independently. Track taint for each and append steps (LHS <- RHS) to "propagation" (e.g., "arg0_len <- params[0].memref.size"). Add "implicit:<var>" for control-dependent flows.
@@ -602,12 +710,12 @@ TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size);
 
 
 ### Response:
-{"function":"TEE_MemMove","propagation":["arg0 <- params[0].memref.buffer","arg1 <- buf","arg2 <- params[0].memref.size"],"sanitizers":[{"check":"params[0].memref.size validation","evidence":"unknown"}],"sinks":[],"evidence":["TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size)"],"rule_matches":["shared_memory_overwrite"]}
+{"function":"TEE_MemMove","propagation":["arg0 <- params[0].memref.buffer","arg1 <- buf","arg2 <- params[0].memref.size"],"sanitizers":[],"sinks":["TEE_MemMove uses arg0, arg1, arg2"],"evidence":["unknown"],"rule_matches":[]}  
+FINDINGS={"items":[]}  
 
-- The first argument (`arg0`) is potentially tainted as it comes from `params[0].memref.buffer`, which is not validated beyond the size check.
-- The second argument (`arg1`) is a buffer allocated in the function, which is not tainted.
-- The third argument (`arg2`) is the size of the memory to move, which is also derived from the potentially tainted `params[0].memref.size`.
-- The `shared_memory_overwrite` rule matches because the function does not validate the contents of `params[0].memref.buffer` before using it.
+- The function copies memory from arg1 (buf) to arg0 (params[0].memref.buffer) of length arg2 (params[0].memref.size).  
+- No explicit parameter validation or sanitization is shown in the provided code or documentation context.  
+- The operation is a sink for data flow analysis since it writes to shared memory (arg0).
 
 ## Vulnerability Analysis
 ### Prompt:
@@ -616,65 +724,104 @@ Based on the taint analysis above, decide if there is an ACTUAL vulnerability in
 ## Decision Criteria
 1. Does tainted data actually reach a dangerous sink?
 2. Are there validation / sanitization steps that stop exploitation?
+3. What specific conditions make this exploitable?
 
 ---
 
 ## OUTPUT CONTRACT (STRICT - FOLLOW EXACTLY)
 
-**Line 1 MUST be EXACTLY one of the following (no code fences, no backticks, no leading spaces):**
-{"vulnerability_found":"yes"}
-{"vulnerability_found":"no"}
+**Line 1 MUST be the vulnerability decision JSON:**
+{"vulnerability_found":"yes"|"no"}
 
-No other text on line 1.
-
-**Starting from line 2**, provide an explanation *only* if needed:
-- If "yes": briefly state CWE-XXX, exact code path, and why mitigations fail.
-- If "no": briefly state why the flow is safe (validation, unreachable sink, etc.).
-
-## Correct Examples
-
-Vulnerable:
-{"vulnerability_found":"yes"}
-CWE-787: Tainted length `len` used in `memcpy(dst, src, len)` without bounds check in `foo()->bar()->TEE_MemMove`.
-
-Not Vulnerable:
-{"vulnerability_found":"no"}
-Length validated (`len <= sizeof(buf)`) before copy; data encrypted before leaving secure world.
-Note: Multiple parameters (indices: [0, 1, 2]) of the sink function 'TEE_MemMove' are potentially tainted. Analyze if ANY of these parameters could lead to a vulnerability.
+**Starting from line 2, provide a structured analysis in JSON format:**
+{
+  "vulnerability_type": "CWE-XXX",
+  "severity": "low|medium|high|critical",
+  "taint_flow_summary": {
+    "source": "description of tainted input source",
+    "propagation_path": ["step1", "step2", "step3"],
+    "sink": "final dangerous operation"
+  },
+  "exploitation_analysis": {
+    "preconditions": ["condition1", "condition2"],
+    "attack_scenario": "step-by-step exploitation description",
+    "impact": "what attacker can achieve"
+  },
+  "missing_mitigations": [
+    {
+      "type": "bounds_check|type_validation|access_control|encryption",
+      "location": "function:line",
+      "recommendation": "specific fix suggestion"
+    }
+  ],
+  "confidence_factors": {
+    "positive_indicators": ["evidence supporting vulnerability"],
+    "negative_indicators": ["factors that might prevent exploitation"],
+    "confidence_level": "high|medium|low"
+  },
+  "decision_rationale": "Detailed explanation of why this is/isn't a vulnerability"
+}
 
 ### Response:
 {"vulnerability_found":"yes"}
-CWE-787: Tainted buffer `params[0].memref.buffer` used in `TEE_MemMove(arg0, arg1, arg2)` without sufficient validation, allowing potential memory overwrite.
+{
+  "vulnerability_type": "CWE-200",
+  "severity": "medium",
+  "taint_flow_summary": {
+    "source": "params[0].memref.buffer (shared memory from Normal World)",
+    "propagation_path": [
+      "buf <- TEE_Malloc(params[0].memref.size)",
+      "TEE_GenerateRandom(buf, params[0].memref.size)",
+      "params[0].memref.buffer <- buf (via TEE_MemMove)"
+    ],
+    "sink": "TEE_MemMove writing random data to shared memory buffer"
+  },
+  "exploitation_analysis": {
+    "preconditions": [
+      "param_types must exactly match expected MEMREF_OUTPUT type",
+      "params[0].memref.buffer must be writable shared memory"
+    ],
+    "attack_scenario": "An attacker controlling the Normal World allocates a shared memory buffer and calls the TA with the correct param_types. The TA generates random data and copies it unencrypted into the shared buffer, which the attacker can read directly.",
+    "impact": "Disclosure of unencrypted random data to the Normal World, potentially leaking sensitive random values."
+  },
+  "missing_mitigations": [
+    {
+      "type": "encryption",
+      "location": "random_number_generate:91",
+      "recommendation": "Encrypt or securely handle random data before copying to shared memory if confidentiality is required."
+    }
+  ],
+  "confidence_factors": {
+    "positive_indicators": [
+      "TEE_MemMove copies random data directly to shared memory",
+      "No encryption or additional protection on output buffer"
+    ],
+    "negative_indicators": [
+      "param_types check ensures correct parameter usage",
+      "random data is generated inside the TA (trusted source)"
+    ],
+    "confidence_level": "high"
+  },
+  "decision_rationale": "The TA copies freshly generated random data directly into a shared memory output buffer without encryption or additional protection, allowing the Normal World to read potentially sensitive random values. Although parameter types are validated, no sanitization or encryption prevents this data leak, constituting an unencrypted output vulnerability."
+}
 
 ### Conversation turns: 8
 ### DITING Rules System Prompt:
-You are an expert in OP-TEE Trusted-Application taint analysis.
+You are analyzing code that runs as an OP-TEE Trusted Application (TA).
 
-## DITING Partitioning Rules (machine-readable, *DO NOT MODIFY*)
+OP-TEE Domain Facts (background only, non-prescriptive):
+- Architecture & trust boundary: OP-TEE separates the Normal World (REE) and the Trusted World (TEE). TAs run in the TEE. Data carried by TEE_Param originate from the Normal World.
+- TEE_Param and paramTypes: The four parameter slots are typed via TEE_PARAM_TYPES(). MEMREF_INPUT is read by the TA, MEMREF_OUTPUT is written by the TA, MEMREF_INOUT is both read and written.
+- Shared vs private memory: A memref’s .buffer usually refers to shared memory supplied by the Normal World client and mapped between worlds; memory allocated via TEE_Malloc() is private to the TA unless explicitly shared.
+- Memory operations: TEE_MemMove() and TEE_MemFill() behave like C memmove/memset; lengths use size_t (unsigned).
+- Randomness: TEE_GenerateRandom(void *buf, size_t len) fills a TA-provided buffer with random bytes generated inside the TEE.
+- Command dispatch: TA_InvokeCommandEntryPoint() dispatches by cmd_id; error codes (TEE_Result) are returned per the TA’s implementation.
+- Output intent: Writing to a MEMREF_OUTPUT parameter indicates the TA intends to return data to the caller; whether data require transformation depends on the TA’s design.
+
+DITING Partitioning Rules (machine-readable, DO NOT MODIFY)
 {"name":"tee_vuln_detection_pipeline","version":"1.0.0","purpose":"Aggregate multiple CodeQL query outputs via keyed joins, tag sinks, classify by param types, and apply heuristics to detect 3 categories of weaknesses.","total_rules":3,"inputs":{"codeql_outputs":[{"name":"host.ql","role":"param_kind_mask_per_function"},{"name":"switch.ql","role":"callee_id_to_func_name"},{"name":"arrayaccess.ql","role":"array_access_keys"},{"name":"ifstmt.ql","role":"if_statement_keys"},{"name":"dataflow.ql","role":"arg_to_sink_flows"},{"name":"memory.ql","role":"mem_and_output_operations"}]},"config":{"db_name":"tee_example","query_dir":"../../query","out_dir":"./out","line_threshold_unenc":195,"line_threshold_input":195,"crypto_markers":["aes","enc"],"sink_markers":["snprintf","TEE_MemMove","="],"shared_param_values":[12,13,14,15],"exclude_shared_tokens":["TEE_MemMove","TEE_CheckMemoryAccessRights"],"exclude_symbols_shared":[">","<","+","?","-"]},"keying":{"from_dataflow":{"fields":["srcIdx","paramIdx","calleeId","pos","sinkText"],"compose":"key = `${srcIdx}_${paramIdx}_${funcName}` where funcName = switch[calleeId]"},"tags":[{"from":"arrayaccess.ql","on":"pos","append_to":"sinkText","value":"accesstoarray"},{"from":"ifstmt.ql","on":"pos","append_to":"sinkText","value":"if"}],"classification":{"source":"host.ql","logic":"if param_kind in shared_param_values -> params_shared else params_input"}},"detection_rules":[{"rule_id":"unencrypted_output","source":"memory.ql","aggregation":"concat consecutive rows with same key","positive_if":{"any_contains":{"field":"row_text","tokens":["snprintf","TEE_MemMove","="]},"and_not_contains_in_buffer":{"buffer":"key_concat_text","tokens":["aes","enc"]},"and_line_lt":{"field":"pos_line","value":195}},"output":["pos"]},{"rule_id":"weak_input_validation","source":"params_input","iteration_order":"ascending by occurrence","state_var":"check_buffer","positive_if_any":[{"all":[{"contains_any":{"field":"item_text","tokens":["accesstoarray","Malloc"]}},{"not_contains":{"buffer":"check_buffer","token":"if"}},{"line_gt":{"field":"pos_line","value":195}}]},{"all":[{"contains":{"field":"item_text","token":"MemMove"}},{"not_contains":{"buffer":"check_buffer","token":"Malloc"}},{"not_contains":{"buffer":"check_buffer","token":"if"}},{"line_gt":{"field":"pos_line","value":195}}]}],"deduplicate":true,"output":["pos"]},{"rule_id":"shared_memory_overwrite","source":"params_shared","positive_if":{"not_contains_any":{"field":"item_text","tokens":["TEE_MemMove","TEE_CheckMemoryAccessRights",">","<","+","?","-"]}},"deduplicate":true,"output":["pos"]}],"outputs":{"format":"object","fields":[{"name":"unencrypted_output","type":"array","items":"location"},{"name":"weak_input_validation","type":"array","items":"location"},{"name":"shared_memory_overwrite","type":"array","items":"location"},{"name":"counts","type":"object","fields":["unencrypted_output","weak_input_validation","shared_memory_overwrite"]}]},"assumptions_and_limits":["The line cutoff 195 is a heuristic and should be configurable.","The presence of 'if' is checked by string accumulation, not structural control-flow.","Crypto detection relies on tokens ['aes','enc']; prefer CodeQL-side crypto API flags to reduce false positives."]}
 
-### Operating Principles (STRICT)
-- FIRST apply the rules above *deterministically*. For each claim, cite the matched rule `detection_rules[i].id` and the exact evidence (file:line).
-- THEN add expert reasoning *only* for scenarios not covered by the rules. Clearly label it as "expert_extension".
-- If a fact is unknown (e.g., API semantics not present in prompt), explicitly state "unknown" and do NOT invent documentation or page numbers.
-- Distinguish **taint presence** from **vulnerability**. Taint reaching a sink ≠ vulnerability unless a rule/condition is satisfied.
 
-### Evidence Policy
-- When you mention code, include minimal evidence `"<file>:<line>"` (or "unknown" if unavailable).
-- When you reference a rule, include `rule_id` (e.g., "weak_input_validation").
-
-### Output Policy per Turn
-- For each function analysis turn, return a short JSON first (no fences) with:
-  {"function":"<name>","propagation":[...],"sanitizers":[...],"sinks":[...],"evidence":[...],"rule_matches":[...]}
-  Then, if needed, add 1–3 concise bullet points.
-- For the final decision turn, obey the OUTPUT CONTRACT exactly.
-
-### Analysis Guidelines (keep existing bullets)
-- The rules above define specific patterns for TEE vulnerabilities
-- Focus on data flow from TEE_Param structures (untrusted input) to dangerous sinks
-- Check array index operations, buffer operations, and parameter validation
-- Consider both direct taint propagation and indirect data dependencies
-- TEE_Param contains data from the normal world and must be treated as untrusted
 
 
 
@@ -716,11 +863,6 @@ Code to analyze:
 ### Response:
 {"function":"TA_InvokeCommandEntryPoint","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
 
-- No taint propagation steps were identified in the provided code.
-- There are no sanitization checks present in the function.
-- No concrete sinks were found in the function.
-- No DITING rules matched based on the evidence provided.
-
 ## Function 2: random_number_generate
 ### Prompt:
 Continue the taint analysis for the next function in the call chain.
@@ -730,6 +872,15 @@ Tainted input: params (from previous function)
 
 You MUST respond first with a one-line JSON (no code fences):
 {"function":"random_number_generate","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
+
+Additional output contract for inline findings:
+Immediately after the one-line JSON above, output EXACTLY ONE more line:
+FINDINGS={"items":[{"rule":"unencrypted_output|weak_input_validation|shared_memory_overwrite","file":"<path>","line":123,"why":"<one sentence>","evidence":"<file>:<line>","code_excerpt":"<short>"}]}
+Rules:
+- Always print the FINDINGS line, even when no items (use {"items":[]})
+- rule MUST be one of: unencrypted_output, weak_input_validation, shared_memory_overwrite
+- evidence MUST be "<file>:<line>" if known, else "unknown"
+- The FINDINGS line must be a single line with no extra prose
 
 Instructions:
 1) Using ONLY the provided code, track how the tainted input flows; append steps (LHS <- RHS) to "propagation". If control depends on tainted values, add "implicit:<var>".
@@ -761,21 +912,18 @@ Code to analyze:
 90: 	TEE_GenerateRandom(buf, params[0].memref.size);
 91: 	TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size);
 92: 	TEE_Free(buf);
-93: 	
-94: 	
-95: 	
-96: 	
+93: 	char *str[1024] = {0};
+94: 	for(int i = 0; i < params[0].memref.size; i++) {
+95: 		str[i] = params[2].memref.buffer[i];
+96: 	}
 97: 
 98: 	return TEE_SUCCESS;
 99: }
 
 
 ### Response:
-{"function":"random_number_generate","propagation":["param_types <- param_types","params <- params"],"sanitizers":[{"check":"param_types != exp_param_types","evidence":"unknown"}],"sinks":["TEE_MemMove","TEE_GenerateRandom"],"evidence":["64:65","76:76","90:90","91:91"],"rule_matches":["unencrypted_output"]}
-
-- The function checks if `param_types` matches the expected type, which is a form of validation.
-- The `TEE_MemMove` sink is used to copy potentially tainted data to an output buffer.
-- The function matches the `unencrypted_output` rule due to the presence of `TEE_MemMove` without encryption checks.
+{"function":"random_number_generate","propagation":["buf <- TEE_Malloc(params[0].memref.size)","params[0].memref.size <- params[0].memref.size","params[0].memref.buffer <- params[0].memref.buffer","params[2].memref.buffer <- params[2].memref.buffer"],"sanitizers":["param_types check param_types != exp_param_types at line 75"],"sinks":["TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size) at line 91"],"evidence":["75","91"],"rule_matches":["weak_input_validation"],"rule_matches_evidence":["params[2].memref.buffer accessed without validation at line 95"]}  
+FINDINGS={"items":[{"rule":"weak_input_validation","file":"unknown","line":95,"why":"params[2].memref.buffer is accessed without bounds or validity checks","evidence":"unknown:95","code_excerpt":"str[i] = params[2].memref.buffer[i];"}]}
 
 ## Function 3: TEE_Free
 ### Prompt:
@@ -809,6 +957,15 @@ TEE Internal Core API Specification  Public Release v1.3.1 275 / 375 8.7.6 TEE_B
 You MUST respond first with a one-line JSON (no code fences):
 {"function":"TEE_Free","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
 
+Additional output contract for inline findings:
+Immediately after the one-line JSON above, output EXACTLY ONE more line:
+FINDINGS={"items":[{"rule":"unencrypted_output|weak_input_validation|shared_memory_overwrite","file":"<path>","line":123,"why":"<one sentence>","evidence":"<file>:<line>","code_excerpt":"<short>"}]}
+Rules:
+- Always print the FINDINGS line, even when no items (use {"items":[]})
+- rule MUST be one of: unencrypted_output, weak_input_validation, shared_memory_overwrite
+- evidence MUST be "<file>:<line>" if known, else "unknown"
+- The FINDINGS line must be a single line with no extra prose
+
 Instructions:
 1) Use ONLY the code and the Documentation Context above when referencing API semantics. If a required detail is absent, write "unknown" and do NOT speculate.
 2) Track how the tainted input flows; append steps (LHS <- RHS) to "propagation". Add "implicit:<var>" for control-dependent flows.
@@ -822,11 +979,8 @@ TEE_Free(buf);
 
 
 ### Response:
-{"function":"TEE_Free","propagation":["buf <- arg0"],"sanitizers":[],"sinks":[],"evidence":["unknown"],"rule_matches":[]}
-
-- The function `TEE_Free` is called with `buf`, which is the pointer to the memory block allocated earlier.
-- There are no explicit validations or sanitizers present in the function call.
-- No concrete sinks are identified in the context of `TEE_Free`.
+{"function":"TEE_Free","propagation":[],"sanitizers":["buffer must be pointer previously returned by TEE_Malloc or TEE_Realloc and not already freed"],"sinks":["TEE_Free(buffer)"],"evidence":["unknown"],"rule_matches":[]}  
+FINDINGS={"items":[]}
 
 ## Vulnerability Analysis
 ### Prompt:
@@ -835,33 +989,91 @@ Based on the taint analysis above, decide if there is an ACTUAL vulnerability in
 ## Decision Criteria
 1. Does tainted data actually reach a dangerous sink?
 2. Are there validation / sanitization steps that stop exploitation?
+3. What specific conditions make this exploitable?
 
 ---
 
 ## OUTPUT CONTRACT (STRICT - FOLLOW EXACTLY)
 
-**Line 1 MUST be EXACTLY one of the following (no code fences, no backticks, no leading spaces):**
-{"vulnerability_found":"yes"}
-{"vulnerability_found":"no"}
+**Line 1 MUST be the vulnerability decision JSON:**
+{"vulnerability_found":"yes"|"no"}
 
-No other text on line 1.
-
-**Starting from line 2**, provide an explanation *only* if needed:
-- If "yes": briefly state CWE-XXX, exact code path, and why mitigations fail.
-- If "no": briefly state why the flow is safe (validation, unreachable sink, etc.).
-
-## Correct Examples
-
-Vulnerable:
-{"vulnerability_found":"yes"}
-CWE-787: Tainted length `len` used in `memcpy(dst, src, len)` without bounds check in `foo()->bar()->TEE_MemMove`.
-
-Not Vulnerable:
-{"vulnerability_found":"no"}
-Length validated (`len <= sizeof(buf)`) before copy; data encrypted before leaving secure world.
+**Starting from line 2, provide a structured analysis in JSON format:**
+{
+  "vulnerability_type": "CWE-XXX",
+  "severity": "low|medium|high|critical",
+  "taint_flow_summary": {
+    "source": "description of tainted input source",
+    "propagation_path": ["step1", "step2", "step3"],
+    "sink": "final dangerous operation"
+  },
+  "exploitation_analysis": {
+    "preconditions": ["condition1", "condition2"],
+    "attack_scenario": "step-by-step exploitation description",
+    "impact": "what attacker can achieve"
+  },
+  "missing_mitigations": [
+    {
+      "type": "bounds_check|type_validation|access_control|encryption",
+      "location": "function:line",
+      "recommendation": "specific fix suggestion"
+    }
+  ],
+  "confidence_factors": {
+    "positive_indicators": ["evidence supporting vulnerability"],
+    "negative_indicators": ["factors that might prevent exploitation"],
+    "confidence_level": "high|medium|low"
+  },
+  "decision_rationale": "Detailed explanation of why this is/isn't a vulnerability"
+}
 
 ### Response:
 {"vulnerability_found":"yes"}
-CWE-787: Tainted data from `params[0].memref.size` is used in `TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size)` without proper validation of the size, leading to potential buffer overflow. The only validation checks the `param_types`, which does not ensure the integrity of the size parameter.
+{
+  "vulnerability_type": "CWE-125",
+  "severity": "medium",
+  "taint_flow_summary": {
+    "source": "params array passed from TA_InvokeCommandEntryPoint to random_number_generate",
+    "propagation_path": [
+      "params[2].memref.buffer accessed without validation",
+      "params[2].memref.buffer read in a loop without bounds or sanity checks"
+    ],
+    "sink": "reading from params[2].memref.buffer at line 95"
+  },
+  "exploitation_analysis": {
+    "preconditions": [
+      "params[2].memref.buffer is controlled by the Normal World client",
+      "No bounds or access rights checks on params[2].memref.buffer",
+      "params[0].memref.size can be large, leading to out-of-bounds reads"
+    ],
+    "attack_scenario": "An attacker supplies a params array with a large params[0].memref.size and a small or invalid params[2].memref.buffer, causing out-of-bounds reads or memory disclosure when the TA reads beyond the buffer size in the loop at line 95.",
+    "impact": "Potential information disclosure or memory corruption due to reading uninitialized or out-of-bounds memory."
+  },
+  "missing_mitigations": [
+    {
+      "type": "bounds_check",
+      "location": "random_number_generate:95",
+      "recommendation": "Add explicit bounds checks on params[2].memref.buffer size before accessing it in the loop."
+    },
+    {
+      "type": "access_control",
+      "location": "random_number_generate:75",
+      "recommendation": "Validate all input parameters' memory references and sizes, not just params[0]."
+    }
+  ],
+  "confidence_factors": {
+    "positive_indicators": [
+      "Direct access to params[2].memref.buffer without validation",
+      "No conditional checks or sanitization on params[2]",
+      "Use of params[0].memref.size as loop bound without cross-checking params[2]"
+    ],
+    "negative_indicators": [
+      "param_types check on params[0] only",
+      "No explicit evidence of misuse of the read data"
+    ],
+    "confidence_level": "medium"
+  },
+  "decision_rationale": "The code reads from a potentially attacker-controlled buffer without validating its size or access rights, which can lead to out-of-bounds reads. Although the main output buffer is properly allocated and sanitized, the unchecked access to params[2].memref.buffer represents a weak input validation vulnerability that could be exploited under certain conditions."
+}
 
 ### Conversation turns: 8
