@@ -23,7 +23,7 @@ from typing import Optional, Dict, List, Tuple, Any
 sys.path.append(str(Path(__file__).parent.parent))
 from llm_settings.config_manager import UnifiedLLMClient
 
-from prompts import get_start_prompt, get_middle_prompt, get_end_prompt, get_middle_prompt_multi_params
+from prompts import get_start_prompt, get_middle_prompt, get_end_prompt, get_middle_prompt_multi_params, set_rag_enabled, is_rag_available
 
 def build_system_prompt(diting_template: str, diting_rules: dict) -> str:
     """
@@ -533,10 +533,15 @@ def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict,
                       phase12_data: dict, log_file: Path, 
                       source_params: list[str] | None = None,
                       use_diting_rules: bool = True,
-                      use_enhanced_prompts: bool = True) -> dict:
+                      use_enhanced_prompts: bool = True,
+                      use_rag: bool = False,
+                      is_first_analysis: bool = False) -> dict:  # use_ragパラメータを追加
     """
     単一のコールチェーンに対してテイント解析を実行（改良版）
     param_indicesが存在する場合は、統合された解析として扱う
+    
+    Args:
+        use_rag: RAGを使用するかどうか
     """
     results = {
         "chain": chain,
@@ -544,9 +549,13 @@ def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict,
         "taint_analysis": [],
         "inline_findings": [],
         "vulnerability": None,
-        "vulnerability_details": None,  # 新規追加
-        "reasoning_trace": []           # 新規追加
+        "vulnerability_details": None,
+        "reasoning_trace": [],
+        "rag_used": use_rag  # RAG使用状況を記録
     }
+    
+    # RAGの有効/無効を設定
+    set_rag_enabled(use_rag)
     
     # 会話履歴を保持するリスト
     conversation_history = []
@@ -568,9 +577,11 @@ def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict,
             conversation_history.append({"role": "system", "content": system_prompt})
             
             # ログに記録
-            with open(log_file, "a", encoding="utf-8") as lf:
-                lf.write(f"### DITING Rules System Prompt:\n")
-                lf.write(system_prompt + "\n\n")
+            if is_first_analysis:
+                with open(log_file, "a", encoding="utf-8") as lf:
+                    lf.write(f"### DITING Rules System Prompt:\n")
+                    lf.write(f"### RAG Status: {'Enabled' if use_rag and is_rag_available() else 'Disabled'}\n")
+                    lf.write(system_prompt + "\n\n")
         else:
             print(f"[WARN] DITING system prompt file not found: {diting_prompt_path}")
     
@@ -590,6 +601,7 @@ def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict,
         lf.write(f"\n{'='*80}\n")
         lf.write(f"Analyzing chain: {' -> '.join(chain)}\n")
         lf.write(f"Sink: {vd['sink']} ({param_info}) at {vd['file']}:{vd['line']}\n")
+        lf.write(f"RAG Mode: {'Enabled' if use_rag and is_rag_available() else 'Disabled'}\n")
         lf.write(f"{'='*80}\n\n")
     
     # チェーンの各関数に対してテイント解析を実行
@@ -606,7 +618,7 @@ def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict,
         # コードを整形
         code = clean_code_for_llm(code)
         
-        # プロンプトを生成
+        # プロンプトを生成（RAG機能はprompts.py内で自動的に処理される）
         if i == 0:
             # スタートプロンプト
             if source_params:
@@ -629,6 +641,7 @@ def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict,
                 param_names_list = [f"arg{idx}" for idx in param_indices]
                 param_name = f"parameters {', '.join(param_names_list)} (indices: {param_indices})"
                 
+                # RAGが有効な場合、prompts.py内で自動的にRAGコンテキストが追加される
                 prompt = get_middle_prompt_multi_params(
                     func_name, 
                     param_name, 
@@ -645,6 +658,7 @@ def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict,
                     param_name = "params"
                     param_index = None
                 
+                # RAGが有効な場合、prompts.py内で自動的にRAGコンテキストが追加される
                 prompt = get_middle_prompt(
                     func_name, 
                     param_name, 
@@ -659,6 +673,8 @@ def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict,
         # ログにプロンプトを記録
         with open(log_file, "a", encoding="utf-8") as lf:
             lf.write(f"## Function {i+1}: {func_name}\n")
+            if use_rag and is_rag_available() and "rag_context" in prompt.lower():
+                lf.write("### RAG Context: Included in prompt\n")
             lf.write("### Prompt:\n")
             lf.write(prompt + "\n\n")
         
@@ -679,7 +695,8 @@ def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict,
         # 結果を保存
         results["taint_analysis"].append({
             "function": func_name,
-            "analysis": response
+            "analysis": response,
+            "rag_used": use_rag and is_rag_available()
         })
         taint_summaries.append(f"Function {func_name}: {response}")
 
@@ -695,7 +712,7 @@ def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict,
 
         # インライン脆弱性の抽出
         try:
-            _found = extract_inline_findings(response, func_name, chain, vd)
+            _found = extract_inline_findings(response, func_name, chain, vd, phase12_data.get("project_root"))
             if _found:
                 results["inline_findings"].extend(_found)
         except Exception as _e:
@@ -703,7 +720,7 @@ def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict,
             with open(log_file, "a", encoding="utf-8") as lf:
                 lf.write(f"[WARN] inline findings parse failed at {func_name}: {_e}\n")
     
-
+    # 最終的な脆弱性判定
     end_prompt = get_end_prompt()
     
     # 会話履歴にエンドプロンプトを追加
@@ -723,6 +740,7 @@ def analyze_taint_flow(client: UnifiedLLMClient, chain: list[str], vd: dict,
         lf.write("### Response:\n")
         lf.write(vuln_response + "\n\n")
         lf.write(f"### Conversation turns: {len(conversation_history)}\n")
+        lf.write(f"### RAG used: {use_rag and is_rag_available()}\n")
     
     results["vulnerability"] = vuln_response
     
@@ -799,7 +817,24 @@ def main():
     parser.add_argument("--no-diting-rules", action="store_true", help="DITINGルールを使用しない")
     parser.add_argument("--no-enhanced-prompts", action="store_true", help="改良版プロンプトを使用しない")
     parser.add_argument("--generate-summary", action="store_true", help="人間が読みやすいサマリーも生成")
+    parser.add_argument("--no-rag", action="store_true", help="RAGを使用しない")
     args = parser.parse_args()
+    
+    # RAGの使用フラグ
+    use_rag = not args.no_rag
+    
+    if use_rag:
+        print("[INFO] RAG mode enabled for taint analysis")
+        # RAGの初期化はprompts.py内で自動的に行われる
+        set_rag_enabled(True)
+        if is_rag_available():
+            print("[INFO] RAG system successfully initialized")
+        else:
+            print("[WARN] RAG system initialization failed, continuing without RAG")
+            use_rag = False
+    else:
+        print("[INFO] RAG mode disabled")
+        set_rag_enabled(False)
     
     # 出力ディレクトリを準備
     out_path = Path(args.output)
@@ -831,20 +866,29 @@ def main():
     
     print(f"[taint_analyzer] {len(flows_data)} 個の候補フローを解析中...")
     
+    # 最初の解析かどうかを追跡するフラグ
+    is_first_analysis = True
+    
     for i, flow in enumerate(flows_data):
         vd = flow["vd"]
         chains = flow.get("chains", [])
         
-        for chain in chains:
+        for j, chain in enumerate(chains):
             print(f"  [{i+1}/{len(flows_data)}] チェーン: {' -> '.join(chain)}")
             
-            # テイント解析を実行（改良版）
+            # テイント解析を実行（改良版、RAGサポート付き）
             result = analyze_taint_flow(
                 client, chain, vd, phase12_data, log_file, 
                 flow.get("source_params"),
                 use_diting_rules=not args.no_diting_rules,
-                use_enhanced_prompts=not args.no_enhanced_prompts
+                use_enhanced_prompts=not args.no_enhanced_prompts,
+                use_rag=use_rag,  # RAGフラグを追加（カンマが必要）
+                is_first_analysis=is_first_analysis  # 最初の解析かどうか
             )
+            
+            # 最初の解析が完了したらフラグをFalseに
+            if is_first_analysis:
+                is_first_analysis = False
             
             # 脆弱性が見つかった場合のみ結果に追加
             is_vuln, meta = parse_vuln_response(result["vulnerability"])
@@ -879,6 +923,7 @@ def main():
         "llm_provider": client.get_current_provider(),
         "diting_rules_used": not args.no_diting_rules,
         "enhanced_prompts_used": not args.no_enhanced_prompts,
+        "rag_enabled": use_rag and is_rag_available(),  # 実際のRAG使用状況
         "total_chains_analyzed": sum(len(flow.get("chains", [])) for flow in flows_data),
         "functions_analyzed": sum(len(v["reasoning_trace"]) for v in vulnerabilities),
     }
@@ -906,6 +951,7 @@ def main():
         with open(summary_path, "w", encoding="utf-8") as sf:
             sf.write("# Vulnerability Analysis Summary Report\n\n")
             sf.write(f"Generated: {statistics['analysis_date']}\n")
+            sf.write(f"RAG Mode: {'Enabled' if statistics['rag_enabled'] else 'Disabled'}\n")
             sf.write(f"Total vulnerabilities found: {len(vulnerabilities)}\n\n")
             
             for i, vuln in enumerate(vulnerabilities, 1):
@@ -914,7 +960,6 @@ def main():
                 sf.write("\n---\n\n")
         
         print(f"  サマリー: {summary_path}")
-
 
 if __name__ == "__main__":
     main()

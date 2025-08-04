@@ -29,14 +29,6 @@ except ImportError:
     RAG_AVAILABLE = False
     print("[WARN] RAG module not available. Using standard prompts.")
 
-# CodeQLルールエンジンをインポート
-try:
-    from rule_engine.codeql_converter import get_rules_for_sink_function
-    CODEQL_AVAILABLE = True
-except ImportError:
-    CODEQL_AVAILABLE = False
-    print("[WARN] CodeQL rule engine not available.")
-
 
 class PromptManager:
     """プロンプトテンプレートを管理するクラス"""
@@ -128,33 +120,6 @@ class PromptManager:
             print(f"[WARN] RAG search failed: {e}")
             return None
     
-    def get_codeql_context_for_function(self, function_name: str) -> Optional[str]:
-        """特定の関数に関連するCodeQLルールのコンテキストを取得"""
-        if not CODEQL_AVAILABLE:
-            return None
-            
-        try:
-            rules = get_rules_for_sink_function(function_name)
-            if not rules:
-                return None
-            
-            context = f"### DITING Rules for {function_name}:\n"
-            for rule in rules:
-                context += f"- **{rule['name']}** (Severity: {rule['severity']}): {rule['description']}\n"
-            
-            return context
-        except Exception as e:
-            print(f"[WARN] Failed to get CodeQL rules for {function_name}: {e}")
-            return None
-    
-    def enhance_prompt_with_codeql(self, base_prompt: str, function_name: str) -> str:
-        """プロンプトにCodeQLルールのコンテキストを追加"""
-        codeql_context = self.get_codeql_context_for_function(function_name)
-        if codeql_context:
-            # プロンプトの適切な位置にCodeQLコンテキストを挿入
-            enhanced_prompt = base_prompt + "\n\n" + codeql_context
-            return enhanced_prompt
-        return base_prompt
 
 
 # グローバルなプロンプトマネージャーインスタンス
@@ -278,11 +243,6 @@ def is_rag_available() -> bool:
     return _prompt_manager._rag_client is not None
 
 
-def is_codeql_available() -> bool:
-    """CodeQLルールエンジンが利用可能かチェック"""
-    return CODEQL_AVAILABLE
-
-
 # カスタムディレクトリを指定してプロンプトマネージャーを作成する関数
 def create_prompt_manager(prompts_dir: Path) -> PromptManager:
     """指定されたディレクトリでプロンプトマネージャーを作成"""
@@ -330,9 +290,6 @@ def main():
     
     # RAGの状態確認
     print(f"RAG available: {is_rag_available()}")
-    
-    # CodeQLの状態確認
-    print(f"CodeQL available: {is_codeql_available()}")
     
     # 各プロンプトのテスト
     print("\n=== Testing Prompts ===")

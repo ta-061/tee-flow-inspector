@@ -32,7 +32,7 @@ if DEVKIT:
 
 # ------------------------------------------------------------
 
-def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool):
+def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool, use_rag: bool):
     proj = proj.resolve()
     if proj.name in skip:
         print(f"[INFO] {proj.name}: skipped by --skip")
@@ -44,6 +44,10 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool):
         return
 
     print(f"\n=== Project: {proj.name} / TA: {ta_dir.name} ===")
+    if use_rag:
+        print("[INFO] RAG mode is enabled for this analysis")
+    else:
+        print("[INFO] RAG mode is disabled for this analysis")
 
     # Step1
     ta_db = ensure_ta_db(ta_dir, proj, DEVKIT, v)
@@ -59,9 +63,12 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool):
     }, indent=2, ensure_ascii=False))
     print(f"[phase1-2] → {phase12}")
 
-    # Step3 (LLM 解析フェーズ) – 既存のスクリプト呼び出しをそのまま
+    # Step3 (LLM 解析フェーズ) - RAGオプションを追加
     sinks = res_dir / f"{ta_dir.name}_sinks.json"
-    run([sys.executable, str(identify_py), "-i", str(phase12), "-o", str(sinks)], ta_dir, v)
+    identify_cmd = [sys.executable, str(identify_py), "-i", str(phase12), "-o", str(sinks)]
+    if not use_rag:
+        identify_cmd.append("--no-rag")
+    run(identify_cmd, ta_dir, v)
     print(f"[phase3 ] → {sinks}\n")
 
     find_py   = Path(__file__).parent / "identify_sinks" / "find_sink_calls.py"
@@ -120,11 +127,13 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool):
     # Phase6: テイント解析と脆弱性検査
     taint_py = Path(__file__).parent / "analyze_vulnerabilities" / "taint_analyzer.py"
     vulnerabilities = res_dir / f"{ta_dir.name}_vulnerabilities.json"
-    run([sys.executable, str(taint_py),
-         "--flows", str(candidate_flows),
-         "--phase12", str(phase12),
-         "--output", str(vulnerabilities)],
-        ta_dir, v)
+    taint_cmd = [sys.executable, str(taint_py),
+                 "--flows", str(candidate_flows),
+                 "--phase12", str(phase12),
+                 "--output", str(vulnerabilities)]
+    if not use_rag:
+        taint_cmd.append("--no-rag")
+    run(taint_cmd, ta_dir, v)
     print(f"[phase6 ] → {vulnerabilities}\n")
 
     # Phase7: HTMLレポート生成
@@ -145,10 +154,11 @@ if __name__ == "__main__":
     ap.add_argument("-p", "--project", type=Path, action="append", required=True)
     ap.add_argument("--skip", nargs="*", default=[], help="ディレクトリ名をスキップ")
     ap.add_argument("--verbose", action="store_true")
+    ap.add_argument("--rag", action="store_true", help="Enable RAG (Retrieval-Augmented Generation) for sink analysis")
     args = ap.parse_args()
 
     identify_py = Path(__file__).resolve().parent / "identify_sinks" / "identify_sinks.py"
     skip = set(args.skip)
 
     for proj in args.project:
-        process_project(proj, identify_py, skip, args.verbose)
+        process_project(proj, identify_py, skip, args.verbose, args.rag)

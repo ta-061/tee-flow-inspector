@@ -1,26 +1,46 @@
-Continue to analyze the next function according to the above taint analysis results. Pay attention to data aliases and tainted operations.
+Continue to analyze the next step in the call chain.
 
-Function to analyze: {source_function}
-Potentially tainted parameters: {param_name}
-
-You MUST respond first with a one-line JSON (no code fences):
-{"function":"{source_function}","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
-
-Additional output contract for inline findings:
-Immediately after the one-line JSON above, output EXACTLY ONE more line:
-FINDINGS={"items":[{"rule":"unencrypted_output|weak_input_validation|shared_memory_overwrite","file":"<path>","line":123,"why":"<one sentence>","evidence":"<file>:<line>","code_excerpt":"<short>"}]}
-Rules:
-- Always print the FINDINGS line, even when no items (use {"items":[]})
-- rule MUST be one of: unencrypted_output, weak_input_validation, shared_memory_overwrite
-- evidence MUST be "<file>:<line>" if known, else "unknown"
-- The FINDINGS line must be a single line with no extra prose
-
-Instructions:
-1) Analyze EACH listed parameter independently. Track taint for each and append steps (LHS <- RHS) to "propagation" (e.g., "arg0_len <- params[0].memref.size").
-2) Record any validations/sanitizers that constrain each parameter in "sanitizers" with evidence "<file>:<line>" or "unknown".
-3) List concrete sinks and which parameter they use in "sinks" with evidence lines.
-4) If any DITING rule matches for ANY parameter, list its `id` in "rule_matches" and add supporting evidence.
-5) Keep the JSON minimal; then add up to 3 concise bullet points with key insights.
-
-Code to be analyzed:
+You will receive:
+- Code to analyze: 
 {code}
+- (Optional) Upstream context: {upstream_context}   # e.g., a set of previously tainted symbols/params
+
+=== POLICY (NO RAG) ===
+- Use ONLY the provided code and (optional) upstream context. Do not assume anything else.
+
+=== FALSE-POSITIVE GUARDRAILS (NEGATIVE RULES) ===
+- Data originating from `TEE_GenerateRandom` is NON-SENSITIVE by default.
+  Copying such data to `MEMREF_OUTPUT` MUST NOT be flagged as `unencrypted_output`.
+- Allocators/deallocators (e.g., `TEE_Malloc`, `TEE_Free`) are NOT sinks.
+- Emit a finding ONLY if BOTH are true:
+  (1) attacker-controlled or sensitive taint reaches a dangerous sink, AND
+  (2) no effective validation/sanitization prevents exploitation.
+
+=== WHAT TO INFER (NO MANUAL NAMES PROVIDED) ===
+- Infer the current function name from the code’s signature. If unavailable, set "function":"unknown".
+- Build the initial TAINTED set from upstream context if provided; otherwise, infer taint only when the code clearly ingests untrusted input.
+- Analyze EACH parameter/symbol independently. Track explicit dataflow only; for control dependence, annotate as "implicit:<var>".
+
+=== OUTPUT CONTRACT (STRICT — EXACTLY TWO LINES) ===
+Line 1: a single JSON object with these fields:
+{"function":"<auto-inferred or 'unknown'>","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
+
+Line 2: a single line starting with FINDINGS= and containing JSON:
+FINDINGS={"items":[{"rule":"unencrypted_output|weak_input_validation|shared_memory_overwrite","file":"<path>","line":123,"why":"<one sentence>","evidence":"<file>:<line>","code_excerpt":"<short>"}]}
+
+Rules for Line 2:
+- Always print the FINDINGS line; if nothing qualifies, output: FINDINGS={"items":[]}
+- Allowed rule values are exactly: unencrypted_output, weak_input_validation, shared_memory_overwrite.
+- Each item MUST include concrete code evidence (`<file>:<line>`). If unknown, use evidence:"unknown".
+- DO NOT print any extra text before/after these two lines. No additional bullets or explanations.
+
+=== ANALYSIS STEPS (APPLY TO THE GIVEN CODE) ===
+1) Parse the function signature to infer the function name (or "unknown").
+2) Initialize TAINTED from upstream context (if any).
+3) For EACH potentially tainted parameter/symbol:
+   a) Track explicit dataflow and append "LHS <- RHS @ <file>:<line>" to "propagation".
+   b) Record validators/sanitizers with evidence lines (bounds checks, type checks, access rights, length caps) in "sanitizers".
+   c) Identify dangerous sinks and WHICH parameter/symbol they use; add them to "sinks" with evidence lines.
+4) Check parameter-type consistency:
+   - If `param_types` declaration conflicts with actual reads/writes (e.g., reading from NONE/OUTPUT), record in "evidence" with lines; map to `weak_input_validation` only if it enables attacker influence to reach a sink.
+5) If any DITING rule matches, list its `id` in "rule_matches" with supporting evidence.
