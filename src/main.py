@@ -19,6 +19,80 @@ def run(cmd: list[str], cwd: Path, verbose: bool):
 
 # ------------------------------------------------------------
 
+def clean_project_dependencies(proj_path: Path, verbose: bool = False):
+    """
+    プロジェクトの古い依存関係ファイルをクリーンアップ
+    
+    Args:
+        proj_path: プロジェクトのルートパス
+        verbose: 詳細出力を有効にするか
+    """
+    if verbose:
+        print(f"[INFO] Cleaning dependencies for {proj_path.name}")
+    
+    cleaned_count = 0
+    
+    # .d ファイル（依存関係ファイル）を削除
+    for dep_file in proj_path.rglob("*.d"):
+        # キャッシュディレクトリやバイナリファイルをスキップ
+        if any(skip in str(dep_file) for skip in ['/cache/', '/.git/', '/node_modules/', '/db-cpp/']):
+            continue
+            
+        try:
+            # 古いツールチェーンパスを含むファイルかチェック
+            # バイナリファイルの可能性があるので、バイナリモードで読み込み
+            with open(dep_file, 'rb') as f:
+                content_bytes = f.read()
+            
+            # UTF-8でデコードを試みる
+            try:
+                content = content_bytes.decode('utf-8', errors='strict')
+            except UnicodeDecodeError:
+                # バイナリファイルの場合はスキップ
+                continue
+            
+            if "/mnt/disk/toolschain" in content:
+                dep_file.unlink()
+                cleaned_count += 1
+                if verbose:
+                    print(f"  - Removed stale dependency: {dep_file.relative_to(proj_path)}")
+        except Exception as e:
+            if verbose and "codec can't decode" not in str(e):
+                print(f"[WARN] Failed to process {dep_file}: {e}")
+    
+    # .o ファイル（オブジェクトファイル）も念のため削除
+    for obj_file in proj_path.rglob("*.o"):
+        try:
+            obj_file.unlink()
+            cleaned_count += 1
+        except Exception as e:
+            if verbose:
+                print(f"[WARN] Failed to remove {obj_file}: {e}")
+    
+    # make clean を実行（エラーは無視）
+    for makefile_dir in [proj_path, proj_path / "ta", proj_path / "host"]:
+        if (makefile_dir / "Makefile").exists():
+            try:
+                result = subprocess.run(
+                    ["make", "clean"],
+                    cwd=makefile_dir,
+                    capture_output=True,
+                    timeout=10,
+                    text=True
+                )
+                if verbose and result.returncode == 0:
+                    print(f"  - Executed 'make clean' in {makefile_dir.relative_to(proj_path)}")
+            except subprocess.TimeoutExpired:
+                if verbose:
+                    print(f"[WARN] 'make clean' timeout in {makefile_dir}")
+            except Exception:
+                pass  # エラーは無視
+    
+    if verbose and cleaned_count > 0:
+        print(f"  ✓ Cleaned {cleaned_count} files")
+
+# ------------------------------------------------------------
+
 def auto_devkit() -> Path | None:
     if (env := os.getenv("TA_DEV_KIT_DIR")):
         return Path(env)
@@ -32,7 +106,7 @@ if DEVKIT:
 
 # ------------------------------------------------------------
 
-def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool, use_rag: bool):
+def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool, use_rag: bool, skip_clean: bool):
     proj = proj.resolve()
     if proj.name in skip:
         print(f"[INFO] {proj.name}: skipped by --skip")
@@ -48,6 +122,10 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool, use_
         print("[INFO] RAG mode is enabled for this analysis")
     else:
         print("[INFO] RAG mode is disabled for this analysis")
+
+    # 解析前にクリーンアップを実行（オプションで無効化可能）
+    if not skip_clean:
+        clean_project_dependencies(proj, verbose=v)
 
     # Step1
     ta_db = ensure_ta_db(ta_dir, proj, DEVKIT, v)
@@ -150,15 +228,39 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool, use_
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("-p", "--project", type=Path, action="append", required=True)
-    ap.add_argument("--skip", nargs="*", default=[], help="ディレクトリ名をスキップ")
-    ap.add_argument("--verbose", action="store_true")
-    ap.add_argument("--rag", action="store_true", help="Enable RAG (Retrieval-Augmented Generation) for sink analysis")
+    ap = argparse.ArgumentParser(description="TA Static Analysis Driver")
+    ap.add_argument("-p", "--project", type=Path, action="append", required=True,
+                    help="Project path(s) to analyze")
+    ap.add_argument("--skip", nargs="*", default=[], 
+                    help="Directory names to skip")
+    ap.add_argument("--verbose", action="store_true",
+                    help="Enable verbose output")
+    ap.add_argument("--rag", action="store_true", 
+                    help="Enable RAG (Retrieval-Augmented Generation) for sink analysis")
+    ap.add_argument("--skip-clean", action="store_true",
+                    help="Skip cleaning dependency files before analysis")
+    ap.add_argument("--clean-all", action="store_true",
+                    help="Clean all .d and .o files (not just stale ones)")
     args = ap.parse_args()
 
     identify_py = Path(__file__).resolve().parent / "identify_sinks" / "identify_sinks.py"
     skip = set(args.skip)
 
+    # --clean-all オプションが指定された場合の処理
+    if args.clean_all:
+        print("[INFO] Cleaning all dependency and object files...")
+        for proj in args.project:
+            proj = Path(proj).resolve()
+            for ext in ["*.d", "*.o"]:
+                for file in proj.rglob(ext):
+                    try:
+                        file.unlink()
+                        if args.verbose:
+                            print(f"  - Removed: {file.relative_to(proj)}")
+                    except Exception as e:
+                        if args.verbose:
+                            print(f"[WARN] Failed to remove {file}: {e}")
+        print("[INFO] Cleanup completed")
+
     for proj in args.project:
-        process_project(proj, identify_py, skip, args.verbose, args.rag)
+        process_project(proj, identify_py, skip, args.verbose, args.rag, args.skip_clean)
