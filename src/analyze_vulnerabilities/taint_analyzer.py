@@ -158,7 +158,7 @@ def setup_diting_rules(logger: StructuredLogger, use_rag: bool) -> Optional[str]
 
 def generate_summary_report(out_dir: Path, statistics: dict, vulnerabilities: list):
     """サマリーレポートを生成"""
-    from .report_generator import ReportGenerator
+    from analyze_vulnerabilities.report_generator import ReportGenerator
     
     generator = ReportGenerator()
     summary_path = out_dir / "vulnerability_summary.md"
