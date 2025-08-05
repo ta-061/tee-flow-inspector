@@ -177,7 +177,7 @@ class TaintAnalyzer:
         source_params: Optional[List[str]],
         results: dict
     ):
-        """単一関数の解析"""
+        """単一関数の解析（改善版）"""
         self.stats["total_functions_analyzed"] += 1
         
         # コードを取得
@@ -192,15 +192,18 @@ class TaintAnalyzer:
             func_name, position, chain, vd, param_indices, source_params, code, is_final
         )
         
-        # LLMに問い合わせ
+        # 会話にプロンプトを追加（これが重要！）
         self.conversation_manager.add_message("user", prompt)
-        self.logger.log_function_analysis(position + 1, func_name, prompt, "")
         
+        # LLMに問い合わせ
         response = self._ask_llm()
         self.stats["total_llm_calls"] += 1
         
+        # 会話にレスポンスを追加
         self.conversation_manager.add_message("assistant", response)
-        self.logger.log_function_analysis(position + 1, func_name, "", response)
+        
+        # ログに両方を記録（1回の呼び出しで）
+        self.logger.log_function_analysis(position + 1, func_name, prompt, response)
         
         # 結果を保存
         results["taint_analysis"].append({
@@ -211,7 +214,7 @@ class TaintAnalyzer:
         
         # 解析結果をパース
         self._parse_function_analysis(response, func_name, position, chain, vd, results)
-    
+        
     def _generate_prompt(
         self,
         func_name: str,
