@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 LLM Configuration Manager
-複数のLLMプロバイダー（OpenAI、Claude、DeepSeek、ローカルLLM）を
+複数のLLMプロバイダー（OpenAI、Claude、DeepSeek、ローカルLLM、OpenRouter）を
 統一的に管理・切り替えるための設定システム
 """
 
@@ -22,6 +22,7 @@ class LLMProvider(Enum):
     DEEPSEEK = "deepseek"
     LOCAL = "local"
     OLLAMA = "ollama"
+    OPENROUTER = "openrouter"  # 追加
 
 
 class LLMConfig:
@@ -92,6 +93,16 @@ class LLMConfig:
                     "temperature": 0.0,
                     "max_tokens": 4096,
                     "timeout": 120
+                },
+                "openrouter": {  # 追加
+                    "api_key": "",
+                    "model": "openrouter/horizon-beta",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "temperature": 0.0,
+                    "max_tokens": 4096,
+                    "timeout": 60,
+                    "site_url": "",  # オプション: あなたのサイトURL
+                    "site_name": ""  # オプション: あなたのサイト名
                 }
             },
             "retry_config": {
@@ -311,6 +322,58 @@ class DeepSeekClient(BaseLLMClient):
                 raise Exception(f"DeepSeek API エラー: {type(e).__name__} - {str(e)}")
 
 
+class OpenRouterClient(BaseLLMClient):
+    """OpenRouter API クライアント"""
+    
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config)
+        # OpenRouterはOpenAI互換APIを使用
+        import openai
+        
+        # ヘッダーを設定
+        default_headers = {
+            "HTTP-Referer": config.get("site_url", ""),
+            "X-Title": config.get("site_name", "")
+        }
+        
+        self.client = openai.OpenAI(
+            api_key=config.get("api_key"),
+            base_url=config.get("base_url", "https://openrouter.ai/api/v1"),
+            default_headers=default_headers
+        )
+    
+    def chat_completion(self, messages: List[Dict[str, str]], **kwargs) -> str:
+        """OpenRouter APIでチャット補完を実行"""
+        try:
+            response = self.client.chat.completions.create(
+                model=self.config.get("model", "openrouter/horizon-beta"),
+                messages=messages,
+                temperature=kwargs.get("temperature", self.config.get("temperature", 0.0)),
+                max_tokens=kwargs.get("max_tokens", self.config.get("max_tokens", 4096)),
+                timeout=self.config.get("timeout", 60)
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            raise Exception(f"OpenRouter API error: {str(e)}")
+    
+    def validate_connection(self) -> bool:
+        """API接続を検証"""
+        try:
+            # OpenRouterではモデルリストの取得ではなく、簡単なテストメッセージで検証
+            self.chat_completion([{"role": "user", "content": "Hello"}])
+            return True
+        except Exception as e:
+            import openai
+            if hasattr(openai, 'AuthenticationError') and isinstance(e, openai.AuthenticationError):
+                raise Exception(f"認証エラー: APIキーが無効です - {str(e)}")
+            elif hasattr(openai, 'RateLimitError') and isinstance(e, openai.RateLimitError):
+                raise Exception(f"レート制限: API利用制限に達しています - {str(e)}")
+            elif hasattr(openai, 'APIConnectionError') and isinstance(e, openai.APIConnectionError):
+                raise Exception(f"接続エラー: OpenRouter APIに接続できません - {str(e)}")
+            else:
+                raise Exception(f"OpenRouter API エラー: {type(e).__name__} - {str(e)}")
+
+
 class LocalLLMClient(BaseLLMClient):
     """ローカルLLM (Ollama等) クライアント"""
     
@@ -384,6 +447,8 @@ class LLMClientFactory:
             return DeepSeekClient(config)
         elif provider in [LLMProvider.LOCAL.value, LLMProvider.OLLAMA.value]:
             return LocalLLMClient(config)
+        elif provider == LLMProvider.OPENROUTER.value:  # 追加
+            return OpenRouterClient(config)
         else:
             raise ValueError(f"Unsupported provider: {provider}")
 
