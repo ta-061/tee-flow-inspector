@@ -15,6 +15,19 @@ python3 ./src/main.py \
   -p benchmark/optee-fiovb \
   -p benchmark/optee-sdp \
   -p benchmark/Lenet5_in_OPTEE \
+  --verbose 2>&1 | tee log.txt
+
+
+python3 ./src/main.py \
+  -p benchmark/acipher \
+  -p benchmark/aes \
+  -p benchmark/hotp \
+  -p benchmark/random \
+  -p benchmark/secure_storage \
+  -p benchmark/secvideo_demo \
+  -p benchmark/optee-fiovb \
+  -p benchmark/optee-sdp \
+  -p benchmark/Lenet5_in_OPTEE \
   -p benchmark/bad-partitioning \
   -p benchmark/basicAlg_use \
   --verbose 2>&1 | tee log.txt

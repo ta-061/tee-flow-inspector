@@ -128,13 +128,13 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool, use_
     taint_py = Path(__file__).parent / "analyze_vulnerabilities" / "taint_analyzer.py"
     vulnerabilities = res_dir / f"{ta_dir.name}_vulnerabilities.json"
     taint_cmd = [sys.executable, str(taint_py),
-                 "--flows", str(candidate_flows),
-                 "--phase12", str(phase12),
-                 "--output", str(vulnerabilities)]
+                "--flows", str(candidate_flows),
+                "--phase12", str(phase12),
+                "--output", str(vulnerabilities),
+                "--generate-summary"]
     if not use_rag:
         taint_cmd.append("--no-rag")
     run(taint_cmd, ta_dir, v)
-    print(f"[phase6 ] → {vulnerabilities}\n")
 
     # Phase7: HTMLレポート生成
     report_py = Path(__file__).parent / "report" / "generate_report.py"
