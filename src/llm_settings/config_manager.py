@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 LLM Configuration Manager
-複数のLLMプロバイダー（OpenAI、Claude、DeepSeek、ローカルLLM、OpenRouter）を
+複数のLLMプロバイダー（OpenAI、Claude、DeepSeek、ローカルLLM、OpenRouter、Gemini）を
 統一的に管理・切り替えるための設定システム
 """
 
@@ -22,7 +22,8 @@ class LLMProvider(Enum):
     DEEPSEEK = "deepseek"
     LOCAL = "local"
     OLLAMA = "ollama"
-    OPENROUTER = "openrouter"  # 追加
+    OPENROUTER = "openrouter"
+    GEMINI = "gemini"
 
 
 class LLMConfig:
@@ -49,7 +50,43 @@ class LLMConfig:
             return default_config
         
         with open(self.config_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            config = json.load(f)
+            
+        # 既存の設定にGeminiがない場合は追加
+        if "gemini" not in config.get("providers", {}):
+            config["providers"]["gemini"] = self._get_default_gemini_config()
+            self._save_config(config)
+            
+        return config
+    
+    def _get_default_gemini_config(self) -> Dict[str, Any]:
+        """Geminiのデフォルト設定を取得"""
+        return {
+            "api_key": "",
+            "model": "gemini-1.5-pro",
+            "base_url": "https://generativelanguage.googleapis.com/v1beta",
+            "temperature": 0.0,
+            "max_tokens": 8192,
+            "timeout": 60,
+            "safety_settings": [
+                {
+                    "category": "HARM_CATEGORY_HARASSMENT",
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                },
+                {
+                    "category": "HARM_CATEGORY_HATE_SPEECH",
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                },
+                {
+                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                },
+                {
+                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                }
+            ]
+        }
     
     def _create_default_config(self) -> Dict[str, Any]:
         """デフォルト設定を作成"""
@@ -94,16 +131,17 @@ class LLMConfig:
                     "max_tokens": 4096,
                     "timeout": 120
                 },
-                "openrouter": {  # 追加
+                "openrouter": {
                     "api_key": "",
                     "model": "openrouter/horizon-beta",
                     "base_url": "https://openrouter.ai/api/v1",
                     "temperature": 0.0,
                     "max_tokens": 4096,
                     "timeout": 60,
-                    "site_url": "",  # オプション: あなたのサイトURL
-                    "site_name": ""  # オプション: あなたのサイト名
-                }
+                    "site_url": "",
+                    "site_name": ""
+                },
+                "gemini": self._get_default_gemini_config()  # 追加
             },
             "retry_config": {
                 "max_retries": 3,
@@ -211,7 +249,6 @@ class OpenAIClient(BaseLLMClient):
             self.client.models.list()
             return True
         except Exception as e:
-            # より詳細なエラー情報を保存
             import openai
             if isinstance(e, openai.AuthenticationError):
                 raise Exception(f"認証エラー: APIキーが無効です - {str(e)}")
@@ -237,11 +274,9 @@ class ClaudeClient(BaseLLMClient):
     def chat_completion(self, messages: List[Dict[str, str]], **kwargs) -> str:
         """Claude APIでチャット補完を実行"""
         try:
-            # ClaudeのメッセージフォーマットにFN換
             claude_messages = []
             for msg in messages:
                 if msg["role"] == "system":
-                    # Claudeではシステムメッセージを最初のユーザーメッセージに含める
                     if claude_messages and claude_messages[0]["role"] == "user":
                         claude_messages[0]["content"] = msg["content"] + "\n\n" + claude_messages[0]["content"]
                     else:
@@ -262,11 +297,9 @@ class ClaudeClient(BaseLLMClient):
     def validate_connection(self) -> bool:
         """API接続を検証"""
         try:
-            # 簡単なテストメッセージを送信
             self.chat_completion([{"role": "user", "content": "Hi"}])
             return True
         except Exception as e:
-            # より詳細なエラー情報を提供
             import anthropic
             if hasattr(anthropic, 'AuthenticationError') and isinstance(e, anthropic.AuthenticationError):
                 raise Exception(f"認証エラー: APIキーが無効です - {str(e)}")
@@ -283,7 +316,6 @@ class DeepSeekClient(BaseLLMClient):
     
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        # DeepSeekはOpenAI互換APIを使用
         import openai
         self.client = openai.OpenAI(
             api_key=config.get("api_key"),
@@ -310,7 +342,6 @@ class DeepSeekClient(BaseLLMClient):
             self.client.models.list()
             return True
         except Exception as e:
-            # DeepSeekもOpenAI互換なので同様のエラー処理
             import openai
             if hasattr(openai, 'AuthenticationError') and isinstance(e, openai.AuthenticationError):
                 raise Exception(f"認証エラー: APIキーが無効です - {str(e)}")
@@ -327,10 +358,8 @@ class OpenRouterClient(BaseLLMClient):
     
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        # OpenRouterはOpenAI互換APIを使用
         import openai
         
-        # ヘッダーを設定
         default_headers = {
             "HTTP-Referer": config.get("site_url", ""),
             "X-Title": config.get("site_name", "")
@@ -359,7 +388,6 @@ class OpenRouterClient(BaseLLMClient):
     def validate_connection(self) -> bool:
         """API接続を検証"""
         try:
-            # OpenRouterではモデルリストの取得ではなく、簡単なテストメッセージで検証
             self.chat_completion([{"role": "user", "content": "Hello"}])
             return True
         except Exception as e:
@@ -374,6 +402,74 @@ class OpenRouterClient(BaseLLMClient):
                 raise Exception(f"OpenRouter API エラー: {type(e).__name__} - {str(e)}")
 
 
+class GeminiClient(BaseLLMClient):
+    """Google Gemini API クライアント"""
+    
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config)
+        try:
+            import google.generativeai as genai
+            
+            genai.configure(api_key=config.get("api_key"))
+            self.model = genai.GenerativeModel(
+                model_name=config.get("model", "gemini-1.5-pro"),
+                generation_config={
+                    "temperature": config.get("temperature", 0.0),
+                    "max_output_tokens": config.get("max_tokens", 8192),
+                },
+                safety_settings=config.get("safety_settings", [])
+            )
+            self.genai = genai
+        except ImportError:
+            raise Exception("google-generativeai パッケージがインストールされていません。'pip install google-generativeai' を実行してください。")
+    
+    def chat_completion(self, messages: List[Dict[str, str]], **kwargs) -> str:
+        """Gemini APIでチャット補完を実行"""
+        try:
+            # メッセージ履歴を構築
+            chat = self.model.start_chat(history=[])
+            
+            # システムメッセージを最初のユーザーメッセージに結合
+            system_content = ""
+            user_messages = []
+            
+            for msg in messages:
+                if msg["role"] == "system":
+                    system_content = msg["content"]
+                elif msg["role"] == "user":
+                    user_messages.append(msg["content"])
+                elif msg["role"] == "assistant":
+                    # アシスタントメッセージは履歴に追加（必要な場合）
+                    pass
+            
+            # 最後のユーザーメッセージに対して応答
+            if user_messages:
+                final_message = user_messages[-1]
+                if system_content:
+                    final_message = f"{system_content}\n\n{final_message}"
+                
+                response = chat.send_message(final_message)
+                return response.text
+            
+            return ""
+            
+        except Exception as e:
+            raise Exception(f"Gemini API error: {str(e)}")
+    
+    def validate_connection(self) -> bool:
+        """API接続を検証"""
+        try:
+            response = self.model.generate_content("Hello")
+            return True
+        except Exception as e:
+            if "API key" in str(e) or "API_KEY" in str(e):
+                raise Exception(f"認証エラー: APIキーが無効です - {str(e)}")
+            elif "quota" in str(e).lower():
+                raise Exception(f"レート制限: API利用制限に達しています - {str(e)}")
+            else:
+                raise Exception(f"Gemini API エラー: {type(e).__name__} - {str(e)}")
+
+
 class LocalLLMClient(BaseLLMClient):
     """ローカルLLM (Ollama等) クライアント"""
     
@@ -385,7 +481,6 @@ class LocalLLMClient(BaseLLMClient):
     def chat_completion(self, messages: List[Dict[str, str]], **kwargs) -> str:
         """ローカルLLMでチャット補完を実行"""
         try:
-            # Ollama API形式
             url = f"{self.base_url}/api/chat"
             payload = {
                 "model": self.model,
@@ -414,7 +509,6 @@ class LocalLLMClient(BaseLLMClient):
         try:
             response = requests.get(f"{self.base_url}/api/tags", timeout=5)
             if response.status_code == 200:
-                # モデルが存在するか確認
                 models = response.json().get("models", [])
                 model_names = [m.get("name", "") for m in models]
                 if self.model not in model_names:
@@ -429,7 +523,7 @@ class LocalLLMClient(BaseLLMClient):
             raise Exception(f"Ollamaサービスへの接続がタイムアウトしました")
         except Exception as e:
             if "モデル" in str(e):
-                raise  # モデルエラーはそのまま上げる
+                raise
             raise Exception(f"ローカルLLM接続エラー: {type(e).__name__} - {str(e)}")
 
 
@@ -447,8 +541,10 @@ class LLMClientFactory:
             return DeepSeekClient(config)
         elif provider in [LLMProvider.LOCAL.value, LLMProvider.OLLAMA.value]:
             return LocalLLMClient(config)
-        elif provider == LLMProvider.OPENROUTER.value:  # 追加
+        elif provider == LLMProvider.OPENROUTER.value:
             return OpenRouterClient(config)
+        elif provider == LLMProvider.GEMINI.value:  # 追加
+            return GeminiClient(config)
         else:
             raise ValueError(f"Unsupported provider: {provider}")
 
