@@ -1,5 +1,5 @@
 #src/report/generate_report.py
-# !/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 フェーズ7: 脆弱性解析結果のHTMLレポート生成
@@ -8,7 +8,8 @@
     --vulnerabilities <ta_vulnerabilities.json> \
     --phase12 <ta_phase12.json> \
     --project-name <project_name> \
-    --output <report.html>
+    --output <report.html> \
+    [--sinks <ta_sinks.json>]
 """
 
 import json
@@ -263,7 +264,7 @@ def format_vulnerability(vuln: dict, idx: int, chat_hist: dict) -> str:
     if chat_hist and key in chat_hist:
         parts.append(format_chat_history(chat_hist[key]))
 
-        # Judge/Refuter meta (Phase 6 で vulnerability.meta に格納されている想定)
+    # Judge/Refuter meta (Phase 6 で vulnerability.meta に格納されている想定)
     meta = vuln.get("meta", {})
     judge = meta.get("judge")
     refuter = meta.get("refuter")
@@ -326,9 +327,9 @@ def format_inline_findings(items: list[dict]) -> str:
 
 
 # -----------------------------------------------------------------------------
-# 5) レポート生成本体
+# 5) レポート生成本体（トークン追跡対応版）
 # -----------------------------------------------------------------------------
-def generate_report(vuln_data: dict, phase12: dict, project: str, chat_hist: dict) -> str:
+def generate_report(vuln_data: dict, phase12: dict, sinks_data: dict, project: str, chat_hist: dict) -> str:
     tpl = load_template()
     now = datetime.now().strftime("%Y年%m月%d日 %H:%M:%S")
     total   = vuln_data.get("total_flows_analyzed",0)
@@ -337,38 +338,100 @@ def generate_report(vuln_data: dict, phase12: dict, project: str, chat_hist: dic
     high    = sum(1 for v in vulns if extract_severity(v.get("vulnerability",""))=="high")
     funcs   = len(phase12.get("user_defined_functions",[]))
     
-    # トークン使用量を取得
+    # トークン使用量を取得（両フェーズ分）
     statistics = vuln_data.get("statistics", {})
-    token_usage = statistics.get("token_usage", {})
+    taint_token_usage = statistics.get("token_usage", {})
+    sink_token_usage = sinks_data.get("token_usage", {}) if sinks_data else {}
     
-    # トークン使用量のHTML（シンプル版）
+    # トークン使用量のHTML（詳細版）
     token_html = ""
-    if token_usage:
-        total_tokens = token_usage.get("total_tokens", 0)
-        prompt_tokens = token_usage.get("total_prompt_tokens", 0)
-        completion_tokens = token_usage.get("total_completion_tokens", 0)
-        api_calls = token_usage.get("api_calls", 0)
+    if taint_token_usage or sink_token_usage:
+        # 各フェーズの統計
+        sink_total = sink_token_usage.get("total_tokens", 0)
+        sink_prompt = sink_token_usage.get("total_prompt_tokens", 0)
+        sink_completion = sink_token_usage.get("total_completion_tokens", 0)
+        sink_calls = sink_token_usage.get("api_calls", 0)
+        
+        taint_total = taint_token_usage.get("total_tokens", 0)
+        taint_prompt = taint_token_usage.get("total_prompt_tokens", 0)
+        taint_completion = taint_token_usage.get("total_completion_tokens", 0)
+        taint_calls = taint_token_usage.get("api_calls", 0)
+        
+        # 合計
+        total_tokens = sink_total + taint_total
+        total_prompt = sink_prompt + taint_prompt
+        total_completion = sink_completion + taint_completion
+        total_calls = sink_calls + taint_calls
         
         token_html = f'''
         <div class="token-usage">
             <h3>📊 トークン使用量</h3>
-            <div class="token-stats">
-                <div class="token-stat">
-                    <span class="token-label">総トークン数</span>
-                    <span class="token-value">{total_tokens:,}</span>
+            
+            <div class="token-phase">
+                <h4>🔍 Sink特定フェーズ</h4>
+                <div class="token-stats">
+                    <div class="token-stat">
+                        <span class="token-label">API呼び出し</span>
+                        <span class="token-value">{sink_calls:,}</span>
+                    </div>
+                    <div class="token-stat">
+                        <span class="token-label">総トークン数</span>
+                        <span class="token-value">{sink_total:,}</span>
+                    </div>
+                    <div class="token-stat">
+                        <span class="token-label">入力トークン</span>
+                        <span class="token-value">{sink_prompt:,}</span>
+                    </div>
+                    <div class="token-stat">
+                        <span class="token-label">出力トークン</span>
+                        <span class="token-value">{sink_completion:,}</span>
+                    </div>
                 </div>
-                <div class="token-stat">
-                    <span class="token-label">入力トークン</span>
-                    <span class="token-value">{prompt_tokens:,}</span>
+            </div>
+            
+            <div class="token-phase">
+                <h4>🔐 テイント解析フェーズ</h4>
+                <div class="token-stats">
+                    <div class="token-stat">
+                        <span class="token-label">API呼び出し</span>
+                        <span class="token-value">{taint_calls:,}</span>
+                    </div>
+                    <div class="token-stat">
+                        <span class="token-label">総トークン数</span>
+                        <span class="token-value">{taint_total:,}</span>
+                    </div>
+                    <div class="token-stat">
+                        <span class="token-label">入力トークン</span>
+                        <span class="token-value">{taint_prompt:,}</span>
+                    </div>
+                    <div class="token-stat">
+                        <span class="token-label">出力トークン</span>
+                        <span class="token-value">{taint_completion:,}</span>
+                    </div>
                 </div>
-                <div class="token-stat">
-                    <span class="token-label">出力トークン</span>
-                    <span class="token-value">{completion_tokens:,}</span>
+            </div>
+            
+            <div class="token-phase total">
+                <h4>📈 合計</h4>
+                <div class="token-stats">
+                    <div class="token-stat">
+                        <span class="token-label">総API呼び出し</span>
+                        <span class="token-value">{total_calls:,}</span>
+                    </div>
+                    <div class="token-stat">
+                        <span class="token-label">総トークン数</span>
+                        <span class="token-value">{total_tokens:,}</span>
+                    </div>
+                    <div class="token-stat">
+                        <span class="token-label">総入力トークン</span>
+                        <span class="token-value">{total_prompt:,}</span>
+                    </div>
+                    <div class="token-stat">
+                        <span class="token-label">総出力トークン</span>
+                        <span class="token-value">{total_completion:,}</span>
+                    </div>
                 </div>
-                <div class="token-stat">
-                    <span class="token-label">API呼び出し回数</span>
-                    <span class="token-value">{api_calls:,}</span>
-                </div>
+                {f'<p style="text-align: center; margin-top: 1rem; color: #7f8c8d;">平均トークン数/呼び出し: {total_tokens / max(1, total_calls):.1f}</p>' if total_calls > 0 else ''}
             </div>
         </div>
         '''
@@ -389,8 +452,35 @@ def generate_report(vuln_data: dict, phase12: dict, project: str, chat_hist: dic
             body += format_vulnerability(v, i, chat_hist)
     
     # HTMLテンプレートのプレースホルダーを置換
-    # テンプレートに {token_usage_html} を追加する必要があります
-    return tpl.replace("{token_usage_html}", token_html).format(
+    # デバッグ: トークンHTMLが生成されているか確認
+    if token_html:
+        print(f"[DEBUG] Token HTML generated: {len(token_html)} characters")
+        print(f"[DEBUG] Token usage data - Sink: {sink_calls} calls, Taint: {taint_calls} calls")
+    
+    # 2段階で置換を行う
+    html_with_token = tpl.replace("{token_usage_html}", token_html)
+    
+    # デバッグ: 置換が成功したか確認
+    if "{token_usage_html}" in tpl and token_html and "{token_usage_html}" not in html_with_token:
+        print("[DEBUG] Token usage HTML placeholder replaced successfully")
+    elif "{token_usage_html}" not in tpl:
+        print("[WARN] {token_usage_html} placeholder not found in template!")
+        # 代替案: 脆弱性セクションの後に挿入
+        vulnerabilities_marker = "</section>"
+        vulnerabilities_end = html_with_token.find("🚨 検出された脆弱性")
+        if vulnerabilities_end != -1:
+            # 脆弱性セクションの終了を探す
+            section_end = html_with_token.find("</section>", vulnerabilities_end)
+            if section_end != -1:
+                section_end += len("</section>")
+                html_with_token = (
+                    html_with_token[:section_end] + 
+                    "\n" + token_html + "\n" + 
+                    html_with_token[section_end:]
+                )
+                print("[DEBUG] Token usage HTML inserted after vulnerabilities section")
+    
+    return html_with_token.format(
         project_name    = html.escape(project),
         timestamp       = now,
         total_flows     = total,
@@ -408,6 +498,7 @@ def main():
     p = argparse.ArgumentParser(description="脆弱性解析結果のHTMLレポート生成")
     p.add_argument("--vulnerabilities", required=True, help="フェーズ6の脆弱性JSON")
     p.add_argument("--phase12", required=True, help="フェーズ1-2の結果JSON")
+    p.add_argument("--sinks", help="フェーズ3のシンク結果JSON（トークン統計用）")
     p.add_argument("--project-name", required=True, help="プロジェクト名")
     p.add_argument("--output", required=True, help="出力HTMLファイル")
     p.add_argument("--debug", action="store_true", help="デバッグ情報を表示")
@@ -415,6 +506,12 @@ def main():
 
     vuln_data   = json.loads(Path(args.vulnerabilities).read_text("utf-8"))
     phase12_data= json.loads(Path(args.phase12).read_text("utf-8"))
+    
+    # Sinksデータを読み込み（トークン統計を含む可能性がある）
+    sinks_data = None
+    if args.sinks and Path(args.sinks).exists():
+        sinks_data = json.loads(Path(args.sinks).read_text("utf-8"))
+    
     log_path    = Path(args.vulnerabilities).parent / "taint_analysis_log.txt"
     
     if args.debug:
@@ -428,7 +525,7 @@ def main():
         for chain_name in chat_hist:
             print(f"[DEBUG] Chain: {chain_name}")
 
-    html_out = generate_report(vuln_data, phase12_data, args.project_name, chat_hist)
+    html_out = generate_report(vuln_data, phase12_data, sinks_data, args.project_name, chat_hist)
     out_path = Path(args.output)
     out_path.parent.mkdir(exist_ok=True, parents=True)
     out_path.write_text(html_out, encoding="utf-8")

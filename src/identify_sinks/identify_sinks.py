@@ -3,7 +3,7 @@
 # -*- coding: utf-8 -*-
 """
 フェーズ3: フェーズ1-2の結果を読み込んで、呼び出されている外部 API だけをLLMに問い、シンク候補をJSON出力する
-RAG対応版
+RAG対応版（トークン追跡機能付き）
 """
 
 import sys
@@ -11,7 +11,7 @@ import json
 import re
 import argparse
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # その後でrule_engineをインポート
@@ -71,6 +71,14 @@ from llm_settings.config_manager import UnifiedLLMClient
 # RAGシステムをインポート
 from rag.rag_client import TEERAGClient
 
+# トークン追跡クライアントをインポート
+try:
+    from analyze_vulnerabilities.token_tracking_client import TokenTrackingClient
+    TOKEN_TRACKING_AVAILABLE = True
+except ImportError:
+    TOKEN_TRACKING_AVAILABLE = False
+    print("[WARN] TokenTrackingClient not available. Token tracking disabled.")
+
 # グローバルRAGクライアント
 _rag_client = None
 
@@ -94,9 +102,14 @@ def init_rag_client():
     return _rag_client
 
 
-def init_client():
+def init_client(track_tokens: bool = False):
     """新しいLLM設定システムを使用したクライアント初期化"""
-    return UnifiedLLMClient()
+    base_client = UnifiedLLMClient()
+    
+    if track_tokens and TOKEN_TRACKING_AVAILABLE:
+        return TokenTrackingClient(base_client)
+    else:
+        return base_client
 
 
 def extract_function_code(func):
@@ -129,13 +142,19 @@ def extract_called_functions(code: str) -> list[str]:
     return list(set(re.findall(pattern, code)))
 
 
-def ask_llm(client: UnifiedLLMClient, prompt: str) -> str:
+def ask_llm(client, prompt: str) -> str:
     """新しいLLM設定システムを使用したLLM呼び出し"""
     messages = [{"role": "user", "content": prompt}]
-    return client.chat_completion(messages)
+    
+    # TokenTrackingClientの場合はchat_completion_with_tokensを使用
+    if hasattr(client, 'chat_completion_with_tokens'):
+        response, _ = client.chat_completion_with_tokens(messages)
+        return response
+    else:
+        return client.chat_completion(messages)
 
 
-def analyze_external_function_as_sink(client: UnifiedLLMClient, func_name: str, log_file: Path, use_rag: bool = True) -> list[dict]:
+def analyze_external_function_as_sink(client, func_name: str, log_file: Path, use_rag: bool = True) -> list[dict]:
     # RAGを使用する場合、関連情報を取得
     rag_context = ""
     if use_rag and _rag_client is not None:
@@ -190,13 +209,33 @@ def analyze_external_function_as_sink(client: UnifiedLLMClient, func_name: str, 
     return sinks
 
 
+def format_token_stats(stats: Dict) -> str:
+    """トークン統計情報をフォーマット"""
+    lines = [
+        "\n=== Sink特定フェーズ トークン使用量 ===",
+        f"総API呼び出し回数: {stats['api_calls']:,}",
+        f"総トークン数: {stats['total_tokens']:,}",
+        f"  - 入力トークン: {stats['total_prompt_tokens']:,}",
+        f"  - 出力トークン: {stats['total_completion_tokens']:,}",
+        "",
+        f"平均トークン数/呼び出し: {stats['total_tokens'] / max(1, stats['api_calls']):.1f}",
+        "======================================"
+    ]
+    
+    return "\n".join(lines)
+
+
 def main():
     parser = argparse.ArgumentParser(description="フェーズ3: シンク特定 (RAG対応)")
     parser.add_argument("-i", "--input", required=True, help="フェーズ1-2 JSON 結果ファイル")
     parser.add_argument("-o", "--output", required=True, help="出力 ta_sinks.json パス")
     parser.add_argument("--provider", help="使用するLLMプロバイダー (openai, claude, deepseek, local)")
     parser.add_argument("--no-rag", action="store_true", help="RAGを使用しない")
+    parser.add_argument("--no-track-tokens", action="store_true", help="トークン使用量追跡を無効化")
     args = parser.parse_args()
+    
+    # トークン追跡はデフォルトで有効
+    track_tokens = not args.no_track_tokens
     
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -210,8 +249,8 @@ def main():
         print("[INFO] RAG mode enabled. Initializing RAG system...")
         init_rag_client()
     
-    # 新しいLLMクライアントを初期化
-    client = init_client()
+    # 新しいLLMクライアントを初期化（トークン追跡対応）
+    client = init_client(track_tokens=track_tokens)
 
     #Rule EngineのPatternMatcherを初期化
     matcher = PatternMatcher()
@@ -297,8 +336,22 @@ def main():
             seen.add(key)
             unique.append(s)
     
+    # トークン使用量を取得して結果に含める
+    token_stats = None
+    if track_tokens and hasattr(client, 'get_stats'):
+        token_stats = client.get_stats()
+        print(format_token_stats(token_stats))
+    
+    result = {
+        "sinks": unique
+    }
+    
+    # トークン統計情報を追加
+    if token_stats:
+        result["token_usage"] = token_stats
+    
     out_path.write_text(
-        json.dumps({"sinks": unique}, ensure_ascii=False, indent=2),
+        json.dumps(result, ensure_ascii=False, indent=2),
         encoding="utf-8"
     )
     print(f"結果を {out_path} に保存しました")

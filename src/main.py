@@ -106,7 +106,7 @@ if DEVKIT:
 
 # ------------------------------------------------------------
 
-def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool, use_rag: bool, skip_clean: bool):
+def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool, use_rag: bool, skip_clean: bool, track_tokens: bool):
     proj = proj.resolve()
     if proj.name in skip:
         print(f"[INFO] {proj.name}: skipped by --skip")
@@ -122,6 +122,11 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool, use_
         print("[INFO] RAG mode is enabled for this analysis")
     else:
         print("[INFO] RAG mode is disabled for this analysis")
+    
+    if track_tokens:
+        print("[INFO] Token tracking is enabled (default)")
+    else:
+        print("[INFO] Token tracking is disabled by --no-track-tokens")
 
     # 解析前にクリーンアップを実行（オプションで無効化可能）
     if not skip_clean:
@@ -141,11 +146,13 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool, use_
     }, indent=2, ensure_ascii=False))
     print(f"[phase1-2] → {phase12}")
 
-    # Step3 (LLM 解析フェーズ) - RAGオプションを追加
+    # Step3 (LLM 解析フェーズ) - RAGオプションとトークン追跡を追加
     sinks = res_dir / f"{ta_dir.name}_sinks.json"
     identify_cmd = [sys.executable, str(identify_py), "-i", str(phase12), "-o", str(sinks)]
     if not use_rag:
         identify_cmd.append("--no-rag")
+    if not track_tokens:
+        identify_cmd.append("--no-track-tokens")
     run(identify_cmd, ta_dir, v)
     print(f"[phase3 ] → {sinks}\n")
 
@@ -209,21 +216,25 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool, use_
                 "--flows", str(candidate_flows),
                 "--phase12", str(phase12),
                 "--output", str(vulnerabilities),
-                "--generate-summary",
-                "--track-tokens"]
+                "--generate-summary"]
     if not use_rag:
         taint_cmd.append("--no-rag")
+    if track_tokens:
+        taint_cmd.append("--track-tokens")
     run(taint_cmd, ta_dir, v)
 
     # Phase7: HTMLレポート生成
     report_py = Path(__file__).parent / "report" / "generate_report.py"
     report_html = res_dir / f"{ta_dir.name}_vulnerability_report.html"
-    run([sys.executable, str(report_py),
+    report_cmd = [sys.executable, str(report_py),
          "--vulnerabilities", str(vulnerabilities),
          "--phase12", str(phase12),
          "--project-name", proj.name,
-         "--output", str(report_html)],
-        ta_dir, v)
+         "--output", str(report_html)]
+    report_cmd.extend(["--sinks", str(sinks)])
+    if v:
+        print(f"[DEBUG] Report command: {' '.join(report_cmd)}")
+    run(report_cmd, ta_dir, v)
     print(f"[phase7 ] → {report_html}\n")
 
 # ---------------------------------------------------------------------------
@@ -242,6 +253,8 @@ if __name__ == "__main__":
                     help="Skip cleaning dependency files before analysis")
     ap.add_argument("--clean-all", action="store_true",
                     help="Clean all .d and .o files (not just stale ones)")
+    ap.add_argument("--no-track-tokens", action="store_true",
+                    help="Disable token usage tracking")
     args = ap.parse_args()
 
     identify_py = Path(__file__).resolve().parent / "identify_sinks" / "identify_sinks.py"
@@ -264,4 +277,6 @@ if __name__ == "__main__":
         print("[INFO] Cleanup completed")
 
     for proj in args.project:
-        process_project(proj, identify_py, skip, args.verbose, args.rag, args.skip_clean)
+        # トークン追跡はデフォルトで有効（--no-track-tokensで無効化）
+        track_tokens = not args.no_track_tokens
+        process_project(proj, identify_py, skip, args.verbose, args.rag, args.skip_clean, track_tokens)
