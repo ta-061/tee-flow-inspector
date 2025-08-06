@@ -267,7 +267,7 @@ class TaintAnalyzer:
                 )
     
     def _ask_llm(self, max_retries: int = 3) -> str:
-        """LLMに問い合わせ"""
+        """LLMに問い合わせ（トークン追跡対応版）"""
         messages = self.conversation_manager.get_history()
         
         # トークン数をチェック（警告のみ）
@@ -277,7 +277,13 @@ class TaintAnalyzer:
         
         for attempt in range(max_retries):
             try:
-                response = self.client.chat_completion(messages)
+                # トークン追跡クライアントを使用している場合
+                if hasattr(self.client, 'chat_completion_with_tokens'):
+                    response, token_usage = self.client.chat_completion_with_tokens(messages)
+                    # 個別のAPI呼び出しログは出力しない
+                else:
+                    # 通常のクライアント
+                    response = self.client.chat_completion(messages)
                 
                 if not response or response.strip() == "":
                     raise ValueError("Empty response from LLM")

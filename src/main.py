@@ -209,7 +209,8 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool, use_
                 "--flows", str(candidate_flows),
                 "--phase12", str(phase12),
                 "--output", str(vulnerabilities),
-                "--generate-summary"]
+                "--generate-summary",
+                "--track-tokens"]
     if not use_rag:
         taint_cmd.append("--no-rag")
     run(taint_cmd, ta_dir, v)

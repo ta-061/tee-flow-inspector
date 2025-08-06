@@ -336,7 +336,43 @@ def generate_report(vuln_data: dict, phase12: dict, project: str, chat_hist: dic
     count   = len(vulns)
     high    = sum(1 for v in vulns if extract_severity(v.get("vulnerability",""))=="high")
     funcs   = len(phase12.get("user_defined_functions",[]))
-
+    
+    # トークン使用量を取得
+    statistics = vuln_data.get("statistics", {})
+    token_usage = statistics.get("token_usage", {})
+    
+    # トークン使用量のHTML（シンプル版）
+    token_html = ""
+    if token_usage:
+        total_tokens = token_usage.get("total_tokens", 0)
+        prompt_tokens = token_usage.get("total_prompt_tokens", 0)
+        completion_tokens = token_usage.get("total_completion_tokens", 0)
+        api_calls = token_usage.get("api_calls", 0)
+        
+        token_html = f'''
+        <div class="token-usage">
+            <h3>📊 トークン使用量</h3>
+            <div class="token-stats">
+                <div class="token-stat">
+                    <span class="token-label">総トークン数</span>
+                    <span class="token-value">{total_tokens:,}</span>
+                </div>
+                <div class="token-stat">
+                    <span class="token-label">入力トークン</span>
+                    <span class="token-value">{prompt_tokens:,}</span>
+                </div>
+                <div class="token-stat">
+                    <span class="token-label">出力トークン</span>
+                    <span class="token-value">{completion_tokens:,}</span>
+                </div>
+                <div class="token-stat">
+                    <span class="token-label">API呼び出し回数</span>
+                    <span class="token-value">{api_calls:,}</span>
+                </div>
+            </div>
+        </div>
+        '''
+    
     inline_items = vuln_data.get("inline_findings", [])
     inline_html  = format_inline_findings(inline_items)
     
@@ -352,7 +388,9 @@ def generate_report(vuln_data: dict, phase12: dict, project: str, chat_hist: dic
         for i, v in enumerate(vulns):
             body += format_vulnerability(v, i, chat_hist)
     
-    return tpl.format(
+    # HTMLテンプレートのプレースホルダーを置換
+    # テンプレートに {token_usage_html} を追加する必要があります
+    return tpl.replace("{token_usage_html}", token_html).format(
         project_name    = html.escape(project),
         timestamp       = now,
         total_flows     = total,
