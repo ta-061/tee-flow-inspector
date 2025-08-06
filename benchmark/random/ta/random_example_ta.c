@@ -29,7 +29,8 @@
 #include <tee_internal_api_extensions.h>
 
 #include <random_ta.h>
-
+#include <string.h>
+void test(char *dest, char *src);
 TEE_Result TA_CreateEntryPoint(void)
 {
 	return TEE_SUCCESS;
@@ -60,6 +61,9 @@ void TA_CloseSessionEntryPoint(void __maybe_unused *sess_ctx)
 {
 	(void)&sess_ctx;
 }
+void test(char *dest, char *src){
+	TEE_MemMove(dest, src, strlen(src));
+}
 
 static TEE_Result random_number_generate(uint32_t param_types,
 	TEE_Param params[4])
@@ -89,11 +93,12 @@ static TEE_Result random_number_generate(uint32_t param_types,
 	 */
 	TEE_GenerateRandom(buf, params[0].memref.size);
 	TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size);
-	char str[1024] = {0};
-	for(uint32_t i = 0; i < params[0].memref.size; i++) {
-		str[i] = params[2].memref.buffer[i];
-	}
 	TEE_Free(buf);
+
+	char key[] = "my_secret_key";
+	char *str = TEE_Malloc(strlen(key)+1, 0);
+	test(str, key);
+	test(params[1].memref.buffer, key);
 
 	return TEE_SUCCESS;
 }
