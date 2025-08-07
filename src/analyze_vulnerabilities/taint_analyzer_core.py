@@ -180,6 +180,17 @@ class TaintAnalyzer:
         """単一関数の解析（改善版）"""
         self.stats["total_functions_analyzed"] += 1
         
+        # 現在の関数のファイル情報を取得
+        current_func_info = None
+        if func_name in self.code_extractor.user_functions:
+            current_func_info = self.code_extractor.user_functions[func_name]
+        
+        # vdを拡張して現在の関数情報を含める
+        extended_vd = vd.copy()
+        if current_func_info:
+            extended_vd['current_file'] = current_func_info['file']
+            extended_vd['current_line'] = current_func_info['line']
+        
         # コードを取得
         is_final = (position == len(chain) - 1)
         if is_final and func_name == vd["sink"]:
@@ -212,8 +223,8 @@ class TaintAnalyzer:
             "rag_used": self.use_rag and is_rag_available()
         })
         
-        # 解析結果をパース
-        self._parse_function_analysis(response, func_name, position, chain, vd, results)
+        # 解析結果をパース（extended_vdを使用）
+        self._parse_function_analysis(response, func_name, position, chain, extended_vd, results)
         
     def _generate_prompt(
         self,

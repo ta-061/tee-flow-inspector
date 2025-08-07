@@ -183,8 +183,8 @@ class CodeExtractor:
     
     def _clean_code_for_llm(self, code: str) -> str:
         """LLM解析用にコードを整形"""
-        # コメント除去（ただし重要な情報は保持）
-        # 単一行コメント（セキュリティ関連は保持）
+        # コメント除去
+        # 単一行コメント
         def replace_comment(match):
             comment = match.group(0)
             if any(keyword in comment.lower() for keyword in ["security", "vulnerability", "todo", "fixme", "hack"]):
