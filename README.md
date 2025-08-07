@@ -34,6 +34,34 @@ python3 ./src/main.py \
 
   -p benchmark/darknetz \
 
+mkdir -p analysis_logs
+for results_dir in */ta/results; do
+  proj="${results_dir%%/*}"
+  src="$results_dir/taint_analysis_log.txt"
+  dst="analysis_logs/${proj}_analysis_log.txt"
+  if [ -f "$src" ]; then
+    cp "$src" "$dst"
+    echo "✔️  $dst を作成しました"
+  else
+    echo "⚠️  $src が見つかりません"
+  fi
+done
+
+mkdir -p ta_vulnerabilities
+for results_dir in */ta/results; do
+  proj="${results_dir%%/*}"
+  src="$results_dir/ta_vulnerabilities.json"
+  dst="ta_vulnerabilities/${proj}_vulnerabilities.json"
+  if [ -f "$src" ]; then
+    cp "$src" "$dst"
+    echo "✔️  $dst を作成しました"
+  else
+    echo "⚠️  $src が見つかりません"
+  fi
+done
+
+
+
 tee-flow-inspector % tree -I "optee_client|optee_os|results|benchmark|answers"
 .
 ├── Carent_Flow.md
