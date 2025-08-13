@@ -117,13 +117,12 @@ def parse_taint_log(path: Path, debug: bool = False) -> dict:
     while i < len(lines):
         line = lines[i]
         
-        # チェーンの開始を検出 (コロン直後にスペースの有無を問わずマッチ)
+        # チェーンの開始を検出
         if line.startswith("Analyzing chain:"):
             if current_chain and current_conversation:
                 conversations[current_chain] = current_conversation
                 if debug:
                     print(f"[DEBUG] Saved chain: {current_chain} with {len(current_conversation)} messages")
-            # コロン以降を取り出して余白を除去
             current_chain = line[len("Analyzing chain:"):].strip()
             current_conversation = []
             current_function = None
@@ -161,26 +160,22 @@ def parse_taint_log(path: Path, debug: bool = False) -> dict:
                 })
                 if debug:
                     print(f"[DEBUG] Added user message: {len(prompt_lines)} lines")
-            continue  # i is already incremented
+            continue
         
         # レスポンスの開始
         elif line == "### Response:":
             i += 1
             response_lines = []
-            # レスポンスの終了条件を改善
             while i < len(lines):
                 next_line = lines[i]
-                # 次のセクションの開始を検出
                 if (next_line.startswith("## Function") or 
                     next_line.startswith("Analyzing chain:") or
                     next_line.startswith("## Vulnerability Analysis") or
                     next_line.startswith("### Prompt:")):
                     break
-                # 空行も含める（レスポンス内の段落区切りのため）
                 response_lines.append(next_line)
                 i += 1
             
-            # 末尾の空行を除去
             while response_lines and not response_lines[-1].strip():
                 response_lines.pop()
             
@@ -192,7 +187,7 @@ def parse_taint_log(path: Path, debug: bool = False) -> dict:
                 })
                 if debug:
                     print(f"[DEBUG] Added assistant message: {len(response_lines)} lines")
-            continue  # i is already incremented
+            continue
         
         i += 1
     
@@ -210,7 +205,142 @@ def parse_taint_log(path: Path, debug: bool = False) -> dict:
     return conversations
 
 # -----------------------------------------------------------------------------
-# 4) 各脆弱性を HTML にフォーマット
+# 4) 追加機能: コード抜粋と推論タイムライン
+# -----------------------------------------------------------------------------
+def get_code_context(filepath: str, line: int, radius: int = 5) -> str:
+    """指定ファイルの指定行周辺のコードを取得"""
+    p = Path(filepath)
+    if not p.exists():
+        return f"<pre>// {html.escape(filepath)}:{line} (source not found)</pre>"
+    
+    try:
+        lines = p.read_text(encoding="utf-8").splitlines()
+        start = max(0, line - 1 - radius)
+        end = min(len(lines), line - 1 + radius + 1)
+        
+        buf = []
+        for i in range(start, end):
+            line_num = i + 1
+            prefix = ">>> " if line_num == line else "    "
+            buf.append(f"{line_num:>5}: {prefix}{html.escape(lines[i])}")
+        
+        return f'<div class="code-context"><pre>{"".join(buf)}</pre></div>'
+    except Exception as e:
+        return f"<pre>// Error reading {html.escape(filepath)}: {html.escape(str(e))}</pre>"
+
+def format_reasoning_timeline(reasoning_trace: list[dict]) -> str:
+    """推論タイムラインをHTMLで整形"""
+    if not reasoning_trace:
+        return ""
+    
+    rows = ['<div class="reasoning-timeline"><h4>🔍 推論タイムライン（ホップごとの根拠）</h4>']
+    
+    for step in reasoning_trace:
+        function = step.get("function", "unknown")
+        position = step.get("position_in_chain", "")
+        taint_state = step.get("taint_state", {})
+        security_obs = step.get("security_observations", [])
+        risk_indicators = step.get("risk_indicators", [])
+        
+        rows.append(f"<h5>関数: {html.escape(function)} (位置: {position})</h5>")
+        
+        # Taint state の情報
+        propagated = taint_state.get("propagated_values", [])
+        sanitizers = taint_state.get("applied_sanitizers", [])
+        reached_sinks = taint_state.get("reached_sinks", [])
+        
+        if propagated:
+            rows.append("<p><strong>伝播:</strong></p><ul>")
+            for p in propagated:
+                rows.append(f"<li>{html.escape(str(p))}</li>")
+            rows.append("</ul>")
+        
+        if sanitizers:
+            rows.append("<p><strong>サニタイザ:</strong></p><ul>")
+            for s in sanitizers:
+                rows.append(f"<li>{html.escape(str(s))}</li>")
+            rows.append("</ul>")
+        
+        if reached_sinks:
+            rows.append("<p><strong>到達したシンク:</strong></p><ul>")
+            for sink in reached_sinks:
+                rows.append(f"<li>{html.escape(str(sink))}</li>")
+            rows.append("</ul>")
+        
+        # セキュリティ観察
+        if security_obs:
+            rows.append("<p><strong>セキュリティ観察:</strong></p><ul>")
+            for obs in security_obs:
+                obs_type = obs.get("type", "")
+                observation = obs.get("observation", "")
+                location = obs.get("location", "")
+                rows.append(f"<li><em>{html.escape(obs_type)}</em>: {html.escape(observation)} @ {html.escape(location)}</li>")
+            rows.append("</ul>")
+        
+        # リスク指標
+        if risk_indicators:
+            rows.append("<p><strong>リスク指標:</strong></p><ul>")
+            for risk in risk_indicators:
+                rows.append(f"<li>{html.escape(str(risk))}</li>")
+            rows.append("</ul>")
+    
+    rows.append('</div>')
+    return "\n".join(rows)
+
+def format_cache_stats(statistics: dict, log_path: Path = None) -> str:
+    """キャッシュ統計をHTMLで整形"""
+    cache = statistics.get("cache", {})
+    
+    # ログからフォールバック
+    if not cache and log_path and log_path.exists():
+        log_text = log_path.read_text(encoding="utf-8")
+        m = re.search(
+            r"Cache Statistics.*?キャッシュヒット:\s*(\d+).*?キャッシュミス:\s*(\d+).*?ヒット率:\s*([0-9.]+)%",
+            log_text, re.S
+        )
+        if m:
+            cache = {
+                "hits": int(m.group(1)),
+                "misses": int(m.group(2)),
+                "hit_rate": f"{m.group(3)}%"
+            }
+    
+    if not cache:
+        return ""
+    
+    hits = cache.get("hits", 0)
+    misses = cache.get("misses", 0)
+    total_requests = hits + misses
+    hit_rate = cache.get("hit_rate", f"{(hits*100/total_requests if total_requests else 0):.1f}%")
+    cache_size = cache.get("cache_size", "–")
+    
+    return f'''
+    <div class="cache-usage">
+        <h3>🧠 接頭辞キャッシュ統計</h3>
+        <div class="token-stats">
+            <div class="token-stat">
+                <span class="token-label">キャッシュヒット</span>
+                <span class="token-value">{hits:,}</span>
+            </div>
+            <div class="token-stat">
+                <span class="token-label">キャッシュミス</span>
+                <span class="token-value">{misses:,}</span>
+            </div>
+            <div class="token-stat">
+                <span class="token-label">ヒット率</span>
+                <span class="token-value">{hit_rate}</span>
+            </div>
+            <div class="token-stat">
+                <span class="token-label">キャッシュサイズ</span>
+                <span class="token-value">{cache_size}</span>
+            </div>
+        </div>
+        {f'<p style="text-align: center; margin-top: 1rem; color: #7f8c8d;">リクエスト削減率: {(hits*100/total_requests if total_requests else 0):.1f}%</p>' if total_requests > 0 else ''}
+    </div>
+    '''
+
+# -----------------------------------------------------------------------------
+# 5) 各脆弱性を HTML にフォーマット（改善版）
 # -----------------------------------------------------------------------------
 def format_vulnerability(vuln: dict, idx: int, chat_hist: dict) -> str:
     vd = vuln["vd"]
@@ -243,6 +373,15 @@ def format_vulnerability(vuln: dict, idx: int, chat_hist: dict) -> str:
         f'<pre style="white-space: pre-wrap;">{html.escape(text)}</pre></div>'
     ]
     
+    # コード抜粋（シンク近傍）
+    parts.append('<h4>📝 コード抜粋（シンク近傍）</h4>')
+    parts.append(get_code_context(vd["file"], int(vd["line"]), radius=5))
+    
+    # 推論タイムライン
+    reasoning_trace = vuln.get("reasoning_trace", [])
+    if reasoning_trace:
+        parts.append(format_reasoning_timeline(reasoning_trace))
+    
     # テイント解析
     taint_analysis = vuln.get("taint_analysis", [])
     if taint_analysis:
@@ -264,7 +403,7 @@ def format_vulnerability(vuln: dict, idx: int, chat_hist: dict) -> str:
     if chat_hist and key in chat_hist:
         parts.append(format_chat_history(chat_hist[key]))
 
-    # Judge/Refuter meta (Phase 6 で vulnerability.meta に格納されている想定)
+    # Judge/Refuter meta
     meta = vuln.get("meta", {})
     judge = meta.get("judge")
     refuter = meta.get("refuter")
@@ -325,11 +464,10 @@ def format_inline_findings(items: list[dict]) -> str:
     rows.append('</tbody></table>')
     return "\n".join(rows)
 
-
 # -----------------------------------------------------------------------------
-# 5) レポート生成本体（トークン追跡対応版）
+# 6) レポート生成本体（改善版）
 # -----------------------------------------------------------------------------
-def generate_report(vuln_data: dict, phase12: dict, sinks_data: dict, project: str, chat_hist: dict) -> str:
+def generate_report(vuln_data: dict, phase12: dict, sinks_data: dict, project: str, chat_hist: dict, log_path: Path = None) -> str:
     tpl = load_template()
     now = datetime.now().strftime("%Y年%m月%d日 %H:%M:%S")
     total   = vuln_data.get("total_flows_analyzed",0)
@@ -390,7 +528,7 @@ def generate_report(vuln_data: dict, phase12: dict, sinks_data: dict, project: s
             </div>
             
             <div class="token-phase">
-                <h4>🔐 テイント解析フェーズ</h4>
+                <h4>🔍 テイント解析フェーズ</h4>
                 <div class="token-stats">
                     <div class="token-stat">
                         <span class="token-label">API呼び出し</span>
@@ -436,6 +574,9 @@ def generate_report(vuln_data: dict, phase12: dict, sinks_data: dict, project: s
         </div>
         '''
     
+    # キャッシュ統計のHTML
+    cache_html = format_cache_stats(statistics, log_path)
+    
     inline_items = vuln_data.get("inline_findings", [])
     inline_html  = format_inline_findings(inline_items)
     
@@ -452,35 +593,7 @@ def generate_report(vuln_data: dict, phase12: dict, sinks_data: dict, project: s
             body += format_vulnerability(v, i, chat_hist)
     
     # HTMLテンプレートのプレースホルダーを置換
-    # デバッグ: トークンHTMLが生成されているか確認
-    if token_html:
-        print(f"[DEBUG] Token HTML generated: {len(token_html)} characters")
-        print(f"[DEBUG] Token usage data - Sink: {sink_calls} calls, Taint: {taint_calls} calls")
-    
-    # 2段階で置換を行う
-    html_with_token = tpl.replace("{token_usage_html}", token_html)
-    
-    # デバッグ: 置換が成功したか確認
-    if "{token_usage_html}" in tpl and token_html and "{token_usage_html}" not in html_with_token:
-        print("[DEBUG] Token usage HTML placeholder replaced successfully")
-    elif "{token_usage_html}" not in tpl:
-        print("[WARN] {token_usage_html} placeholder not found in template!")
-        # 代替案: 脆弱性セクションの後に挿入
-        vulnerabilities_marker = "</section>"
-        vulnerabilities_end = html_with_token.find("🚨 検出された脆弱性")
-        if vulnerabilities_end != -1:
-            # 脆弱性セクションの終了を探す
-            section_end = html_with_token.find("</section>", vulnerabilities_end)
-            if section_end != -1:
-                section_end += len("</section>")
-                html_with_token = (
-                    html_with_token[:section_end] + 
-                    "\n" + token_html + "\n" + 
-                    html_with_token[section_end:]
-                )
-                print("[DEBUG] Token usage HTML inserted after vulnerabilities section")
-    
-    return html_with_token.format(
+    return tpl.format(
         project_name    = html.escape(project),
         timestamp       = now,
         total_flows     = total,
@@ -488,11 +601,13 @@ def generate_report(vuln_data: dict, phase12: dict, sinks_data: dict, project: s
         high_risk       = high,
         func_count      = funcs,
         vulnerabilities_html = body,
-        inline_findings_html = inline_html
+        inline_findings_html = inline_html,
+        token_usage_html = token_html,
+        cache_stats_html = cache_html
     )
 
 # -----------------------------------------------------------------------------
-# 6) CLI エントリポイント
+# 7) CLI エントリポイント
 # -----------------------------------------------------------------------------
 def main():
     p = argparse.ArgumentParser(description="脆弱性解析結果のHTMLレポート生成")
@@ -525,7 +640,7 @@ def main():
         for chain_name in chat_hist:
             print(f"[DEBUG] Chain: {chain_name}")
 
-    html_out = generate_report(vuln_data, phase12_data, sinks_data, args.project_name, chat_hist)
+    html_out = generate_report(vuln_data, phase12_data, sinks_data, args.project_name, chat_hist, log_path)
     out_path = Path(args.output)
     out_path.parent.mkdir(exist_ok=True, parents=True)
     out_path.write_text(html_out, encoding="utf-8")

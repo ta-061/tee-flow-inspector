@@ -148,7 +148,7 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool, use_
 
     # Step3 (LLM 解析フェーズ) - RAGオプションとトークン追跡を追加
     sinks = res_dir / f"{ta_dir.name}_sinks.json"
-    identify_cmd = [sys.executable, str(identify_py), "-i", str(phase12), "-o", str(sinks)]
+    identify_cmd = [sys.executable, str(identify_py), "-i", str(phase12), "-o", str(sinks), "--llm-only"]
     if not use_rag:
         identify_cmd.append("--no-rag")
     if not track_tokens:

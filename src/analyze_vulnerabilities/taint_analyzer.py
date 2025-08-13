@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 フェーズ6: LLMによるテイント解析と脆弱性検査（メインファイル）
+最適化版（チェイン接頭辞キャッシュ対応）
 """
 
 import sys
@@ -28,12 +29,6 @@ from analyze_vulnerabilities.utils import load_diting_rules_json, build_system_p
 # promptsモジュールも同様に
 from prompts import set_rag_enabled, is_rag_available
 
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-taint_analyzer.py のmain関数修正部分
-解析完了後にトークン使用量を表示
-"""
 
 def main():
     parser = argparse.ArgumentParser(description="フェーズ6: テイント解析と脆弱性検査")
@@ -47,10 +42,11 @@ def main():
     parser.add_argument("--no-rag", action="store_true", help="RAGを使用しない")
     parser.add_argument("--batch-size", type=int, default=100, help="ログのバッチサイズ")
     parser.add_argument("--track-tokens", action="store_true", help="トークン使用量を追跡")
+    parser.add_argument("--no-cache", action="store_true", help="接頭辞キャッシュを無効化（デバッグ用）")
 
     args = parser.parse_args()
     
-    # RAGの設定（既存のコード）
+    # RAGの設定
     use_rag = not args.no_rag
     if use_rag:
         print("[INFO] RAG mode enabled for taint analysis")
@@ -90,6 +86,12 @@ def main():
     
     print(f"使用中のLLMプロバイダー: {client.get_current_provider()}")
     
+    # キャッシュモードの表示
+    if args.no_cache:
+        print("[INFO] 接頭辞キャッシュは無効です（デバッグモード）")
+    else:
+        print("[INFO] 接頭辞キャッシュが有効です（最適化モード）")
+    
     # 入力データを読み込み
     flows_data = json.loads(Path(args.flows).read_text(encoding="utf-8"))
     phase12_data = json.loads(Path(args.phase12).read_text(encoding="utf-8"))
@@ -119,6 +121,12 @@ def main():
             use_rag=use_rag
         )
         
+        # キャッシュを無効化する場合の処理
+        if args.no_cache:
+            # キャッシュ機能を無効化（既存の非最適化版の動作にフォールバック）
+            analyzer.prefix_cache = None
+            analyzer.chain_tree = None
+        
         # 解析開始時刻を記録
         start_time = time.time()
         
@@ -131,6 +139,9 @@ def main():
         
         # 解析時間
         analysis_time = time.time() - start_time
+        
+        # TaintAnalyzer自体の統計を取得
+        analyzer_stats = analyzer.get_stats()
         
         # トークン使用量の統計を取得
         token_usage = None
@@ -148,6 +159,15 @@ def main():
             logger.writeln(f"入力トークン: {token_usage['total_prompt_tokens']:,}")
             logger.writeln(f"出力トークン: {token_usage['total_completion_tokens']:,}")
             logger.writeln(f"API呼び出し回数: {token_usage['api_calls']:,}")
+            
+            # キャッシュ統計もログに記録
+            if not args.no_cache and "cache_stats" in analyzer_stats:
+                logger.log_section("Cache Statistics", level=1)
+                cache_stats = analyzer_stats["cache_stats"]
+                logger.writeln(f"キャッシュヒット: {cache_stats['hits']}")
+                logger.writeln(f"キャッシュミス: {cache_stats['misses']}")
+                logger.writeln(f"ヒット率: {cache_stats['hit_rate']}")
+                logger.writeln(f"キャッシュされた接頭辞: {cache_stats['cached_prefixes']}")
         
         # 統計情報
         statistics = {
@@ -158,9 +178,17 @@ def main():
             "diting_rules_used": not args.no_diting_rules,
             "enhanced_prompts_used": not args.no_enhanced_prompts,
             "rag_enabled": use_rag and is_rag_available(),
-            "total_chains_analyzed": sum(len(flow.get("chains", [])) for flow in flows_data),
-            "functions_analyzed": sum(len(v["reasoning_trace"]) for v in vulnerabilities),
+            "cache_enabled": not args.no_cache,
+            "total_chains_analyzed": analyzer_stats.get("total_chains_analyzed", 0),
+            "unique_prefixes_analyzed": analyzer_stats.get("unique_prefixes_analyzed", 0),
+            "cache_reuse_count": analyzer_stats.get("cache_reuse_count", 0),
+            "functions_analyzed": analyzer_stats.get("total_functions_analyzed", 0),
+            "llm_calls": analyzer_stats.get("total_llm_calls", 0),
         }
+        
+        # キャッシュ統計を追加
+        if not args.no_cache and "cache_stats" in analyzer_stats:
+            statistics["cache_stats"] = analyzer_stats["cache_stats"]
         
         # トークン使用量を統計に追加
         if token_usage:
@@ -183,8 +211,23 @@ def main():
         print(f"\n[taint_analyzer] 解析完了:")
         print(f"  所要時間: {format_time_duration(analysis_time)}")
         print(f"  検出脆弱性: {len(vulnerabilities)} 件")
+        print(f"  LLM呼び出し回数: {analyzer_stats.get('total_llm_calls', 0)}")
+        
+        if not args.no_cache:
+            print(f"  キャッシュ再利用: {analyzer_stats.get('cache_reuse_count', 0)} 回")
+            if "cache_stats" in analyzer_stats:
+                cache_stats = analyzer_stats["cache_stats"]
+                print(f"  キャッシュヒット率: {cache_stats['hit_rate']}")
+        
         if token_usage:
             print(f"  使用トークン数: {token_usage['total_tokens']:,}")
+            
+            # 削減効果の推定
+            if not args.no_cache and analyzer_stats.get("cache_reuse_count", 0) > 0:
+                # キャッシュによる削減推定（1関数あたり約1000トークンと仮定）
+                estimated_saved_tokens = analyzer_stats["cache_reuse_count"] * 1000
+                print(f"  推定削減トークン数: ~{estimated_saved_tokens:,}")
+        
         print(f"  結果: {out_path}")
         print(f"  ログ: {log_file}")
         
@@ -202,6 +245,7 @@ def format_time_duration(seconds: float) -> str:
     else:
         return f"{seconds/3600:.1f}時間"
 
+
 def setup_diting_rules(logger: StructuredLogger, use_rag: bool) -> Optional[str]:
     """DITINGルールのセットアップ"""
     diting_prompt_path = Path(__file__).parent.parent.parent / "prompts" / "vulnerabilities_prompt" / "codeql_rules_system.txt"
@@ -217,9 +261,11 @@ def setup_diting_rules(logger: StructuredLogger, use_rag: bool) -> Optional[str]
     
     logger.write(f"### DITING Rules System Prompt:\n")
     logger.write(f"### RAG Status: {'Enabled' if use_rag and is_rag_available() else 'Disabled'}\n")
+    logger.write(f"### Cache Status: Enabled (Optimization Mode)\n")
     logger.write(system_prompt + "\n\n")
     
     return system_prompt
+
 
 def generate_summary_report(out_dir: Path, statistics: dict, vulnerabilities: list):
     """サマリーレポートを生成"""
@@ -229,6 +275,7 @@ def generate_summary_report(out_dir: Path, statistics: dict, vulnerabilities: li
     summary_path = out_dir / "vulnerability_summary.md"
     generator.generate_summary(summary_path, statistics, vulnerabilities)
     print(f"  サマリー: {summary_path}")
+
 
 if __name__ == "__main__":
     main()

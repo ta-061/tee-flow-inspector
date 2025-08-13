@@ -236,7 +236,7 @@ class OpenAIClient(BaseLLMClient):
                 model=self.config.get("model", "gpt-4o-mini"),
                 messages=messages,
                 temperature=kwargs.get("temperature", self.config.get("temperature", 0.0)),
-                max_tokens=kwargs.get("max_tokens", self.config.get("max_tokens", 4096)),
+                max_completion_tokens=kwargs.get("max_tokens", self.config.get("max_tokens", 4096)),
                 timeout=self.config.get("timeout", 60)
             )
             return response.choices[0].message.content

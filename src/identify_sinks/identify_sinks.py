@@ -4,6 +4,7 @@
 """
 フェーズ3: フェーズ1-2の結果を読み込んで、呼び出されている外部 API だけをLLMに問い、シンク候補をJSON出力する
 RAG対応版（トークン追跡機能付き）
+LLM-onlyモード対応版
 """
 
 import sys
@@ -232,10 +233,15 @@ def main():
     parser.add_argument("--provider", help="使用するLLMプロバイダー (openai, claude, deepseek, local)")
     parser.add_argument("--no-rag", action="store_true", help="RAGを使用しない")
     parser.add_argument("--no-track-tokens", action="store_true", help="トークン使用量追跡を無効化")
+    parser.add_argument("--llm-only", action="store_true", 
+                       help="LLMのみで判定（PatternMatcherを使用しない）")
     args = parser.parse_args()
     
     # トークン追跡はデフォルトで有効
     track_tokens = not args.no_track_tokens
+    
+    # ルールエンジン使用フラグ
+    use_rules = not args.llm_only
     
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -252,8 +258,13 @@ def main():
     # 新しいLLMクライアントを初期化（トークン追跡対応）
     client = init_client(track_tokens=track_tokens)
 
-    #Rule EngineのPatternMatcherを初期化
-    matcher = PatternMatcher()
+    # PatternMatcherの初期化（参考情報として使用）
+    matcher = PatternMatcher() if use_rules else None
+    
+    if args.llm_only:
+        print("[INFO] LLM-only mode enabled. All sink detection will be done by LLM.")
+    elif matcher:
+        print("[INFO] Rule engine mode enabled. Using PatternMatcher for known functions.")
 
     # プロバイダーが指定されていれば切り替え
     if args.provider:
@@ -292,38 +303,67 @@ def main():
     # 解析
     print("外部 API 関数をシンクとして解析中...")
     all_sinks = []
-    # デバッグ: PatternMatcherの状態を確認
-    print("\n[DEBUG] PatternMatcher initialized")
-    print(f"[DEBUG] Loaded rules count: {len(matcher.spec.get('rules', []))}")
-    print(f"[DEBUG] Known functions in index: {len(matcher._index)}")
+    
+    # PatternMatcherのデバッグ情報（LLM-onlyモードでは表示しない）
+    if use_rules and matcher:
+        print("\n[DEBUG] PatternMatcher initialized")
+        print(f"[DEBUG] Loaded rules count: {len(matcher.spec.get('rules', []))}")
+        print(f"[DEBUG] Known functions in index: {len(matcher._index)}")
 
     for func_name in sorted(called_external_funcs):
-        print(f"\n[DEBUG] Analyzing: {func_name}")
-        print(f"  - Is known: {matcher.is_known(func_name)}")
-        print(f"  - Is sink: {matcher.is_sink(func_name)}")
-        print(f"  - Dangerous params: {matcher.dangerous_params(func_name)}")
-        print(f"  - Rule IDs: {matcher.rules_for(func_name)}")
-        if matcher.is_sink(func_name):
-            # === ❶ ルールエンジンで確定したパラメータ ===
-            for idx in matcher.dangerous_params(func_name):
-                all_sinks.append({
-                    "kind": "function",
-                    "name": func_name,
-                    "param_index": idx,
-                    "reason": "DITING-rule",      # or matcher.rules_for(func_name)
-                    "by": "rule_engine"
-                })
-            # === ❷ LLM-Lite で追加確認したい場合はコメントアウト外す ===
-            lite_sinks = analyze_external_function_as_sink(
-                client, func_name, log_file, use_rag=False
-            )
-            all_sinks.extend(lite_sinks)
-        else:
-            # === ❸ 未知 API → 従来どおり LLM/RAG ===
+        
+        # LLM-onlyモード: 常にLLMに聞く
+        if args.llm_only:
+            print(f"  Analyzing {func_name} with LLM...")
             sinks = analyze_external_function_as_sink(client, func_name, log_file, use_rag)
             for s in sinks:
                 s["by"] = "llm"
             all_sinks.extend(sinks)
+            
+            # 参考情報として、PatternMatcherがどう判定していたかをログに記録（オプション）
+            if matcher and matcher.is_sink(func_name):
+                dangerous_params = matcher.dangerous_params(func_name)
+                print(f"    [INFO] PatternMatcher would have identified params {dangerous_params} as sinks")
+                # ログファイルにも記録
+                with open(log_file, "a", encoding="utf-8") as lf:
+                    lf.write(f"# [Reference] PatternMatcher for {func_name}: params {dangerous_params}\n\n")
+        
+        # 通常モード: PatternMatcherとLLMを併用
+        else:
+            print(f"\n[DEBUG] Analyzing: {func_name}")
+            if matcher:
+                print(f"  - Is known: {matcher.is_known(func_name)}")
+                print(f"  - Is sink: {matcher.is_sink(func_name)}")
+                print(f"  - Dangerous params: {matcher.dangerous_params(func_name)}")
+                print(f"  - Rule IDs: {matcher.rules_for(func_name)}")
+                
+                if matcher.is_sink(func_name):
+                    # === ❶ ルールエンジンで確定したパラメータ ===
+                    for idx in matcher.dangerous_params(func_name):
+                        all_sinks.append({
+                            "kind": "function",
+                            "name": func_name,
+                            "param_index": idx,
+                            "reason": "DITING-rule",
+                            "by": "rule_engine"
+                        })
+                    # === ❷ LLM-Lite で追加確認（オプション） ===
+                    # lite_sinks = analyze_external_function_as_sink(
+                    #     client, func_name, log_file, use_rag=False
+                    # )
+                    # all_sinks.extend(lite_sinks)
+                else:
+                    # === ❸ 未知 API → LLM/RAG ===
+                    sinks = analyze_external_function_as_sink(client, func_name, log_file, use_rag)
+                    for s in sinks:
+                        s["by"] = "llm"
+                    all_sinks.extend(sinks)
+            else:
+                # matcherがない場合はLLMのみ
+                sinks = analyze_external_function_as_sink(client, func_name, log_file, use_rag)
+                for s in sinks:
+                    s["by"] = "llm"
+                all_sinks.extend(sinks)
     
     print(f"抽出されたシンク候補: {len(all_sinks)} 個")
     
@@ -345,6 +385,9 @@ def main():
     result = {
         "sinks": unique
     }
+    
+    # モード情報を追加
+    result["analysis_mode"] = "llm_only" if args.llm_only else "hybrid"
     
     # トークン統計情報を追加
     if token_stats:
