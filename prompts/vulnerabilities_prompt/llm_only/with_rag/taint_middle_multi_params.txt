@@ -1,0 +1,29 @@
+Continue the taint analysis for the next step in the call chain (multiple parameter flows).
+
+Inputs:
+- Code to analyze: {code}
+- (Optional) Upstream context: {upstream_context}   # previously tainted vars/params
+- (Optional) TEE API Documentation Context (RAG): {rag_context}
+
+=== RAG POLICY (STRICT) ===
+- Use {rag_context} ONLY for OP-TEE API semantics. NEVER for inventing flows/lines. Prefer {code} when in doubt.
+
+=== FALSE-POSITIVE GUARDRAILS ===
+- TEE_Malloc / TEE_Free are NOT sinks.
+- Random from TEE_GenerateRandom is NON-SENSITIVE by default and not "unencrypted_output" when returned via MEMREF_OUTPUT.
+- Only report a finding if: (1) real sink reached AND (2) attacker influence or cross-world exposure is plausible from code.
+
+=== OUTPUT CONTRACT (STRICT) ===
+Line 1 (single JSON line):
+{"function":"<auto or parsed name>","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
+
+Guidance:
+1) Initialize TAINTED from upstream context; otherwise taint only when code clearly imports untrusted input (e.g., memref from params).
+2) Record dataflow as "LHS <- RHS @ <file>:<line>" into "propagation".
+3) Record validators/sanitizers with evidence lines.
+4) Record dangerous sinks with evidence lines (exclude alloc/free; include cross-world writes, size-tainted copies).
+5) Check param_types consistency and, if it enables attacker control to a sink, reflect it under "evidence" and FINDINGS (weak_input_validation).
+
+Line 2 (FINDINGS):
+FINDINGS={"items":[{"rule":"unencrypted_output|weak_input_validation|shared_memory_overwrite","why":"<one sentence>","evidence":"<file>:<line>|unknown","code_excerpt":"<short>"}]}
+If nothing qualifies: FINDINGS={"items":[]}

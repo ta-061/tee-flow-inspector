@@ -1,12 +1,9 @@
-Continue to analyze the next step in the call chain.
+Continue the taint analysis for the next step in the call chain.
 
 You will receive:
 - Code to analyze: 
 {code}
-- (Optional) Upstream context: {upstream_context}   # e.g., a set of previously tainted symbols/params
-
-=== POLICY (NO RAG) ===
-- Use ONLY the provided code and (optional) upstream context. Do not assume anything else.
+- (Optional) Upstream context: {upstream_context}   # e.g., previously tainted symbol (often a single item)
 
 === FALSE-POSITIVE GUARDRAILS (NEGATIVE RULES) ===
 - Data originating from `TEE_GenerateRandom` is NON-SENSITIVE by default.
@@ -18,8 +15,8 @@ You will receive:
 
 === WHAT TO INFER (NO MANUAL NAMES PROVIDED) ===
 - Infer the current function name from the code’s signature. If unavailable, set "function":"unknown".
-- Build the initial TAINTED set from upstream context if provided; otherwise, infer taint only when the code clearly ingests untrusted input.
-- Analyze EACH parameter/symbol independently. Track explicit dataflow only; for control dependence, annotate as "implicit:<var>".
+- Initialize TAINTED from the upstream context if provided. Otherwise, assume no taint unless the code clearly ingests untrusted input.
+- Track explicit dataflow only (assignments, parameter passing, buffer writes/reads). For control dependence, annotate as "implicit:<var>".
 
 === OUTPUT CONTRACT (STRICT — EXACTLY TWO LINES) ===
 Line 1: a single JSON object with these fields:
@@ -36,11 +33,12 @@ Rules for Line 2:
 
 === ANALYSIS STEPS (APPLY TO THE GIVEN CODE) ===
 1) Parse the function signature to infer the function name (or "unknown").
-2) Initialize TAINTED from upstream context (if any).
-3) For EACH potentially tainted parameter/symbol:
-   a) Track explicit dataflow and append "LHS <- RHS @ <file>:<line>" to "propagation".
-   b) Record validators/sanitizers with evidence lines (bounds checks, type checks, access rights, length caps) in "sanitizers".
-   c) Identify dangerous sinks and WHICH parameter/symbol they use; add them to "sinks" with evidence lines.
-4) Check parameter-type consistency:
+2) Initialize TAINTED from upstream context (if given). Otherwise, derive only when the code clearly ingests untrusted input.
+3) Record dataflow:
+   - Append "LHS <- RHS @ <file>:<line>" to "propagation" for each explicit flow/alias.
+4) Identify validators/sanitizers and add them to "sanitizers" with evidence lines (bounds checks, type checks, TEE_CheckMemoryAccessRights, length caps).
+5) Identify dangerous sinks and add them to "sinks" with evidence lines.
+   - Exclude alloc/free; treat cross-world or shared-memory writes as sinks only when tainted data/length is used.
+6) Check parameter-type consistency:
    - If `param_types` declaration conflicts with actual reads/writes (e.g., reading from NONE/OUTPUT), record in "evidence" with lines; map to `weak_input_validation` only if it enables attacker influence to reach a sink.
-5) If any DITING rule matches, list its `id` in "rule_matches" with supporting evidence.
+7) If any DITING rule matches, list its `id` in "rule_matches" with supporting evidence.

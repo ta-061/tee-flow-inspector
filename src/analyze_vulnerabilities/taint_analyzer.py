@@ -3,6 +3,7 @@
 """
 フェーズ6: LLMによるテイント解析と脆弱性検査（メインファイル）
 最適化版（チェイン接頭辞キャッシュ対応）
+DITINGルール有り/無しの切り替え対応
 """
 
 import sys
@@ -27,7 +28,7 @@ from analyze_vulnerabilities.taint_analyzer_core import TaintAnalyzer
 from analyze_vulnerabilities.utils import load_diting_rules_json, build_system_prompt
 
 # promptsモジュールも同様に
-from prompts import set_rag_enabled, is_rag_available
+from prompts import set_rag_enabled, is_rag_available, set_analysis_mode
 
 
 def main():
@@ -36,7 +37,7 @@ def main():
     parser.add_argument("--phase12", required=True, help="フェーズ1-2の結果JSON")
     parser.add_argument("--output", required=True, help="出力脆弱性レポートJSON")
     parser.add_argument("--provider", help="使用するLLMプロバイダー")
-    parser.add_argument("--no-diting-rules", action="store_true", help="DITINGルールを使用しない")
+    parser.add_argument("--no-diting-rules", action="store_true", help="DITINGルールを使用しない（LLM-onlyモード）")
     parser.add_argument("--no-enhanced-prompts", action="store_true", help="改良版プロンプトを使用しない")
     parser.add_argument("--generate-summary", action="store_true", help="人間が読みやすいサマリーも生成")
     parser.add_argument("--no-rag", action="store_true", help="RAGを使用しない")
@@ -46,8 +47,21 @@ def main():
 
     args = parser.parse_args()
     
-    # RAGの設定
+    # RAGの設定（ここで先に定義）
     use_rag = not args.no_rag
+    
+    # モード表示とプロンプト設定
+    if args.no_diting_rules:
+        print("[INFO] LLM-only mode: DITING rules disabled")
+        print("[INFO] Using standard vulnerability analysis prompts without rule-based guidance")
+        # RAGの設定状態も含めてモードを設定
+        set_analysis_mode("llm_only", use_rag=use_rag)
+    else:
+        print("[INFO] Hybrid mode: DITING rules enabled")
+        print("[INFO] Using rule-enhanced vulnerability analysis prompts")
+        set_analysis_mode("hybrid", use_rag=use_rag)
+    
+    # RAG設定の詳細表示（モード設定後）
     if use_rag:
         print("[INFO] RAG mode enabled for taint analysis")
         set_rag_enabled(True)
@@ -103,11 +117,19 @@ def main():
     with StructuredLogger(log_file, batch_size=args.batch_size, keep_file_open=True) as logger:
         conversation_manager = ConversationManager()
         
-        # DITINGルールのシステムプロンプトを設定
+        # システムプロンプトの設定
         if not args.no_diting_rules:
+            # DITINGルールを使用する場合
             system_prompt = setup_diting_rules(logger, use_rag)
             if system_prompt:
                 conversation_manager.set_system_prompt(system_prompt)
+                logger.writeln("[INFO] Using DITING rules-enhanced system prompt")
+        else:
+            # LLM-onlyモード：標準の脆弱性解析プロンプトを使用
+            system_prompt = setup_standard_system_prompt(logger, use_rag)
+            if system_prompt:
+                conversation_manager.set_system_prompt(system_prompt)
+                logger.writeln("[INFO] Using standard vulnerability analysis system prompt (LLM-only mode)")
         
         # TaintAnalyzerを初期化
         analyzer = TaintAnalyzer(
@@ -175,6 +197,7 @@ def main():
             "analysis_time_seconds": analysis_time,
             "analysis_time_formatted": format_time_duration(analysis_time),
             "llm_provider": client.get_current_provider(),
+            "analysis_mode": "llm_only" if args.no_diting_rules else "hybrid",
             "diting_rules_used": not args.no_diting_rules,
             "enhanced_prompts_used": not args.no_enhanced_prompts,
             "rag_enabled": use_rag and is_rag_available(),
@@ -211,6 +234,7 @@ def main():
         print(f"\n[taint_analyzer] 解析完了:")
         print(f"  所要時間: {format_time_duration(analysis_time)}")
         print(f"  検出脆弱性: {len(vulnerabilities)} 件")
+        print(f"  解析モード: {'LLM-only' if args.no_diting_rules else 'Hybrid (DITING rules)'}")
         print(f"  LLM呼び出し回数: {analyzer_stats.get('total_llm_calls', 0)}")
         
         if not args.no_cache:
@@ -247,7 +271,7 @@ def format_time_duration(seconds: float) -> str:
 
 
 def setup_diting_rules(logger: StructuredLogger, use_rag: bool) -> Optional[str]:
-    """DITINGルールのセットアップ"""
+    """DITINGルールのセットアップ（Hybridモード用）"""
     diting_prompt_path = Path(__file__).parent.parent.parent / "prompts" / "vulnerabilities_prompt" / "codeql_rules_system.txt"
     if not diting_prompt_path.exists():
         print(f"[WARN] DITING system prompt file not found: {diting_prompt_path}")
@@ -259,9 +283,45 @@ def setup_diting_rules(logger: StructuredLogger, use_rag: bool) -> Optional[str]
     diting_rules = load_diting_rules_json(json_path)
     system_prompt = build_system_prompt(diting_template, diting_rules)
     
-    logger.write(f"### DITING Rules System Prompt:\n")
+    logger.write(f"### System Prompt Mode: Hybrid (with DITING Rules)\n")
+    logger.write(f"### DITING Rules Loaded: {len(diting_rules.get('rules', []))} rules\n")
     logger.write(f"### RAG Status: {'Enabled' if use_rag and is_rag_available() else 'Disabled'}\n")
     logger.write(f"### Cache Status: Enabled (Optimization Mode)\n")
+    logger.write(system_prompt + "\n\n")
+    
+    return system_prompt
+
+
+def setup_standard_system_prompt(logger: StructuredLogger, use_rag: bool) -> Optional[str]:
+    """標準システムプロンプトのセットアップ（LLM-onlyモード用）"""
+    # プロンプトマネージャーから直接取得
+    from prompts import _prompt_manager
+    
+    try:
+        system_prompt = _prompt_manager.get_system_prompt()
+        print(f"[INFO] Loaded LLM-only system prompt from {_prompt_manager.prompts_dir}")
+    except Exception as e:
+        print(f"[WARN] Failed to load system prompt: {e}")
+        # フォールバックプロンプト
+        system_prompt = """You are a security expert analyzing code for vulnerabilities in Trusted Applications (TAs) running in ARM TrustZone TEE environments.
+
+Your task is to perform taint analysis to identify security vulnerabilities by tracking data flow from untrusted sources to dangerous sinks.
+
+Focus on identifying common vulnerability patterns such as:
+- Buffer overflows (CWE-787)
+- Integer overflows (CWE-190)
+- Use after free (CWE-416)
+- Information disclosure (CWE-200)
+- Path traversal (CWE-22)
+- Command injection (CWE-78)
+- Format string vulnerabilities (CWE-134)
+
+Analyze the code systematically and provide detailed explanations of any vulnerabilities found."""
+    
+    logger.write(f"### System Prompt Mode: LLM-only (without DITING Rules)\n")
+    logger.write(f"### RAG Status: {'Enabled' if use_rag and is_rag_available() else 'Disabled'}\n")
+    logger.write(f"### Cache Status: Enabled (Optimization Mode)\n")
+    logger.write(f"### Analysis Type: Pure LLM-based vulnerability detection\n")
     logger.write(system_prompt + "\n\n")
     
     return system_prompt

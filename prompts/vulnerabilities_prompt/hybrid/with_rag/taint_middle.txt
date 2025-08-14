@@ -2,26 +2,25 @@ Continue the taint analysis for the next step in the call chain.
 
 You will receive:
 - Code to analyze: {code}
-- (Optional) Upstream context: {upstream_context}   # e.g., previously tainted vars/params
+- (Optional) Upstream context: {upstream_context}   # e.g., previously tainted symbols (often a single item)
 - (Optional) TEE API Documentation Context (RAG): {rag_context}
 
-=== RAG POLICY (LIMITED USE) ===
-- Use RAG ONLY to interpret OP-TEE API semantics (param directions, API purpose).
-- NEVER use RAG to infer dataflow or to overrule the provided code. If RAG conflicts with code, PREFER THE CODE and suppress the finding.
+=== RAG POLICY (STRICT) ===
+- Use {rag_context} ONLY to clarify OP-TEE API semantics (param directions, memory domains).
+- NEVER use RAG to infer dataflow or to contradict the given {code}. If RAG conflicts with code, PREFER THE CODE and suppress the finding.
 
-=== FALSE-POSITIVE GUARDRAILS (NEGATIVE RULES) ===
-- Data originating from `TEE_GenerateRandom` is NON-SENSITIVE by default.
-  Copying such data to `MEMREF_OUTPUT` MUST NOT be flagged as `unencrypted_output`.
-- Allocators/deallocators (e.g., `TEE_Malloc`, `TEE_Free`) are NOT sinks.
+=== FALSE-POSITIVE GUARDRAILS (MUST FOLLOW) ===
+- TEE_Malloc / TEE_Free are NOT sinks. Do NOT include them in "sinks" or in FINDINGS.
+- Random bytes from TEE_GenerateRandom are NON-SENSITIVE by default. Copying them to MEMREF_OUTPUT is NOT "unencrypted_output".
 - Emit a finding ONLY if BOTH are true:
-  (1) attacker-controlled or sensitive taint reaches a dangerous sink, AND
-  (2) no effective validation/sanitization prevents exploitation.
+  (1) A concrete dangerous sink is reached (actual write/copy/output with evidence line),
+  (2) Attacker influence or cross-world exposure is plausible from the shown code (e.g., memref from Normal World, param_types misuse).
 
 === WHAT TO INFER (NO MANUAL FUNCTION/PARAM NAMES PROVIDED) ===
 - Infer the current function name from the code’s signature. If unavailable, set "function":"unknown".
-- Build the initial TAINTED set from the upstream context if provided.
-  If not provided, assume no taint unless the code clearly pulls input from external/untrusted sources.
-- Track explicit dataflow only (assignments, parameter passing, buffer writes/reads). 
+- Initialize TAINTED from the upstream context if provided (typically one symbol). 
+  If not provided, assume no taint unless the code clearly ingests untrusted input.
+- Track explicit dataflow only (assignments, param passing, buffer writes/reads).
   For control dependence, annotate as "implicit:<var>".
 
 === OUTPUT CONTRACT (STRICT — EXACTLY TWO LINES) ===
@@ -29,9 +28,9 @@ Line 1: a single JSON object with these fields:
 {"function":"<auto-inferred or 'unknown'>","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
 - "propagation": array of steps "LHS <- RHS @ <file>:<line>"
 - "sanitizers": validations (bounds checks, type checks, TEE_CheckMemoryAccessRights, length caps) with "<file>:<line>"
-- "sinks": dangerous uses (e.g., TEE_MemMove with attacker-controlled length/buffer; printf/IO; shared-memory writes) with "<file>:<line>". Do NOT include alloc/free.
+- "sinks": dangerous uses (e.g., cross-world/IO, TEE_MemMove with attacker-controlled buffer/length, shared-memory writes) with "<file>:<line>". Exclude alloc/free.
 - "evidence": other key facts (e.g., param_types vs. actual access mismatch) with "<file>:<line>"
-- "rule_matches": matched rule IDs (if any), each with supporting evidence lines
+- "rule_matches": matched rule IDs (if any), with supporting evidence lines
 
 Line 2: a single line starting with FINDINGS= and containing JSON:
 FINDINGS={"items":[{"rule":"unencrypted_output|weak_input_validation|shared_memory_overwrite","file":"<path>","line":123,"why":"<one sentence>","evidence":"<file>:<line>","code_excerpt":"<short>"}]}
@@ -53,8 +52,3 @@ Rules for Line 2:
 6) Check parameter-type consistency:
    - If `param_types` declaration conflicts with actual reads/writes (e.g., reading from NONE/OUTPUT), record in "evidence" (and map to `weak_input_validation` only if it enables attacker influence to reach a sink).
 7) If any DITING rule matches, add its ID to "rule_matches" with evidence lines.
-
-Now analyze the following code:
-{code}
-(Optional) TEE API Documentation Context:
-{rag_context}

@@ -1,24 +1,44 @@
 # src/analyze_vulnerabilities/prompts.py
-# !/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-prompts.py - LLMプロンプトテンプレート管理（RAG対応版）
-/workspace/prompts/vulnerabilities_prompt/ からプロンプトを読み込む
+prompts.py - LLMプロンプトテンプレート管理（最終版）
+4つのモード（hybrid/llm_only × no_rag/with_rag）に対応
 """
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict
 import sys
 import os
 import re
 
 def _fill_template(template: str, **values) -> str:
     """
-    指定キーのみ {key} を安全に置換する。
-    デフォルト: source_function, param_name, code, rag_context, param_indices
+    テンプレート内の変数を置換
+    未定義の変数は空文字列に置換
     """
-    pattern = re.compile(r"\{(source_function|param_name|code|rag_context|param_indices)\}")
-    return pattern.sub(lambda m: str(values.get(m.group(1), m.group(0))), template)
+    # デフォルト値の設定
+    defaults = {
+        'source_function': '',
+        'param_name': '',
+        'code': '',
+        'rag_context': '',
+        'upstream_context': '',
+        'param_indices': '',
+        'diting_rules_json': ''
+    }
+    
+    # valuesで上書き
+    for key in defaults:
+        if key not in values or values[key] is None:
+            values[key] = defaults[key]
+    
+    # テンプレート置換
+    result = template
+    for key, value in values.items():
+        result = result.replace(f"{{{key}}}", str(value))
+    
+    return result
 
 # RAGシステムをインポート
 sys.path.append(str(Path(__file__).parent.parent))
@@ -27,83 +47,131 @@ try:
     RAG_AVAILABLE = True
 except ImportError:
     RAG_AVAILABLE = False
-    print("[WARN] RAG module not available. Using standard prompts.")
+    print("[WARN] RAG module not available. RAG features disabled.")
 
 
 class PromptManager:
     """プロンプトテンプレートを管理するクラス"""
     
-    def __init__(self, prompts_dir: Optional[Path] = None):
+    def __init__(self, prompts_dir: Optional[Path] = None, mode: str = "hybrid", use_rag: bool = False):
         """
         Args:
             prompts_dir: プロンプトファイルが格納されているディレクトリ
+            mode: "llm_only" または "hybrid"
+            use_rag: RAGを使用するかどうか
         """
         if prompts_dir is None:
-            # デフォルトは /workspace/prompts/vulnerabilities_prompt/
             prompts_dir = Path("/workspace/prompts/vulnerabilities_prompt")
         
-        self.prompts_dir = prompts_dir
-        self._cache = {}  # 読み込んだプロンプトのキャッシュ
+        self.base_dir = prompts_dir
+        self.mode = mode
+        self.use_rag_mode = use_rag
+        self._cache = {}
+        
+        # 現在のディレクトリパス
+        rag_subdir = "with_rag" if use_rag else "no_rag"
+        self.current_dir = self.base_dir / mode / rag_subdir
         
         # ディレクトリの存在確認
-        if not self.prompts_dir.exists():
-            print(f"[WARN] Prompts directory not found: {self.prompts_dir}")
+        if not self.current_dir.exists():
+            print(f"[WARN] Prompt directory not found: {self.current_dir}")
+            print(f"[INFO] Available directories:")
+            for mode_dir in ["hybrid", "llm_only"]:
+                for rag_dir in ["no_rag", "with_rag"]:
+                    path = self.base_dir / mode_dir / rag_dir
+                    if path.exists():
+                        print(f"  - {mode_dir}/{rag_dir}")
         else:
-            print(f"[DEBUG] Using prompts directory: {self.prompts_dir}")
+            print(f"[INFO] Using prompts from: {self.current_dir.relative_to(self.base_dir)}")
         
         # RAGクライアント
         self._rag_client = None
-        if RAG_AVAILABLE:
-            try:
-                # FAISSのセキュリティ設定
-                os.environ['FAISS_ALLOW_DANGEROUS_DESERIALIZATION'] = 'true'
-                
-                self._rag_client = TEERAGClient()
-                if not self._rag_client.is_initialized:
-                    print("[INFO] Initializing RAG system...")
-                    self._rag_client.build_index()
-                else:
-                    print("[DEBUG] RAG system already initialized")
-            except Exception as e:
-                print(f"[WARN] Failed to initialize RAG: {e}")
-                self._rag_client = None
+        if use_rag and RAG_AVAILABLE:
+            self._init_rag_client()
+    
+    def _init_rag_client(self):
+        """RAGクライアントの初期化"""
+        try:
+            os.environ['FAISS_ALLOW_DANGEROUS_DESERIALIZATION'] = 'true'
+            self._rag_client = TEERAGClient()
+            if not self._rag_client.is_initialized:
+                print("[INFO] Building RAG index...")
+                self._rag_client.build_index()
+            print("[INFO] RAG client initialized successfully")
+        except Exception as e:
+            print(f"[WARN] Failed to initialize RAG client: {e}")
+            self._rag_client = None
     
     def load_prompt(self, filename: str) -> str:
         """
-        プロンプトファイルを読み込む
-        
-        Args:
-            filename: プロンプトファイル名
-            
-        Returns:
-            プロンプトテンプレート文字列
+        現在の設定に応じたディレクトリからプロンプトファイルを読み込む
         """
-        if filename in self._cache:
-            return self._cache[filename]
+        cache_key = f"{self.mode}:{self.use_rag_mode}:{filename}"
         
-        prompt_path = self.prompts_dir / filename
+        if cache_key in self._cache:
+            return self._cache[cache_key]
         
+        # プライマリパス
+        prompt_path = self.current_dir / filename
+        
+        # ファイルが存在しない場合のフォールバック
         if not prompt_path.exists():
-            print(f"[ERROR] Prompt file not found: {prompt_path}")
-            # フォールバック処理
-            raise FileNotFoundError(f"プロンプトファイルが見つかりません: {prompt_path}")
+            # 1. 逆のRAG設定を試す
+            alt_rag = "no_rag" if self.use_rag_mode else "with_rag"
+            fallback1 = self.base_dir / self.mode / alt_rag / filename
+            
+            # 2. ベースディレクトリ（旧構造）
+            fallback2 = self.base_dir / filename
+            
+            for fallback in [fallback1, fallback2]:
+                if fallback.exists():
+                    print(f"[WARN] Using fallback: {fallback.relative_to(self.base_dir)}")
+                    prompt_path = fallback
+                    break
+            else:
+                raise FileNotFoundError(
+                    f"Prompt file not found: {filename}\n"
+                    f"Searched in: {prompt_path}\n"
+                    f"Current mode: {self.mode}/{('with_rag' if self.use_rag_mode else 'no_rag')}"
+                )
         
         try:
             prompt = prompt_path.read_text(encoding="utf-8")
-            self._cache[filename] = prompt
-            print(f"[DEBUG] Loaded prompt: {filename}")
+            self._cache[cache_key] = prompt
+            print(f"[DEBUG] Loaded: {prompt_path.relative_to(self.base_dir)}")
             return prompt
         except Exception as e:
-            print(f"[ERROR] Failed to load prompt file {filename}: {e}")
-            raise RuntimeError(f"プロンプトファイルの読み込みに失敗しました: {e}")
+            raise RuntimeError(f"Failed to read prompt file {prompt_path}: {e}")
     
-    def clear_cache(self):
-        """キャッシュをクリア（プロンプト更新時に使用）"""
+    def set_mode(self, mode: str, use_rag: Optional[bool] = None):
+        """モードを切り替える"""
+        if mode not in ["hybrid", "llm_only"]:
+            print(f"[WARN] Invalid mode: {mode}. Using 'hybrid'")
+            mode = "hybrid"
+        
+        self.mode = mode
+        if use_rag is not None:
+            self.use_rag_mode = use_rag
+        
+        # ディレクトリを更新
+        rag_subdir = "with_rag" if self.use_rag_mode else "no_rag"
+        self.current_dir = self.base_dir / mode / rag_subdir
+        
+        # キャッシュをクリア
         self._cache.clear()
+        
+        print(f"[INFO] Mode set to: {mode}/{rag_subdir}")
+        
+        # RAGクライアントの更新
+        if self.use_rag_mode and RAG_AVAILABLE and self._rag_client is None:
+            self._init_rag_client()
+        elif not self.use_rag_mode and self._rag_client is not None:
+            self._rag_client = None
+            print("[INFO] RAG client disabled")
     
     def get_rag_context_for_vulnerability(self, code: str, sink_function: str, param_index: int) -> Optional[str]:
         """脆弱性解析用のRAGコンテキストを取得"""
-        if self._rag_client is None:
+        if not self.use_rag_mode or self._rag_client is None:
             return None
         
         try:
@@ -111,19 +179,20 @@ class PromptManager:
                 code, sink_function, param_index
             )
             if context and "[ERROR]" not in context:
-                print(f"[DEBUG] Retrieved RAG context for {sink_function} (param {param_index}): {len(context)} chars")
+                print(f"[DEBUG] RAG context retrieved for {sink_function} (param {param_index})")
                 return context
-            else:
-                print(f"[DEBUG] No valid RAG context found for {sink_function}")
-                return None
         except Exception as e:
             print(f"[WARN] RAG search failed: {e}")
-            return None
+        
+        return None
     
+    def get_system_prompt(self) -> str:
+        """システムプロンプトを取得"""
+        return self.load_prompt("system.txt")
 
 
-# グローバルなプロンプトマネージャーインスタンス
-_prompt_manager = PromptManager()
+# グローバルインスタンス（デフォルト: hybrid/no_rag）
+_prompt_manager = PromptManager(mode="hybrid", use_rag=False)
 
 
 def get_start_prompt(source_function: str, param_name: str, code: str) -> str:
@@ -136,106 +205,91 @@ def get_start_prompt(source_function: str, param_name: str, code: str) -> str:
         code=code
     )
 
-def get_middle_prompt(source_function: str, param_name: str, code: str, 
-                     sink_function: Optional[str] = None, 
+
+def get_middle_prompt(source_function: str, param_name: str, code: str,
+                     sink_function: Optional[str] = None,
                      param_index: Optional[int] = None) -> str:
-    """中間プロンプトを生成（RAG対応）"""
-    print(f"[DEBUG] get_middle_prompt called: sink_function={sink_function}, param_index={param_index}")
+    """中間プロンプトを生成"""
+    print(f"[DEBUG] get_middle_prompt: mode={_prompt_manager.mode}, rag={_prompt_manager.use_rag_mode}")
     
-    # RAGコンテキストを取得（最終関数の場合）
-    rag_context = None
-    if sink_function and param_index is not None and _prompt_manager._rag_client:
-        print(f"[DEBUG] Attempting to get RAG context for {sink_function}")
+    # RAGコンテキストの取得（RAGモードの場合のみ）
+    rag_context = ""
+    if _prompt_manager.use_rag_mode and sink_function and param_index is not None:
         rag_context = _prompt_manager.get_rag_context_for_vulnerability(
             code, sink_function, param_index
-        )
+        ) or ""
     
-    # RAGコンテキストがある場合は専用テンプレートを使用
-    if rag_context and "[ERROR]" not in rag_context:
-        try:
-            template = _prompt_manager.load_prompt("taint_middle_with_rag.txt")
-            print(f"[DEBUG] Using RAG template for {sink_function}")
-            return _fill_template(
-                template,
-                source_function=source_function,
-                param_name=param_name,
-                code=code,
-                rag_context=rag_context
-            )
-        except FileNotFoundError:
-            print(f"[WARN] RAG template not found, falling back to standard template")
-        except Exception as e:
-            print(f"[WARN] Failed to use RAG template, falling back to standard: {e}")
+    template = _prompt_manager.load_prompt("taint_middle.txt")
     
-    # 通常のテンプレート
-    template = _prompt_manager.load_prompt("taint_middle.txt")  # or with RAG
     return _fill_template(
         template,
         source_function=source_function,
         param_name=param_name,
         code=code,
-        rag_context=rag_context if rag_context else ""
+        rag_context=rag_context,
+        upstream_context=""  # 必要に応じて設定
     )
+
 
 def get_middle_prompt_multi_params(source_function: str, param_name: str, code: str,
                                   sink_function: Optional[str] = None,
                                   param_indices: Optional[list] = None) -> str:
-    """複数パラメータ用の中間プロンプトを生成（RAG対応）"""
-    # RAGコンテキストを取得（複数パラメータの場合は最初のインデックスを使用）
-    rag_context = None
-    if sink_function and param_indices and _prompt_manager._rag_client:
+    """複数パラメータ用の中間プロンプトを生成"""
+    print(f"[DEBUG] get_middle_prompt_multi_params: mode={_prompt_manager.mode}, rag={_prompt_manager.use_rag_mode}")
+    
+    # RAGコンテキストの取得
+    rag_context = ""
+    if _prompt_manager.use_rag_mode and sink_function and param_indices:
         rag_context = _prompt_manager.get_rag_context_for_vulnerability(
             code, sink_function, param_indices[0]
-        )
+        ) or ""
     
-    # RAGコンテキストがある場合
-    if rag_context and "[ERROR]" not in rag_context:
-        try:
-            template = _prompt_manager.load_prompt("taint_middle_multi_params_with_rag.txt")
-            print(f"[DEBUG] Using multi-param RAG template for {sink_function}")
-            return _fill_template(
-                template,
-                source_function=source_function,
-                param_name=param_name,
-                code=code,
-                rag_context=rag_context
-            )
-        except FileNotFoundError:
-            print(f"[WARN] Multi-param RAG template not found, falling back to standard template")
-        except Exception as e:
-            print(f"[WARN] Failed to use multi-param RAG template, falling back: {e}")
-    
-    # 通常のテンプレート
     template = _prompt_manager.load_prompt("taint_middle_multi_params.txt")
+    
     return _fill_template(
         template,
         source_function=source_function,
         param_name=param_name,
-        code=code
+        code=code,
+        rag_context=rag_context,
+        param_indices=str(param_indices) if param_indices else "",
+        upstream_context=""
     )
+
 
 def get_end_prompt() -> str:
     """エンドプロンプトを生成"""
     return _prompt_manager.load_prompt("taint_end.txt")
 
 
-def get_middle_prompt_with_codeql(source_function: str, param_name: str, code: str, 
-                                 sink_function: Optional[str] = None, 
-                                 param_index: Optional[int] = None) -> str:
-    """CodeQLルール情報を含む中間プロンプトを生成"""
-    # 基本プロンプトを生成
-    base_prompt = get_middle_prompt(source_function, param_name, code, sink_function, param_index)
-    
-    # シンク関数がある場合、CodeQLルールで強化
-    if sink_function:
-        base_prompt = _prompt_manager.enhance_prompt_with_codeql(base_prompt, sink_function)
-    
-    return base_prompt
+def set_analysis_mode(mode: str, use_rag: Optional[bool] = None):
+    """解析モードを設定"""
+    global _prompt_manager
+    print(f"[INFO] Setting analysis mode: {mode} (RAG: {use_rag})")
+    _prompt_manager.set_mode(mode, use_rag)
 
 
-def reload_prompts():
-    """プロンプトを再読み込み（開発時のデバッグ用）"""
-    _prompt_manager.clear_cache()
+def set_rag_enabled(enabled: bool):
+    """RAGの有効/無効を設定"""
+    global _prompt_manager
+    _prompt_manager.use_rag_mode = enabled
+    
+    # ディレクトリを更新
+    rag_subdir = "with_rag" if enabled else "no_rag"
+    _prompt_manager.current_dir = _prompt_manager.base_dir / _prompt_manager.mode / rag_subdir
+    
+    # RAGクライアントの更新
+    if enabled and RAG_AVAILABLE:
+        if _prompt_manager._rag_client is None:
+            _prompt_manager._init_rag_client()
+    else:
+        _prompt_manager._rag_client = None
+    
+    # キャッシュをクリア
+    _prompt_manager._cache.clear()
+    
+    print(f"[INFO] RAG {'enabled' if enabled else 'disabled'}")
+    print(f"[INFO] Now using: {_prompt_manager.current_dir.relative_to(_prompt_manager.base_dir)}")
 
 
 def is_rag_available() -> bool:
@@ -243,76 +297,83 @@ def is_rag_available() -> bool:
     return _prompt_manager._rag_client is not None
 
 
-# カスタムディレクトリを指定してプロンプトマネージャーを作成する関数
-def create_prompt_manager(prompts_dir: Path) -> PromptManager:
-    """指定されたディレクトリでプロンプトマネージャーを作成"""
-    return PromptManager(prompts_dir)
+def get_current_mode() -> str:
+    """現在のモードを取得"""
+    return _prompt_manager.mode
 
 
-# プロンプトディレクトリを変更する関数
-def set_prompts_directory(prompts_dir: Path):
-    """グローバルなプロンプトマネージャーのディレクトリを変更"""
-    global _prompt_manager
-    _prompt_manager = PromptManager(prompts_dir)
-    print(f"プロンプトディレクトリを変更しました: {prompts_dir}")
+def get_current_config() -> Dict[str, any]:
+    """現在の設定を取得"""
+    return {
+        "mode": _prompt_manager.mode,
+        "rag_enabled": _prompt_manager.use_rag_mode,
+        "rag_available": is_rag_available(),
+        "prompt_dir": str(_prompt_manager.current_dir)
+    }
 
 
-# RAGの有効/無効を切り替える関数
-def set_rag_enabled(enabled: bool):
-    """RAGの有効/無効を設定"""
-    global _prompt_manager
-    if enabled and RAG_AVAILABLE:
-        if _prompt_manager._rag_client is None:
-            try:
-                _prompt_manager._rag_client = TEERAGClient()
-                if not _prompt_manager._rag_client.is_initialized:
-                    _prompt_manager._rag_client.build_index()
-                print("[INFO] RAG enabled")
-            except Exception as e:
-                print(f"[ERROR] Failed to enable RAG: {e}")
-    else:
-        _prompt_manager._rag_client = None
-        print("[INFO] RAG disabled")
+def reload_prompts():
+    """プロンプトキャッシュをクリア"""
+    _prompt_manager._cache.clear()
+    print("[INFO] Prompt cache cleared")
 
 
+# テスト用メイン関数
 def main():
-    """テスト用のメイン関数"""
-    print("=== Prompt Manager Test ===")
+    """動作確認"""
+    print("="*60)
+    print("Prompt Manager Test")
+    print("="*60)
     
-    # プロンプトディレクトリの確認
-    print(f"Prompts directory: {_prompt_manager.prompts_dir}")
-    print(f"Directory exists: {_prompt_manager.prompts_dir.exists()}")
+    # 現在の設定を表示
+    config = get_current_config()
+    print(f"Current configuration:")
+    for key, value in config.items():
+        print(f"  {key}: {value}")
     
-    if _prompt_manager.prompts_dir.exists():
-        print("Available prompt files:")
-        for file in _prompt_manager.prompts_dir.glob("*.txt"):
-            print(f"  - {file.name}")
+    print("\n" + "="*60)
+    print("Testing all 4 configurations:")
+    print("="*60)
     
-    # RAGの状態確認
-    print(f"RAG available: {is_rag_available()}")
+    # 全4パターンをテスト
+    configurations = [
+        ("hybrid", False),
+        ("hybrid", True),
+        ("llm_only", False),
+        ("llm_only", True)
+    ]
     
-    # 各プロンプトのテスト
-    print("\n=== Testing Prompts ===")
+    for mode, use_rag in configurations:
+        print(f"\n### Testing {mode}/{('with_rag' if use_rag else 'no_rag')} ###")
+        set_analysis_mode(mode, use_rag)
+        
+        test_passed = True
+        
+        # 各プロンプトファイルをテスト
+        tests = [
+            ("system.txt", lambda: _prompt_manager.get_system_prompt()),
+            ("taint_start.txt", lambda: get_start_prompt("func", "param", "code")),
+            ("taint_middle.txt", lambda: get_middle_prompt("func", "param", "code")),
+            ("taint_middle_multi_params.txt", lambda: get_middle_prompt_multi_params("func", "param", "code")),
+            ("taint_end.txt", lambda: get_end_prompt())
+        ]
+        
+        for filename, loader in tests:
+            try:
+                content = loader()
+                print(f"  ✓ {filename}: {len(content)} chars")
+            except Exception as e:
+                print(f"  ✗ {filename}: {e}")
+                test_passed = False
+        
+        if test_passed:
+            print(f"  → All prompts loaded successfully!")
+        else:
+            print(f"  → Some prompts failed to load")
     
-    try:
-        start_prompt = get_start_prompt("test_function", "test_params", "void test() {}")
-        print(f"Start prompt loaded: {len(start_prompt)} chars")
-    except Exception as e:
-        print(f"Failed to load start prompt: {e}")
-    
-    try:
-        middle_prompt = get_middle_prompt("func1", "data", "void func() {}", "TEE_Malloc", 0)
-        print(f"Middle prompt loaded: {len(middle_prompt)} chars")
-        print(f"RAG context included: {'rag_context' in middle_prompt.lower()}")
-    except Exception as e:
-        print(f"Failed to load middle prompt: {e}")
-    
-    try:
-        end_prompt = get_end_prompt()
-        print(f"End prompt loaded: {len(end_prompt)} chars")
-        print(f"Contains vulnerability_found format: {'vulnerability_found' in end_prompt}")
-    except Exception as e:
-        print(f"Failed to load end prompt: {e}")
+    print("\n" + "="*60)
+    print("Test complete!")
+    print("="*60)
 
 
 if __name__ == "__main__":

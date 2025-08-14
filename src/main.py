@@ -1,6 +1,6 @@
 # src/main.py
 #!/usr/bin/env python3
-"""main.py – TA 静的解析ドライバ (リファクタ版)"""
+"""main.py – TA 静的解析ドライバ (プロンプトモード対応版)"""
 from __future__ import annotations
 import sys, argparse, os, json, subprocess
 from pathlib import Path
@@ -106,7 +106,23 @@ if DEVKIT:
 
 # ------------------------------------------------------------
 
-def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool, use_rag: bool, skip_clean: bool, track_tokens: bool):
+def get_analysis_mode_description(llm_only: bool, use_rag: bool) -> str:
+    """解析モードの説明文を生成"""
+    if llm_only:
+        if use_rag:
+            return "LLM-only with RAG enhancement"
+        else:
+            return "LLM-only without external knowledge"
+    else:
+        if use_rag:
+            return "Hybrid (DITING rules + RAG)"
+        else:
+            return "Hybrid (DITING rules only)"
+
+# ------------------------------------------------------------
+
+def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool, 
+                    use_rag: bool, skip_clean: bool, track_tokens: bool, llm_only: bool):
     proj = proj.resolve()
     if proj.name in skip:
         print(f"[INFO] {proj.name}: skipped by --skip")
@@ -118,15 +134,15 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool, use_
         return
 
     print(f"\n=== Project: {proj.name} / TA: {ta_dir.name} ===")
-    if use_rag:
-        print("[INFO] RAG mode is enabled for this analysis")
-    else:
-        print("[INFO] RAG mode is disabled for this analysis")
+    
+    # 解析モードの表示
+    mode_desc = get_analysis_mode_description(llm_only, use_rag)
+    print(f"[INFO] Analysis mode: {mode_desc}")
     
     if track_tokens:
-        print("[INFO] Token tracking is enabled (default)")
+        print("[INFO] Token tracking is enabled")
     else:
-        print("[INFO] Token tracking is disabled by --no-track-tokens")
+        print("[INFO] Token tracking is disabled")
 
     # 解析前にクリーンアップを実行（オプションで無効化可能）
     if not skip_clean:
@@ -146,7 +162,7 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool, use_
     }, indent=2, ensure_ascii=False))
     print(f"[phase1-2] → {phase12}")
 
-    # Step3 (LLM 解析フェーズ) - RAGオプションとトークン追跡を追加
+    # Step3 (シンク特定フェーズ) - LLM-onlyモードは常に適用
     sinks = res_dir / f"{ta_dir.name}_sinks.json"
     identify_cmd = [sys.executable, str(identify_py), "-i", str(phase12), "-o", str(sinks), "--llm-only"]
     if not use_rag:
@@ -165,6 +181,7 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool, use_
     call_graph = res_dir / f"{ta_dir.name}_call_graph.json"
     chains_out = res_dir / f"{ta_dir.name}_chains.json"
     vd_final  = vd_raw  # 上書き保存
+    
     print(f"[phase3.1] → python3 {find_py} --compile-db {ta_db} --sinks {sinks} --output {vd_raw} --devkit {os.environ.get('TA_DEV_KIT_DIR', '')}")
     run([sys.executable, str(find_py),
          "--compile-db", str(ta_db),
@@ -173,6 +190,7 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool, use_
          "--devkit",     os.environ.get("TA_DEV_KIT_DIR", "")],
         ta_dir, v)
     print(f"[phase3.4] → {vd_raw}\n")
+    
     print(f"[phase3.2] → python3 {graph_py} --compile-db {ta_db} --output {call_graph} --devkit {os.environ.get('TA_DEV_KIT_DIR', '')}")    
     run([sys.executable, str(graph_py),
          "--compile-db", str(ta_db),
@@ -180,12 +198,13 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool, use_
          "--devkit",     os.environ.get("TA_DEV_KIT_DIR", "")],
         ta_dir, v)
     print(f"[phase3.5] → {call_graph}\n")
+    
     print(f"[phase3.3] → python3 {fcc_py} --call-graph {call_graph} --vd-list {vd_raw} --compile-db {ta_db} --devkit {os.environ.get('TA_DEV_KIT_DIR', '')} --output {chains_out}")
     run([sys.executable, str(fcc_py),
         "--call-graph", str(call_graph),
         "--vd-list",    str(vd_raw),
-        "--compile-db", str(ta_db),      # 追加
-        "--devkit",     os.environ.get("TA_DEV_KIT_DIR", ""),  # 追加
+        "--compile-db", str(ta_db),
+        "--devkit",     os.environ.get("TA_DEV_KIT_DIR", ""),
         "--output",     str(chains_out)],
         ta_dir, v)
     print(f"[phase3.6] → {chains_out}\n")
@@ -217,10 +236,19 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool, use_
                 "--phase12", str(phase12),
                 "--output", str(vulnerabilities),
                 "--generate-summary"]
+    
+    # LLM-onlyモードの場合、DITINGルールを無効化
+    if llm_only:
+        taint_cmd.append("--no-diting-rules")
+    
+    # RAGオプション
     if not use_rag:
         taint_cmd.append("--no-rag")
+    
+    # トークン追跡オプション
     if track_tokens:
         taint_cmd.append("--track-tokens")
+    
     run(taint_cmd, ta_dir, v)
 
     # Phase7: HTMLレポート生成
@@ -240,22 +268,61 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool, use_
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="TA Static Analysis Driver")
+    ap = argparse.ArgumentParser(
+        description="TA Static Analysis Driver",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Analysis Modes:
+  Default:     Hybrid mode with DITING rules, no RAG
+  --llm-only:  Pure LLM analysis without DITING rules
+  --rag:       Enable RAG enhancement (works with both modes)
+  
+Mode Combinations:
+  (default)           → Hybrid + No RAG  (DITING rules only)
+  --rag               → Hybrid + RAG     (DITING rules + RAG)
+  --llm-only          → LLM-only + No RAG (Pure LLM)
+  --llm-only --rag    → LLM-only + RAG   (LLM + RAG enhancement)
+
+Examples:
+  %(prog)s -p benchmark/random                    # Hybrid mode (DITING rules)
+  %(prog)s -p benchmark/random --rag              # Hybrid + RAG
+  %(prog)s -p benchmark/random --llm-only         # Pure LLM analysis
+  %(prog)s -p benchmark/random --llm-only --rag   # LLM with RAG
+        """
+    )
+    
     ap.add_argument("-p", "--project", type=Path, action="append", required=True,
                     help="Project path(s) to analyze")
     ap.add_argument("--skip", nargs="*", default=[], 
                     help="Directory names to skip")
     ap.add_argument("--verbose", action="store_true",
                     help="Enable verbose output")
-    ap.add_argument("--rag", action="store_true", 
-                    help="Enable RAG (Retrieval-Augmented Generation) for sink analysis")
+    
+    # 解析モードオプション
+    mode_group = ap.add_argument_group('analysis modes')
+    mode_group.add_argument("--llm-only", action="store_true",
+                           help="Use LLM-only mode without DITING rules (default: Hybrid mode with DITING)")
+    mode_group.add_argument("--rag", action="store_true", 
+                           help="Enable RAG enhancement for the selected mode (default: disabled)")
+    
+    # その他のオプション
     ap.add_argument("--skip-clean", action="store_true",
                     help="Skip cleaning dependency files before analysis")
     ap.add_argument("--clean-all", action="store_true",
                     help="Clean all .d and .o files (not just stale ones)")
     ap.add_argument("--no-track-tokens", action="store_true",
                     help="Disable token usage tracking")
+    
     args = ap.parse_args()
+
+    # 解析モードのサマリーを表示
+    print("="*60)
+    print("TA Static Analysis Driver")
+    print("="*60)
+    mode_desc = get_analysis_mode_description(args.llm_only, args.rag)
+    print(f"Analysis Configuration: {mode_desc}")
+    print(f"Token Tracking: {'Disabled' if args.no_track_tokens else 'Enabled'}")
+    print("="*60)
 
     identify_py = Path(__file__).resolve().parent / "identify_sinks" / "identify_sinks.py"
     skip = set(args.skip)
@@ -279,4 +346,13 @@ if __name__ == "__main__":
     for proj in args.project:
         # トークン追跡はデフォルトで有効（--no-track-tokensで無効化）
         track_tokens = not args.no_track_tokens
-        process_project(proj, identify_py, skip, args.verbose, args.rag, args.skip_clean, track_tokens)
+        process_project(
+            proj, 
+            identify_py, 
+            skip, 
+            args.verbose, 
+            args.rag, 
+            args.skip_clean, 
+            track_tokens,
+            args.llm_only  # LLM-onlyモードフラグを追加
+        )
