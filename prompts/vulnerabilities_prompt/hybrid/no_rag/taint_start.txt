@@ -2,14 +2,29 @@ Function to analyze: {source_function}
 Tainted parameters: {param_name}
 
 You MUST respond first with a one-line JSON (no code fences):
-{"function":"{source_function}","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
+{"function":"{source_function}","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":{"rule_id":[],"others":[]}}
 
-Tasks:
-1) Using ONLY the provided code, list taint propagation steps (LHS <- RHS) into "propagation".
-2) If any checks/sanitization exist (e.g., param_types check, bounds, TEE_CheckMemoryAccessRights), list them in "sanitizers" with evidence lines.
-3) List concrete sinks (e.g., TEE_MemMove, snprintf) in "sinks" with evidence lines.
-4) If any DITING rule matches, append its `id` to "rule_matches" and add evidence.
-5) Keep the JSON minimal; after it, add up to 3 bullets if necessary.
+Tasks (HYBRID context):
+1) From {code} and {upstream_context}, identify initial taint sources (e.g., REE-provided memref in TEE_Param, session inputs). Initialize TAINTED accordingly.
+2) Append propagation as "LHS <- RHS @ <file>:<line>" to "propagation".
+3) Append validations (param_types equality, bounds checks, TEE_CheckMemoryAccessRights) with evidence lines to "sanitizers".
+4) Append concrete dangerous sinks to "sinks" with evidence lines. (Exclude alloc/free; random bytes are non-sensitive.)
+5) Append notable facts (e.g., param_types misuse enabling reads/writes contrary to declaration) to "evidence".
+6) Classify rule matches into "rule_matches":{"rule_id":[...],"others":[...]} using the host-provided IDs when applicable.
 
-Code to analyze:
-{code}
+Then, on the next line, output:
+FINDINGS={"items":[
+  {
+    "file":"<path|'unknown'>",
+    "line":<int>,
+    "rule":"<short_category>",
+    "why":"<short_reason>",
+    "function":"{source_function}",
+    "phase":"start",
+    "sink_function":"<SINK_OR_EXTERNAL_FN|'unknown'>",
+    "rule_matches":{"rule_id":["<RULE_ID1>", ...],"others":["<freeform>", ...]},
+    "code_excerpt":"<short>"
+  }
+  // optional more items
+]}
+If nothing qualifies: FINDINGS={"items":[]}

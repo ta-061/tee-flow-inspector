@@ -4,6 +4,7 @@
 フェーズ6: LLMによるテイント解析と脆弱性検査（メインファイル）
 最適化版（チェイン接頭辞キャッシュ対応）
 DITINGルール有り/無しの切り替え対応
+CodeQLルール統合とupstream_context伝搬対応
 """
 
 import sys
@@ -28,7 +29,14 @@ from analyze_vulnerabilities.taint_analyzer_core import TaintAnalyzer
 from analyze_vulnerabilities.utils import load_diting_rules_json, build_system_prompt
 
 # promptsモジュールも同様に
-from prompts import set_rag_enabled, is_rag_available, set_analysis_mode
+from prompts import (
+    set_rag_enabled, 
+    is_rag_available, 
+    set_analysis_mode,
+    set_diting_rules,
+    set_rule_hints,
+    build_rule_hints_block_from_codeql
+)
 
 
 def main():
@@ -120,10 +128,10 @@ def main():
         # システムプロンプトの設定
         if not args.no_diting_rules:
             # DITINGルールを使用する場合
-            system_prompt = setup_diting_rules(logger, use_rag)
+            system_prompt = setup_diting_rules_enhanced(logger, use_rag)
             if system_prompt:
                 conversation_manager.set_system_prompt(system_prompt)
-                logger.writeln("[INFO] Using DITING rules-enhanced system prompt")
+                logger.writeln("[INFO] Using DITING rules-enhanced system prompt with CodeQL integration")
         else:
             # LLM-onlyモード：標準の脆弱性解析プロンプトを使用
             system_prompt = setup_standard_system_prompt(logger, use_rag)
@@ -191,6 +199,16 @@ def main():
                 logger.writeln(f"ヒット率: {cache_stats['hit_rate']}")
                 logger.writeln(f"キャッシュされた接頭辞: {cache_stats['cached_prefixes']}")
         
+        # Findings統計もログに記録
+        if "findings_stats" in analyzer_stats:
+            logger.log_section("Findings Statistics", level=1)
+            findings_stats = analyzer_stats["findings_stats"]
+            logger.writeln(f"収集された総数: {findings_stats['total_collected']}")
+            logger.writeln(f"Middle findings: {findings_stats['middle_findings']}")
+            logger.writeln(f"End findings: {findings_stats['end_findings']}")
+            logger.writeln(f"マージ後: {findings_stats['after_merge']}")
+            logger.writeln(f"削除された重複: {findings_stats['duplicates_removed']}")
+        
         # 統計情報
         statistics = {
             "analysis_date": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -213,6 +231,10 @@ def main():
         if not args.no_cache and "cache_stats" in analyzer_stats:
             statistics["cache_stats"] = analyzer_stats["cache_stats"]
         
+        # Findings統計を追加
+        if "findings_stats" in analyzer_stats:
+            statistics["findings_stats"] = analyzer_stats["findings_stats"]
+        
         # トークン使用量を統計に追加
         if token_usage:
             statistics["token_usage"] = token_usage
@@ -234,7 +256,8 @@ def main():
         print(f"\n[taint_analyzer] 解析完了:")
         print(f"  所要時間: {format_time_duration(analysis_time)}")
         print(f"  検出脆弱性: {len(vulnerabilities)} 件")
-        print(f"  解析モード: {'LLM-only' if args.no_diting_rules else 'Hybrid (DITING rules)'}")
+        print(f"  インラインFindings: {len(inline_findings)} 件")
+        print(f"  解析モード: {'LLM-only' if args.no_diting_rules else 'Hybrid (DITING + CodeQL rules)'}")
         print(f"  LLM呼び出し回数: {analyzer_stats.get('total_llm_calls', 0)}")
         
         if not args.no_cache:
@@ -257,7 +280,7 @@ def main():
         
         # サマリー生成
         if args.generate_summary:
-            generate_summary_report(out_dir, statistics, vulnerabilities)
+            generate_summary_report(out_dir, statistics, vulnerabilities, inline_findings)
 
 
 def format_time_duration(seconds: float) -> str:
@@ -270,26 +293,70 @@ def format_time_duration(seconds: float) -> str:
         return f"{seconds/3600:.1f}時間"
 
 
-def setup_diting_rules(logger: StructuredLogger, use_rag: bool) -> Optional[str]:
-    """DITINGルールのセットアップ（Hybridモード用）"""
+def setup_diting_rules_enhanced(logger: StructuredLogger, use_rag: bool) -> Optional[str]:
+    """
+    拡張版DITINGルールのセットアップ（Hybridモード用）
+    CodeQLルールの統合とヒントブロックの生成を含む
+    """
+    # DITINGプロンプトテンプレートを読み込み
     diting_prompt_path = Path(__file__).parent.parent.parent / "prompts" / "vulnerabilities_prompt" / "codeql_rules_system.txt"
     if not diting_prompt_path.exists():
         print(f"[WARN] DITING system prompt file not found: {diting_prompt_path}")
         return None
     
     diting_template = diting_prompt_path.read_text(encoding="utf-8")
+    
+    # CodeQLルールをロード
     rules_dir = Path(__file__).parent.parent.parent / "rules"
     json_path = rules_dir / "codeql_rules.json"
-    diting_rules = load_diting_rules_json(json_path)
-    system_prompt = build_system_prompt(diting_template, diting_rules)
     
-    logger.write(f"### System Prompt Mode: Hybrid (with DITING Rules)\n")
-    logger.write(f"### DITING Rules Loaded: {len(diting_rules.get('rules', []))} rules\n")
-    logger.write(f"### RAG Status: {'Enabled' if use_rag and is_rag_available() else 'Disabled'}\n")
-    logger.write(f"### Cache Status: Enabled (Optimization Mode)\n")
-    logger.write(system_prompt + "\n\n")
+    try:
+        diting_rules = load_diting_rules_json(json_path)
+        diting_rules_json = json.dumps(diting_rules, ensure_ascii=False, separators=(',', ':'))
+        
+        # prompts.pyにDITINGルールJSONを設定
+        set_diting_rules(diting_rules_json)
+        
+        # ルールヒントブロックを生成
+        rule_hints = build_rule_hints_block_from_codeql(json_path)
+        set_rule_hints(rule_hints)
+        
+        # システムプロンプトを構築（2つの要素を埋め込み）
+        system_prompt = build_system_prompt_enhanced(
+            diting_template, 
+            diting_rules_json,
+            rule_hints
+        )
+        
+        logger.write(f"### System Prompt Mode: Hybrid (with DITING + CodeQL Rules)\n")
+        logger.write(f"### DITING Rules Loaded: {len(diting_rules.get('detection_rules', []))} detection rules\n")
+        logger.write(f"### CodeQL Rule IDs: {', '.join([r.get('rule_id', '') for r in diting_rules.get('detection_rules', [])])}\n")
+        logger.write(f"### RAG Status: {'Enabled' if use_rag and is_rag_available() else 'Disabled'}\n")
+        logger.write(f"### Cache Status: Enabled (Optimization Mode)\n")
+        logger.write(f"### Rule Hints Block:\n{rule_hints}\n")
+        logger.write(system_prompt + "\n\n")
+        
+        return system_prompt
+        
+    except Exception as e:
+        print(f"[ERROR] Failed to setup DITING rules: {e}")
+        return None
+
+
+def build_system_prompt_enhanced(template: str, diting_rules_json: str, rule_hints: str) -> str:
+    """
+    拡張版システムプロンプト構築
+    {diting_rules_json}と{RULE_HINTS_BLOCK}の両方を埋め込む
+    """
+    # まず{diting_rules_json}を置換
+    if "{diting_rules_json}" in template:
+        template = template.replace("{diting_rules_json}", diting_rules_json)
     
-    return system_prompt
+    # 次に{RULE_HINTS_BLOCK}を置換
+    if "{RULE_HINTS_BLOCK}" in template:
+        template = template.replace("{RULE_HINTS_BLOCK}", rule_hints)
+    
+    return template
 
 
 def setup_standard_system_prompt(logger: StructuredLogger, use_rag: bool) -> Optional[str]:
@@ -298,6 +365,13 @@ def setup_standard_system_prompt(logger: StructuredLogger, use_rag: bool) -> Opt
     from prompts import _prompt_manager
     
     try:
+        # LLM-onlyモードでもCodeQLヒントは追加（軽量版）
+        json_path = Path(__file__).parent.parent.parent / "rules" / "codeql_rules.json"
+        if json_path.exists():
+            rule_hints = build_rule_hints_block_from_codeql(json_path)
+            set_rule_hints(rule_hints)
+            print(f"[INFO] Added CodeQL rule hints to LLM-only mode")
+        
         system_prompt = _prompt_manager.get_system_prompt()
         print(f"[INFO] Loaded LLM-only system prompt from {_prompt_manager.prompts_dir}")
     except Exception as e:
@@ -316,25 +390,40 @@ Focus on identifying common vulnerability patterns such as:
 - Command injection (CWE-78)
 - Format string vulnerabilities (CWE-134)
 
+Rule categories from CodeQL analysis:
+- unencrypted_output: Data output without encryption
+- weak_input_validation: Missing or insufficient input validation
+- shared_memory_overwrite: Unsafe shared memory operations
+
 Analyze the code systematically and provide detailed explanations of any vulnerabilities found."""
     
-    logger.write(f"### System Prompt Mode: LLM-only (without DITING Rules)\n")
+    logger.write(f"### System Prompt Mode: LLM-only (without full DITING Rules)\n")
+    logger.write(f"### CodeQL hints: Included (lightweight)\n")
     logger.write(f"### RAG Status: {'Enabled' if use_rag and is_rag_available() else 'Disabled'}\n")
     logger.write(f"### Cache Status: Enabled (Optimization Mode)\n")
-    logger.write(f"### Analysis Type: Pure LLM-based vulnerability detection\n")
+    logger.write(f"### Analysis Type: Pure LLM-based vulnerability detection with rule hints\n")
     logger.write(system_prompt + "\n\n")
     
     return system_prompt
 
 
-def generate_summary_report(out_dir: Path, statistics: dict, vulnerabilities: list):
-    """サマリーレポートを生成"""
+def generate_summary_report(out_dir: Path, statistics: dict, vulnerabilities: list, inline_findings: list):
+    """サマリーレポートを生成（拡張版）"""
     from analyze_vulnerabilities.report_generator import ReportGenerator
     
     generator = ReportGenerator()
     summary_path = out_dir / "vulnerability_summary.md"
+    
+    # 基本サマリー
     generator.generate_summary(summary_path, statistics, vulnerabilities)
-    print(f"  サマリー: {summary_path}")
+    
+    # Findingsサマリーも追加
+    if inline_findings:
+        findings_summary_path = out_dir / "findings_summary.md"
+        generator.generate_findings_summary(findings_summary_path, statistics, inline_findings)
+        print(f"  Findingsサマリー: {findings_summary_path}")
+    
+    print(f"  脆弱性サマリー: {summary_path}")
 
 
 if __name__ == "__main__":

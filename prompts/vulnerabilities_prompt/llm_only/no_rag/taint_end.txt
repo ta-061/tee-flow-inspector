@@ -1,16 +1,14 @@
 Based on the taint analysis above, decide if there is an ACTUAL vulnerability in the analyzed path.
 
-## Decision Criteria
+Decision Criteria:
 1) Does tainted/attacker-influenced data reach a dangerous sink?
 2) Do validation/sanitization steps block exploitation?
-3) Under what concrete conditions is exploitation plausible?
+3) Concrete conditions for exploitation?
 
-## OUTPUT CONTRACT (STRICT)
-
-Line 1:
+OUTPUT CONTRACT (line 1):
 {"vulnerability_found":"yes"|"no"}
 
-From line 2, output a structured JSON object with EXACTLY these top-level keys:
+From line 2, output EXACT JSON with these top-level keys:
 {
   "vulnerability_type": "CWE-XXX",
   "severity": "low|medium|high|critical",
@@ -35,7 +33,24 @@ From line 2, output a structured JSON object with EXACTLY these top-level keys:
   "decision_rationale": "<why this is/isn't a vulnerability>"
 }
 
-Rules:
-- Cite evidence lines seen in code where possible; otherwise "unknown".
-- Respect guardrails: alloc/free are non-sinks; random bytes are non-sensitive by default.
-- Be specific and concise.
+Additionally, if a concrete security issue remains at the chain end, output a third line:
+END_FINDINGS={"items":[
+  {
+    "file":"<path|'unknown'>",
+    "line":<int>,
+    "rule":"<short_category>",
+    "why":"<short_reason>",
+    "function":"<SINK_OR_END_FUNCTION>",
+    "phase":"end",
+    "sink_function":"<SINK_API_FN|'unknown'>",
+    "rule_matches":{"rule_id":["<RULE_ID1>", ...],"others":["<freeform>", ...]},
+    "refs":["inline:<id1>","inline:<id2>"],   // optional: ids of consolidated middle findings
+    "code_excerpt":"<short>"
+  }
+]}
+If nothing qualifies: END_FINDINGS={"items":[]}
+
+Guardrails:
+- Alloc/free are NOT sinks.
+- Random bytes are NON-sensitive by default.
+- Be specific. Cite evidence lines where possible, else "unknown".

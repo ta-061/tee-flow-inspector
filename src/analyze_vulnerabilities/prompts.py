@@ -1,16 +1,17 @@
-# src/analyze_vulnerabilities/prompts.py
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-prompts.py - LLMプロンプトテンプレート管理（最終版）
+prompts.py - LLMプロンプトテンプレート管理（拡張版）
 4つのモード（hybrid/llm_only × no_rag/with_rag）に対応
+DITING/CodeQLルール統合、upstream_context対応
 """
 
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 import sys
 import os
 import re
+import json
 
 def _fill_template(template: str, **values) -> str:
     """
@@ -25,7 +26,10 @@ def _fill_template(template: str, **values) -> str:
         'rag_context': '',
         'upstream_context': '',
         'param_indices': '',
-        'diting_rules_json': ''
+        'diting_rules_json': '',
+        'RULE_HINTS_BLOCK': '',
+        'sink_function': '',
+        'param_index': ''
     }
     
     # valuesで上書き
@@ -50,6 +54,57 @@ except ImportError:
     print("[WARN] RAG module not available. RAG features disabled.")
 
 
+def build_rule_hints_block_from_codeql(json_path: Path) -> str:
+    """
+    codeql_rules.jsonから最小のルールヒントブロックを生成
+    
+    Args:
+        json_path: codeql_rules.jsonのパス
+    
+    Returns:
+        ルールヒントブロック文字列
+    """
+    try:
+        with open(json_path, 'r', encoding='utf-8') as f:
+            codeql_rules = json.load(f)
+        
+        # ルールIDのリストを抽出
+        rule_ids = []
+        if 'detection_rules' in codeql_rules:
+            for rule in codeql_rules['detection_rules']:
+                if 'rule_id' in rule:
+                    rule_ids.append(rule['rule_id'])
+        elif 'rules' in codeql_rules:
+            for rule in codeql_rules['rules']:
+                if 'rule_id' in rule:
+                    rule_ids.append(rule['rule_id'])
+        
+        # ルールIDリストの構築（常に'other'を追加）
+        if rule_ids:
+            # 実際のルールIDがある場合はそれを使用し、最後に'other'を追加
+            rule_ids.append('other')
+            rule_id_list = ', '.join(rule_ids)
+        else:
+            # ルールIDが見つからない場合はデフォルトを使用
+            rule_id_list = 'unencrypted_output, weak_input_validation, shared_memory_overwrite, other'
+        
+        # ヒントブロックを構築
+        hints = f"""RULE CLASSIFICATION HINTS (from codeql_rules.json):
+- Total rules: {codeql_rules.get('total_rules', len(rule_ids) - 1 if rule_ids else 3)}
+- Rule ID whitelist: {rule_id_list}
+- Categories: Buffer overflow, Integer overflow, Information disclosure, Memory corruption
+- Focus: TEE-specific vulnerabilities in ARM TrustZone environments"""
+        
+        return hints
+        
+    except Exception as e:
+        print(f"[WARN] Failed to build rule hints from {json_path}: {e}")
+        # フォールバック（'other'を含む）
+        return """RULE CLASSIFICATION HINTS:
+- Rule ID whitelist: unencrypted_output, weak_input_validation, shared_memory_overwrite, other
+- Focus: TEE vulnerabilities (buffer overflow, info disclosure, memory corruption)"""
+
+
 class PromptManager:
     """プロンプトテンプレートを管理するクラス"""
     
@@ -67,6 +122,10 @@ class PromptManager:
         self.mode = mode
         self.use_rag_mode = use_rag
         self._cache = {}
+        
+        # DITINGルールとヒントブロック
+        self._diting_rules_json = ""
+        self._rule_hints_block = ""
         
         # 現在のディレクトリパス
         rag_subdir = "with_rag" if use_rag else "no_rag"
@@ -101,6 +160,16 @@ class PromptManager:
         except Exception as e:
             print(f"[WARN] Failed to initialize RAG client: {e}")
             self._rag_client = None
+    
+    def set_diting_rules_json(self, json_str: str):
+        """DITINGルールのJSON文字列を設定"""
+        self._diting_rules_json = json_str
+        print(f"[INFO] DITING rules JSON set ({len(json_str)} chars)")
+    
+    def set_rule_hints_block(self, text: str):
+        """ルールヒントブロックを設定"""
+        self._rule_hints_block = text
+        print(f"[INFO] Rule hints block set ({len(text)} chars)")
     
     def load_prompt(self, filename: str) -> str:
         """
@@ -187,28 +256,38 @@ class PromptManager:
         return None
     
     def get_system_prompt(self) -> str:
-        """システムプロンプトを取得"""
-        return self.load_prompt("system.txt")
+        """システムプロンプトを取得（DITINGルールとヒントブロックを注入）"""
+        template = self.load_prompt("system.txt")
+        
+        # テンプレート変数を置換
+        return _fill_template(
+            template,
+            diting_rules_json=self._diting_rules_json,
+            RULE_HINTS_BLOCK=self._rule_hints_block
+        )
 
 
 # グローバルインスタンス（デフォルト: hybrid/no_rag）
 _prompt_manager = PromptManager(mode="hybrid", use_rag=False)
 
 
-def get_start_prompt(source_function: str, param_name: str, code: str) -> str:
+def get_start_prompt(source_function: str, param_name: str, code: str, 
+                    upstream_context: str = "") -> str:
     """スタートプロンプトを生成"""
     template = _prompt_manager.load_prompt("taint_start.txt")
     return _fill_template(
         template,
         source_function=source_function,
         param_name=param_name,
-        code=code
+        code=code,
+        upstream_context=upstream_context
     )
 
 
 def get_middle_prompt(source_function: str, param_name: str, code: str,
                      sink_function: Optional[str] = None,
-                     param_index: Optional[int] = None) -> str:
+                     param_index: Optional[int] = None,
+                     upstream_context: str = "") -> str:
     """中間プロンプトを生成"""
     print(f"[DEBUG] get_middle_prompt: mode={_prompt_manager.mode}, rag={_prompt_manager.use_rag_mode}")
     
@@ -227,13 +306,16 @@ def get_middle_prompt(source_function: str, param_name: str, code: str,
         param_name=param_name,
         code=code,
         rag_context=rag_context,
-        upstream_context=""  # 必要に応じて設定
+        upstream_context=upstream_context,
+        sink_function=sink_function or "",
+        param_index=str(param_index) if param_index is not None else ""
     )
 
 
 def get_middle_prompt_multi_params(source_function: str, param_name: str, code: str,
                                   sink_function: Optional[str] = None,
-                                  param_indices: Optional[list] = None) -> str:
+                                  param_indices: Optional[list] = None,
+                                  upstream_context: str = "") -> str:
     """複数パラメータ用の中間プロンプトを生成"""
     print(f"[DEBUG] get_middle_prompt_multi_params: mode={_prompt_manager.mode}, rag={_prompt_manager.use_rag_mode}")
     
@@ -253,7 +335,8 @@ def get_middle_prompt_multi_params(source_function: str, param_name: str, code: 
         code=code,
         rag_context=rag_context,
         param_indices=str(param_indices) if param_indices else "",
-        upstream_context=""
+        upstream_context=upstream_context,
+        sink_function=sink_function or ""
     )
 
 
@@ -292,6 +375,18 @@ def set_rag_enabled(enabled: bool):
     print(f"[INFO] Now using: {_prompt_manager.current_dir.relative_to(_prompt_manager.base_dir)}")
 
 
+def set_diting_rules(json_str: str):
+    """DITINGルールを設定"""
+    global _prompt_manager
+    _prompt_manager.set_diting_rules_json(json_str)
+
+
+def set_rule_hints(hints: str):
+    """ルールヒントブロックを設定"""
+    global _prompt_manager
+    _prompt_manager.set_rule_hints_block(hints)
+
+
 def is_rag_available() -> bool:
     """RAGが利用可能かチェック"""
     return _prompt_manager._rag_client is not None
@@ -308,7 +403,9 @@ def get_current_config() -> Dict[str, any]:
         "mode": _prompt_manager.mode,
         "rag_enabled": _prompt_manager.use_rag_mode,
         "rag_available": is_rag_available(),
-        "prompt_dir": str(_prompt_manager.current_dir)
+        "prompt_dir": str(_prompt_manager.current_dir),
+        "has_diting_rules": bool(_prompt_manager._diting_rules_json),
+        "has_rule_hints": bool(_prompt_manager._rule_hints_block)
     }
 
 
@@ -322,8 +419,17 @@ def reload_prompts():
 def main():
     """動作確認"""
     print("="*60)
-    print("Prompt Manager Test")
+    print("Enhanced Prompt Manager Test")
     print("="*60)
+    
+    # ルールヒントのテスト
+    rules_path = Path("/workspace/rules/codeql_rules.json")
+    if rules_path.exists():
+        hints = build_rule_hints_block_from_codeql(rules_path)
+        print("Generated rule hints:")
+        print(hints)
+        print()
+        set_rule_hints(hints)
     
     # 現在の設定を表示
     config = get_current_config()
@@ -352,9 +458,9 @@ def main():
         # 各プロンプトファイルをテスト
         tests = [
             ("system.txt", lambda: _prompt_manager.get_system_prompt()),
-            ("taint_start.txt", lambda: get_start_prompt("func", "param", "code")),
-            ("taint_middle.txt", lambda: get_middle_prompt("func", "param", "code")),
-            ("taint_middle_multi_params.txt", lambda: get_middle_prompt_multi_params("func", "param", "code")),
+            ("taint_start.txt", lambda: get_start_prompt("func", "param", "code", "upstream")),
+            ("taint_middle.txt", lambda: get_middle_prompt("func", "param", "code", "sink", 0, "upstream")),
+            ("taint_middle_multi_params.txt", lambda: get_middle_prompt_multi_params("func", "param", "code", "sink", [0,1], "upstream")),
             ("taint_end.txt", lambda: get_end_prompt())
         ]
         
@@ -362,6 +468,12 @@ def main():
             try:
                 content = loader()
                 print(f"  ✓ {filename}: {len(content)} chars")
+                # DITINGルールとヒントが注入されているか確認
+                if filename == "system.txt" and mode == "hybrid":
+                    has_rules = "{diting_rules_json}" not in content or _prompt_manager._diting_rules_json
+                    has_hints = "{RULE_HINTS_BLOCK}" not in content or _prompt_manager._rule_hints_block
+                    print(f"    - DITING rules injected: {has_rules}")
+                    print(f"    - Rule hints injected: {has_hints}")
             except Exception as e:
                 print(f"  ✗ {filename}: {e}")
                 test_passed = False

@@ -4,6 +4,7 @@
 テイント解析のコアロジック（最適化版）
 - チェイン接頭辞のキャッシュ
 - チェインのツリー構造化による効率的な解析
+- FINDINGS/END_FINDINGS両方の収集とend優先マージ
 """
 
 import sys
@@ -132,7 +133,14 @@ class TaintAnalyzer:
             "total_llm_calls": 0,
             "total_time": 0,
             "unique_prefixes_analyzed": 0,
-            "cache_reuse_count": 0
+            "cache_reuse_count": 0,
+            "findings_stats": {
+                "total_collected": 0,
+                "middle_findings": 0,
+                "end_findings": 0,
+                "after_merge": 0,
+                "duplicates_removed": 0
+            }
         }
     
     def analyze_all_flows(self, flows_data: List[dict]) -> Tuple[List[dict], List[dict]]:
@@ -167,6 +175,15 @@ class TaintAnalyzer:
         print(f"  ヒット率: {cache_stats['hit_rate']}")
         print(f"  キャッシュされた接頭辞数: {cache_stats['cached_prefixes']}")
         
+        # Step 5: Findings統計を出力
+        findings_stats = self.stats["findings_stats"]
+        print(f"\n[Findings統計]")
+        print(f"  収集された総数: {findings_stats['total_collected']}")
+        print(f"  Middle findings: {findings_stats['middle_findings']}")
+        print(f"  End findings: {findings_stats['end_findings']}")
+        print(f"  マージ後: {findings_stats['after_merge']}")
+        print(f"  削除された重複: {findings_stats['duplicates_removed']}")
+        
         return vulnerabilities, inline_findings
     
     def _build_chain_tree(self, flows_data: List[dict]):
@@ -183,8 +200,8 @@ class TaintAnalyzer:
         vulnerabilities = []
         all_inline_findings = []
         
-        # 解析済みのチェインを記録
-        analyzed_chains = {}  # chain_tuple -> result
+        # 脆弱性の重複を防ぐためのセット
+        seen_vulnerabilities = set()
         
         # すべての一意なチェインを処理
         total_unique = len(self.chain_tree.chain_to_flows)
@@ -207,18 +224,143 @@ class TaintAnalyzer:
                 result_copy["flow_idx"] = flow_idx
                 result_copy["chain_idx"] = chain_idx
                 
-                if result_copy.get("is_vulnerable"):
+                # 脆弱性の一意キーを生成
+                vuln_key = (
+                    tuple(chain),
+                    specific_vd.get("sink"),
+                    specific_vd.get("file"),
+                    specific_vd.get("line")
+                )
+                
+                # 重複チェックして脆弱性を追加
+                if result_copy.get("is_vulnerable") and vuln_key not in seen_vulnerabilities:
+                    seen_vulnerabilities.add(vuln_key)
                     vulnerabilities.append(result_copy)
                 
+                # inline_findingsを収集
                 if result_copy.get("inline_findings"):
                     all_inline_findings.extend(result_copy["inline_findings"])
-            
-            self.stats["total_chains_analyzed"] += len(flow_infos)
         
-        # 重複排除
-        inline_findings = self._deduplicate_findings(all_inline_findings)
+        # 統計を更新
+        self.stats["findings_stats"]["total_collected"] = len(all_inline_findings)
+        
+        # inline_findingsのend優先マージ
+        inline_findings = self._merge_findings_with_end_priority(all_inline_findings)
         
         return vulnerabilities, inline_findings
+    
+    def _merge_findings_with_end_priority(self, findings: List[dict]) -> List[dict]:
+        """
+        end優先でfindingsをマージ
+        
+        1. 複合キーでグループ化
+        2. endがあればendを優先、なければmiddleを採用
+        3. 参照情報を保持
+        """
+        # グループ化用の辞書
+        groups = {}  # key => {"end": [], "middle": []}
+        
+        for f in findings:
+            # phaseの統計を更新
+            if f.get("phase") == "end":
+                self.stats["findings_stats"]["end_findings"] += 1
+            else:
+                self.stats["findings_stats"]["middle_findings"] += 1
+            
+            # 複合キーの計算
+            rule_ids = tuple(sorted(f.get("rule_matches", {}).get("rule_id", []))) or tuple()
+            line_bucket = f.get("line", 0) // 2
+            sink_key = f.get("sink_function") or "unknown"
+            
+            key = (
+                f.get("file"),
+                line_bucket,
+                sink_key,
+                rule_ids
+            )
+            
+            # グループに追加
+            if key not in groups:
+                groups[key] = {"end": [], "middle": []}
+            
+            phase = f.get("phase", "middle")
+            groups[key][phase].append(f)
+        
+        # マージ処理
+        final = []
+        duplicates_removed = 0
+        
+        for key, bucket in groups.items():
+            if bucket["end"]:
+                # endが一つでもあればendを代表として採用
+                chosen = bucket["end"][0]
+                
+                # 参考情報としてmiddleのIDをrefsに追加
+                mids = [m.get("id") for m in bucket["middle"] if m.get("id")]
+                if mids:
+                    chosen.setdefault("refs", [])
+                    chosen["refs"].extend([f"inline:{mid}" for mid in mids])
+                
+                # 他のend findingsもrefsに追加（最初のもの以外）
+                for other_end in bucket["end"][1:]:
+                    if other_end.get("id"):
+                        chosen.setdefault("refs", [])
+                        chosen["refs"].append(f"end:{other_end['id']}")
+                        duplicates_removed += 1
+                
+                # middle findingsの重複をカウント
+                duplicates_removed += len(bucket["middle"])
+                
+                final.append(chosen)
+            elif bucket["middle"]:
+                # endがない場合はmiddleの代表だけ残す
+                chosen = bucket["middle"][0]
+                
+                # 他のmiddle findingsをrefsに追加
+                for other_mid in bucket["middle"][1:]:
+                    if other_mid.get("id"):
+                        chosen.setdefault("refs", [])
+                        chosen["refs"].append(f"middle:{other_mid['id']}")
+                        duplicates_removed += 1
+                
+                final.append(chosen)
+        
+        # フォールバック: IDが完全一致するものを更に統合
+        final = self._deduplicate_by_id(final)
+        
+        # 統計を更新
+        self.stats["findings_stats"]["after_merge"] = len(final)
+        self.stats["findings_stats"]["duplicates_removed"] = duplicates_removed
+        
+        return final
+    
+    def _deduplicate_by_id(self, findings: List[dict]) -> List[dict]:
+        """IDが完全一致する findingsを統合"""
+        seen_ids = {}
+        deduped = []
+        
+        for finding in findings:
+            finding_id = finding.get("id")
+            
+            if not finding_id:
+                # IDがない場合はそのまま追加
+                deduped.append(finding)
+                continue
+            
+            if finding_id in seen_ids:
+                # 既存のfindingにrefsを追加
+                existing = seen_ids[finding_id]
+                if finding.get("refs"):
+                    existing.setdefault("refs", [])
+                    existing["refs"].extend(finding["refs"])
+                    # refsの重複を削除
+                    existing["refs"] = list(set(existing["refs"]))
+            else:
+                # 新規finding
+                seen_ids[finding_id] = finding
+                deduped.append(finding)
+        
+        return deduped
     
     def _analyze_chain_with_cache(self, chain: List[str], vd: dict) -> dict:
         """キャッシュを活用した単一チェインの解析"""
@@ -273,6 +415,8 @@ class TaintAnalyzer:
         # 残りの関数を解析
         for i in range(cached_prefix_len, len(chain)):
             func_name = chain[i]
+            is_final = (i == len(chain) - 1)
+            
             self._analyze_function(
                 func_name=func_name,
                 position=i,
@@ -280,7 +424,8 @@ class TaintAnalyzer:
                 vd=vd,
                 param_indices=param_indices,
                 source_params=None,  # TODO: 必要に応じて追加
-                results=results
+                results=results,
+                is_final=is_final
             )
             
             # 新しい接頭辞をキャッシュに保存（最後の関数以外）
@@ -297,7 +442,7 @@ class TaintAnalyzer:
                     self.stats["unique_prefixes_analyzed"] += 1
         
         # 最終的な脆弱性判定
-        vuln_result = self._perform_vulnerability_analysis(results)
+        vuln_result = self._perform_vulnerability_analysis(results, chain, vd)
         results.update(vuln_result)
         
         return results
@@ -310,7 +455,8 @@ class TaintAnalyzer:
         vd: dict,
         param_indices: List[int],
         source_params: Optional[List[str]],
-        results: dict
+        results: dict,
+        is_final: bool = False
     ):
         """単一関数の解析"""
         self.stats["total_functions_analyzed"] += 1
@@ -327,7 +473,6 @@ class TaintAnalyzer:
             extended_vd['current_line'] = current_func_info['line']
         
         # コードを取得
-        is_final = (position == len(chain) - 1)
         if is_final and func_name == vd["sink"]:
             code = self.code_extractor.extract_function_code(func_name, vd)
         else:
@@ -358,8 +503,64 @@ class TaintAnalyzer:
             "rag_used": self.use_rag and is_rag_available()
         })
         
-        # 解析結果をパース
+        # 解析結果をパース（中間: FINDINGSを収集）
         self._parse_function_analysis(response, func_name, position, chain, extended_vd, results)
+    
+    def _perform_vulnerability_analysis(self, results: dict, chain: List[str], vd: dict) -> dict:
+        """最終的な脆弱性判定とEND_FINDINGSの収集"""
+        end_prompt = get_end_prompt()
+        
+        self.conversation_manager.add_message("user", end_prompt)
+        self.logger.log_section("Vulnerability Analysis", level=2)
+        self.logger.writeln("### Prompt:")
+        self.logger.writeln(end_prompt)
+        self.logger.writeln("")
+        
+        vuln_response = self._ask_llm()
+        self.stats["total_llm_calls"] += 1
+        
+        self.logger.writeln("### Response:")
+        self.logger.writeln(vuln_response)
+        self.logger.writeln("")
+        
+        # 脆弱性判定をパース
+        is_vuln, meta = self.vuln_parser.parse_vuln_response(vuln_response)
+        vuln_details = self.vuln_parser.parse_detailed_vuln_response(vuln_response)
+        
+        # END_FINDINGSを抽出
+        try:
+            # 最後の関数名を使用（シンク関数）
+            func_name = chain[-1] if chain else "unknown"
+            
+            # 現在の関数のファイル情報を取得
+            current_func_info = None
+            if func_name in self.code_extractor.user_functions:
+                current_func_info = self.code_extractor.user_functions[func_name]
+            
+            # vdを拡張
+            extended_vd = vd.copy()
+            if current_func_info:
+                extended_vd['current_file'] = current_func_info['file']
+                extended_vd['current_line'] = current_func_info['line']
+            
+            # END_FINDINGSを抽出
+            end_findings = self.vuln_parser.extract_end_findings(
+                vuln_response, func_name, chain, extended_vd,
+                self.code_extractor.project_root
+            )
+            
+            if end_findings:
+                results["inline_findings"].extend(end_findings)
+                self.logger.writeln(f"[INFO] Extracted {len(end_findings)} END_FINDINGS")
+        except Exception as e:
+            self.logger.writeln(f"[WARN] END_FINDINGS parse failed: {e}")
+        
+        return {
+            "vulnerability": vuln_response,
+            "vulnerability_details": vuln_details,
+            "is_vulnerable": is_vuln,
+            "meta": meta
+        }
     
     def _generate_prompt(
         self,
@@ -453,7 +654,7 @@ class TaintAnalyzer:
         vd: dict,
         results: dict
     ):
-        """関数解析結果をパース"""
+        """関数解析結果をパース（FINDINGSを収集）"""
         # 推論過程を記録
         reasoning_step = {
             "function": func_name,
@@ -464,44 +665,26 @@ class TaintAnalyzer:
         }
         results["reasoning_trace"].append(reasoning_step)
         
-        # インライン脆弱性の抽出
+        # インライン脆弱性の抽出（FINDINGSとEND_FINDINGSの両方を試みる）
         try:
+            # まずFINDINGSを抽出
             findings = self.vuln_parser.extract_inline_findings(
                 response, func_name, chain, vd, 
                 self.code_extractor.project_root
             )
             if findings:
                 results["inline_findings"].extend(findings)
+            
+            # END_FINDINGSも抽出（中間関数でも出力される可能性がある）
+            end_findings = self.vuln_parser.extract_end_findings(
+                response, func_name, chain, vd,
+                self.code_extractor.project_root
+            )
+            if end_findings:
+                results["inline_findings"].extend(end_findings)
+                
         except Exception as e:
-            self.logger.writeln(f"[WARN] inline findings parse failed at {func_name}: {e}")
-    
-    def _perform_vulnerability_analysis(self, results: dict) -> dict:
-        """最終的な脆弱性判定"""
-        end_prompt = get_end_prompt()
-        
-        self.conversation_manager.add_message("user", end_prompt)
-        self.logger.log_section("Vulnerability Analysis", level=2)
-        self.logger.writeln("### Prompt:")
-        self.logger.writeln(end_prompt)
-        self.logger.writeln("")
-        
-        vuln_response = self._ask_llm()
-        self.stats["total_llm_calls"] += 1
-        
-        self.logger.writeln("### Response:")
-        self.logger.writeln(vuln_response)
-        self.logger.writeln("")
-        
-        # 脆弱性判定をパース
-        is_vuln, meta = self.vuln_parser.parse_vuln_response(vuln_response)
-        vuln_details = self.vuln_parser.parse_detailed_vuln_response(vuln_response)
-        
-        return {
-            "vulnerability": vuln_response,
-            "vulnerability_details": vuln_details,
-            "is_vulnerable": is_vuln,
-            "meta": meta
-        }
+            self.logger.writeln(f"[WARN] findings parse failed at {func_name}: {e}")
     
     def _extract_param_indices(self, vd: dict) -> List[int]:
         """VDからパラメータインデックスを抽出"""
@@ -519,24 +702,6 @@ class TaintAnalyzer:
             return f"param {param_indices[0]}"
         else:
             return f"params {param_indices}"
-    
-    def _deduplicate_findings(self, findings: List[dict], window: int = 2) -> List[dict]:
-        """近似重複排除"""
-        seen = set()
-        deduped = []
-        
-        for finding in findings:
-            key = (
-                finding.get("file"),
-                finding.get("category"),
-                int(finding.get("line", 0)) // max(1, window)
-            )
-            
-            if key not in seen:
-                seen.add(key)
-                deduped.append(finding)
-        
-        return deduped
     
     def get_stats(self) -> dict:
         """統計情報を取得"""

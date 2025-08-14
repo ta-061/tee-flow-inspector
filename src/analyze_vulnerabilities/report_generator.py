@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import List, Dict
 import time
 
-from .utils import calculate_confidence_score, truncate_string, format_time_duration
+from .utils import truncate_string, format_time_duration
 
 class ReportGenerator:
     """
@@ -54,11 +54,6 @@ class ReportGenerator:
         f.write("### Basic Information\n\n")
         f.write(f"**Chain**: `{' -> '.join(vuln['chain'])}`\n\n")
         f.write(f"**Sink**: `{vuln['vd']['sink']}` at `{vuln['vd']['file']}:{vuln['vd']['line']}`\n\n")
-        
-        # 信頼度スコア
-        confidence = calculate_confidence_score(vuln)
-        confidence_level = self._get_confidence_level(confidence)
-        f.write(f"**Confidence**: {confidence_level} ({confidence:.0%})\n\n")
         
         # 詳細情報
         details = vuln.get("vulnerability_details", {}).get("details", {})

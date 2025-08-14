@@ -1,54 +1,45 @@
-Continue the taint analysis for the next step in the call chain.
+Continue the taint analysis for the next step in the call chain (multiple parameter flows).
 
 You will receive:
 - Code to analyze: {code}
-- (Optional) Upstream context: {upstream_context}   # e.g., previously tainted vars/params
+- (Optional) Upstream context: {upstream_context}
 - (Optional) TEE API Documentation Context (RAG): {rag_context}
 
-=== RAG POLICY (STRICT) ===
-- Use {rag_context} ONLY to clarify OP-TEE API semantics (param directions, memory domains).
-- NEVER use RAG to infer dataflow or to contradict the given {code}. If RAG conflicts with code, PREFER THE CODE and suppress the finding.
+Guardrails:
+- Alloc/Free (TEE_Malloc/TEE_Free) are NOT sinks.
+- Random from TEE_GenerateRandom is NON-sensitive by default.
+- Report only when a concrete dangerous sink is reached and attacker influence is plausible from {code}.
 
-=== FALSE-POSITIVE GUARDRAILS (MUST FOLLOW) ===
-- TEE_Malloc / TEE_Free are NOT sinks. Do NOT include them in "sinks" or in FINDINGS.
-- Random bytes from TEE_GenerateRandom are NON-SENSITIVE by default. Copying them to MEMREF_OUTPUT is NOT "unencrypted_output".
-- Emit a finding ONLY if BOTH are true:
-  (1) A concrete dangerous sink is reached (actual write/copy/output with evidence line),
-  (2) Attacker influence or cross-world exposure is plausible from the shown code (e.g., memref from Normal World, param_types misuse).
+Tasks:
+1) Initialize taint from {upstream_context}; otherwise infer taint only when code ingests untrusted input.
+2) Track multi-parameter relations (buf-len, dst-src-n, ptr-offset-size, index-bound).
+3) Record flows as "LHS <- RHS @ <file>:<line>" in "propagation".
+4) Record validators in "sanitizers" with evidence lines.
+5) Record dangerous sinks in "sinks" with evidence lines.
+6) If param_types misuse or unchecked size enables attacker influence to a sink, put in "evidence".
+7) Classify into "rule_matches":{"rule_id":[...],"others":[...]}:
+   - include host-provided IDs
+   - include matching DITING rule IDs
+   - otherwise put in "others"
+8) If {rag_context} was used, add concise labels to rag_refs.
 
-=== WHAT TO INFER (NO MANUAL FUNCTION/PARAM NAMES PROVIDED) ===
-- Infer the current function name from the code’s signature. If unavailable, set "function":"unknown".
-- Build the initial TAINTED set from the upstream context if provided.
-  If not provided, assume no taint unless the code clearly pulls input from external/untrusted sources.
-- Track explicit dataflow only (assignments, parameter passing, buffer writes/reads). 
-  For control dependence, annotate as "implicit:<var>".
+OUTPUT CONTRACT:
+Line 1:
+{"function":"<auto or parsed name>","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":{"rule_id":[],"others":[]}}
 
-=== OUTPUT CONTRACT (STRICT — EXACTLY TWO LINES) ===
-Line 1: a single JSON object with these fields:
-{"function":"<auto-inferred or 'unknown'>","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
-- "propagation": array of steps "LHS <- RHS @ <file>:<line>"
-- "sanitizers": validations (bounds checks, type checks, TEE_CheckMemoryAccessRights, length caps) with "<file>:<line>"
-- "sinks": dangerous uses (e.g., TEE_MemMove with attacker-controlled length/buffer; printf/IO; shared-memory writes) with "<file>:<line>". Do NOT include alloc/free.
-- "evidence": other key facts (e.g., param_types vs. actual access mismatch) with "<file>:<line>"
-- "rule_matches": matched rule IDs (if any), each with supporting evidence lines
-
-Line 2: a single line starting with FINDINGS= and containing JSON:
-FINDINGS={"items":[{"rule":"unencrypted_output|weak_input_validation|shared_memory_overwrite","file":"<path>","line":123,"why":"<one sentence>","evidence":"<file>:<line>","code_excerpt":"<short>"}]}
-Rules for Line 2:
-- Always print the FINDINGS line; if nothing qualifies, output: FINDINGS={"items":[]}
-- Include an item ONLY if it satisfies the two conditions in the guardrails above.
-- Each item MUST include concrete code evidence. If you cannot cite "<file>:<line>", use evidence:"unknown".
-- Allowed rule values are exactly: unencrypted_output, weak_input_validation, shared_memory_overwrite.
-- DO NOT print any extra text before/after these two lines.
-
-=== ANALYSIS STEPS (APPLY TO THE GIVEN CODE) ===
-1) Parse the function signature to infer the function name (or "unknown"). 
-2) Initialize TAINTED from upstream context (if given). Otherwise, derive only when the code clearly imports untrusted input.
-3) Record dataflow:
-   - Append "LHS <- RHS @ <file>:<line>" to "propagation" for each explicit flow/alias.
-4) Identify validators/sanitizers and add them to "sanitizers" with lines.
-5) Identify dangerous sinks and add them to "sinks" with lines.
-   - Exclude alloc/free; treat cross-world or shared-memory writes as sinks only when tainted data/length is used.
-6) Check parameter-type consistency:
-   - If `param_types` declaration conflicts with actual reads/writes (e.g., reading from NONE/OUTPUT), record in "evidence" (and map to `weak_input_validation` only if it enables attacker influence to reach a sink).
-7) If any DITING rule matches, add its ID to "rule_matches" with evidence lines.
+Line 2:
+FINDINGS={"items":[
+  {
+    "file":"<path|'unknown'>",
+    "line":<int>,
+    "rule":"<short_category>",
+    "why":"<short_reason>",
+    "function":"<CURRENT_FUNCTION>",
+    "phase":"middle",
+    "sink_function":"<SINK_OR_EXTERNAL_FN|'unknown'>",
+    "rule_matches":{"rule_id":["<RULE_ID1>", ...],"others":["<freeform>", ...]},
+    "rag_refs":["<doc:section|page?>", ...],
+    "code_excerpt":"<short>"
+  }
+]}
+If nothing qualifies: FINDINGS={"items":[]}
