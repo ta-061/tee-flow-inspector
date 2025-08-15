@@ -95,10 +95,10 @@ static TEE_Result random_number_generate(uint32_t param_types,
 	TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size);
 	TEE_Free(buf);
 
-	char key[] = "my_secret_key";
-	char *str = TEE_Malloc(strlen(key)+1, 0);
-	test(str, key);
-	test(params[1].memref.buffer, key);
+	// char key[] = "my_secret_key";
+	// char *str = TEE_Malloc(strlen(key)+1, 0);
+	// test(str, key);
+	// test(params[1].memref.buffer, key);
 
 	return TEE_SUCCESS;
 }

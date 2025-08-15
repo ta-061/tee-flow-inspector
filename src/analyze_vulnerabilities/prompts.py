@@ -90,8 +90,8 @@ def build_rule_hints_block_from_codeql(json_path: Path) -> str:
         
         # ヒントブロックを構築
         hints = f"""RULE CLASSIFICATION HINTS (from codeql_rules.json):
-- Total rules: {codeql_rules.get('total_rules', len(rule_ids) - 1 if rule_ids else 3)}
-- Rule ID whitelist: {rule_id_list}
+- Total rules: {codeql_rules.get('total_rules', len(rule_ids))}
+- rule_id: {rule_id_list}
 - Categories: Buffer overflow, Integer overflow, Information disclosure, Memory corruption
 - Focus: TEE-specific vulnerabilities in ARM TrustZone environments"""
         
@@ -101,7 +101,7 @@ def build_rule_hints_block_from_codeql(json_path: Path) -> str:
         print(f"[WARN] Failed to build rule hints from {json_path}: {e}")
         # フォールバック（'other'を含む）
         return """RULE CLASSIFICATION HINTS:
-- Rule ID whitelist: unencrypted_output, weak_input_validation, shared_memory_overwrite, other
+- rule_id: unencrypted_output, weak_input_validation, shared_memory_overwrite, other
 - Focus: TEE vulnerabilities (buffer overflow, info disclosure, memory corruption)"""
 
 
@@ -118,6 +118,7 @@ class PromptManager:
         if prompts_dir is None:
             prompts_dir = Path("/workspace/prompts/vulnerabilities_prompt")
         
+        self.prompts_dir = prompts_dir
         self.base_dir = prompts_dir
         self.mode = mode
         self.use_rag_mode = use_rag

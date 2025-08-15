@@ -258,13 +258,16 @@ class TaintAnalyzer:
         3. 参照情報を保持
         """
         # グループ化用の辞書
-        groups = {}  # key => {"end": [], "middle": []}
+        groups = {}  # key => {"end": [], "middle": [], "start": [], "other": []}
         
         for f in findings:
             # phaseの統計を更新
-            if f.get("phase") == "end":
+            phase = f.get("phase", "middle").lower()
+            
+            # 統計の更新
+            if phase == "end":
                 self.stats["findings_stats"]["end_findings"] += 1
-            else:
+            elif phase in ["middle", "start"]:
                 self.stats["findings_stats"]["middle_findings"] += 1
             
             # 複合キーの計算
@@ -281,48 +284,93 @@ class TaintAnalyzer:
             
             # グループに追加
             if key not in groups:
-                groups[key] = {"end": [], "middle": []}
+                groups[key] = {"end": [], "middle": [], "start": [], "other": []}
             
-            phase = f.get("phase", "middle")
-            groups[key][phase].append(f)
+            # phaseに基づいて分類
+            if phase in ["end", "middle", "start"]:
+                groups[key][phase].append(f)
+            else:
+                # 予期しないphaseの場合
+                groups[key]["other"].append(f)
+                print(f"[WARN] Unexpected phase value: {phase}")
         
         # マージ処理
         final = []
         duplicates_removed = 0
         
         for key, bucket in groups.items():
+            chosen = None
+            refs = []
+            
+            # 優先順位: end > middle > start > other
             if bucket["end"]:
                 # endが一つでもあればendを代表として採用
                 chosen = bucket["end"][0]
                 
-                # 参考情報としてmiddleのIDをrefsに追加
-                mids = [m.get("id") for m in bucket["middle"] if m.get("id")]
-                if mids:
-                    chosen.setdefault("refs", [])
-                    chosen["refs"].extend([f"inline:{mid}" for mid in mids])
+                # 参考情報として他のfindingsのIDをrefsに追加
+                for phase_name in ["middle", "start", "other"]:
+                    for item in bucket[phase_name]:
+                        if item.get("id"):
+                            refs.append(f"{phase_name}:{item['id']}")
+                            duplicates_removed += 1
                 
                 # 他のend findingsもrefsに追加（最初のもの以外）
                 for other_end in bucket["end"][1:]:
                     if other_end.get("id"):
-                        chosen.setdefault("refs", [])
-                        chosen["refs"].append(f"end:{other_end['id']}")
+                        refs.append(f"end:{other_end['id']}")
                         duplicates_removed += 1
-                
-                # middle findingsの重複をカウント
-                duplicates_removed += len(bucket["middle"])
-                
-                final.append(chosen)
+                        
             elif bucket["middle"]:
-                # endがない場合はmiddleの代表だけ残す
+                # endがない場合はmiddleの代表を採用
                 chosen = bucket["middle"][0]
+                
+                # startとotherをrefsに追加
+                for phase_name in ["start", "other"]:
+                    for item in bucket[phase_name]:
+                        if item.get("id"):
+                            refs.append(f"{phase_name}:{item['id']}")
+                            duplicates_removed += 1
                 
                 # 他のmiddle findingsをrefsに追加
                 for other_mid in bucket["middle"][1:]:
                     if other_mid.get("id"):
-                        chosen.setdefault("refs", [])
-                        chosen["refs"].append(f"middle:{other_mid['id']}")
+                        refs.append(f"middle:{other_mid['id']}")
+                        duplicates_removed += 1
+                        
+            elif bucket["start"]:
+                # endとmiddleがない場合はstartの代表を採用
+                chosen = bucket["start"][0]
+                
+                # otherをrefsに追加
+                for item in bucket["other"]:
+                    if item.get("id"):
+                        refs.append(f"other:{item['id']}")
                         duplicates_removed += 1
                 
+                # 他のstart findingsをrefsに追加
+                for other_start in bucket["start"][1:]:
+                    if other_start.get("id"):
+                        refs.append(f"start:{other_start['id']}")
+                        duplicates_removed += 1
+                        
+            elif bucket["other"]:
+                # 他に何もない場合
+                chosen = bucket["other"][0]
+                
+                # 他のother findingsをrefsに追加
+                for other_item in bucket["other"][1:]:
+                    if other_item.get("id"):
+                        refs.append(f"other:{other_item['id']}")
+                        duplicates_removed += 1
+            
+            # refsを追加
+            if chosen and refs:
+                chosen.setdefault("refs", [])
+                chosen["refs"].extend(refs)
+                # refsの重複を削除
+                chosen["refs"] = list(set(chosen["refs"]))
+            
+            if chosen:
                 final.append(chosen)
         
         # フォールバック: IDが完全一致するものを更に統合
@@ -612,37 +660,89 @@ class TaintAnalyzer:
                     sink_function=sink_function,
                     param_index=param_index
                 )
-    
+
+    def _debug_msgs(self, messages):
+        print(f"[DEBUG] messages_count={len(messages)}")
+        for i, m in enumerate(messages[-8:]):  # 直近だけでも十分
+            role = m.get("role")
+            content = m.get("content")
+            clen = len(content) if isinstance(content, str) else -1
+            print(f"  - [{i}] role={role} len={clen}")
+            if isinstance(content, str):
+                print(f"    head={repr(content[:160])}")
+
     def _ask_llm(self, max_retries: int = 3) -> str:
         """LLMに問い合わせ（トークン追跡対応版）"""
         messages = self.conversation_manager.get_history()
-        
-        # トークン数をチェック（警告のみ）
-        size_info = self.conversation_manager.get_current_size()
-        if size_info["estimated_tokens"] > 100000:
-            print(f"[WARN] Conversation is very long: {size_info['estimated_tokens']} tokens")
-        
+
+        # current_provider = getattr(self.client, "get_current_provider", lambda: "unknown")()
+        # print(f"[DEBUG] provider={current_provider}")
+        # size_info = self.conversation_manager.get_current_size()
+        # print(f"[DEBUG] estimated_tokens={size_info.get('estimated_tokens')}")
+
+        # if size_info["estimated_tokens"] > 100000:
+        #     print(f"[WARN] Conversation is very long: {size_info['estimated_tokens']} tokens")
+
+        # 直前の会話メッセージ概要を毎回出す
+        # self._debug_msgs(messages)
+
         for attempt in range(max_retries):
             try:
-                # トークン追跡クライアントを使用している場合
+                # 実際のクライアント設定を可視化
+                cfg = getattr(self.client, "get_config", lambda: {})()
+                # print(f"[DEBUG] llm_config={cfg}")
+
+                # モデル別の暫定プリセット（nano安全策）
+                model = (cfg.get("model") or "").lower()
+                if "gpt-5-nano" in model:
+                    # client側にこういうAPIが無い場合は update_config 等を使って事前に設定
+                    try:
+                        self.client.update_config(stop=None)
+                        # “max_tokens” キー名が実装で違うなら、あなたのクライアントに合わせて調整
+                        if not cfg.get("max_tokens") or cfg.get("max_tokens") < 128:
+                            self.client.update_config(max_tokens=512)
+                        # temperatureはデフォルト推奨（0.0非対応モデルがある）
+                        print("[DEBUG] applied_nano_presets: stop=None, max_tokens>=512")
+                    except Exception as _:
+                        pass
+
+                # トークン追跡クライアント経由 / 通常クライアントどちらか
                 if hasattr(self.client, 'chat_completion_with_tokens'):
                     response, token_usage = self.client.chat_completion_with_tokens(messages)
                 else:
-                    # 通常のクライアント
                     response = self.client.chat_completion(messages)
-                
-                if not response or response.strip() == "":
+
+                # # 生レスポンスの可視化を強化
+                # rlen = len(response) if isinstance(response, str) else -1
+                # print(f"[DEBUG] raw_len={rlen}")
+                # print("=== RAW RESPONSE START ===")
+                # if isinstance(response, str):
+                #     head = response[:400]
+                #     tail = response[-200:] if len(response) > 600 else ""
+                #     print(repr(head))
+                #     if tail:
+                #         print("...<snip>...")
+                #         print(repr(tail))
+                # else:
+                #     print(repr(response))
+                # print("=== RAW RESPONSE END ===")
+
+                if not response or (isinstance(response, str) and response.strip() == ""):
                     raise ValueError("Empty response from LLM")
-                
+
                 return response
-                
+
             except Exception as e:
                 print(f"API call failed (attempt {attempt + 1}/{max_retries}): {e}")
+                # 失敗時点の会話を出す（何を投げたか即確認できる）
+                self._debug_msgs(messages)
+
                 if attempt == max_retries - 1:
                     return f"[ERROR] Failed to get LLM response after {max_retries} attempts: {e}"
-                
+
+                # 2回目は短縮プロンプト、3回目は最小契約のみ…などの段階的フォールバックがあるとさらに◎
                 time.sleep(2 ** attempt)
-        
+
         return "[ERROR] Maximum retries exceeded"
     
     def _parse_function_analysis(

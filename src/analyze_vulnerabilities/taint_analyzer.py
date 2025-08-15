@@ -298,15 +298,20 @@ def setup_diting_rules_enhanced(logger: StructuredLogger, use_rag: bool) -> Opti
     拡張版DITINGルールのセットアップ（Hybridモード用）
     CodeQLルールの統合とヒントブロックの生成を含む
     """
-    # DITINGプロンプトテンプレートを読み込み
-    diting_prompt_path = Path(__file__).parent.parent.parent / "prompts" / "vulnerabilities_prompt" / "codeql_rules_system.txt"
-    if not diting_prompt_path.exists():
-        print(f"[WARN] DITING system prompt file not found: {diting_prompt_path}")
+    # PromptManagerを使用してシステムプロンプトを取得
+    from prompts import _prompt_manager
+    
+    # Hybridモードでシステムプロンプトを読み込み
+    _prompt_manager.set_mode("hybrid", use_rag)
+    
+    try:
+        # PromptManagerからsystem.txtを取得
+        diting_template = _prompt_manager.load_prompt("system.txt")
+    except FileNotFoundError as e:
+        print(f"[WARN] System prompt file not found: {e}")
         return None
     
-    diting_template = diting_prompt_path.read_text(encoding="utf-8")
-    
-    # CodeQLルールをロード
+    # CodeQLルールをロード（以降は同じ）
     rules_dir = Path(__file__).parent.parent.parent / "rules"
     json_path = rules_dir / "codeql_rules.json"
     

@@ -200,14 +200,101 @@ class ReportGenerator:
         for rec in recommendations:
             f.write(f"- {rec}\n")
         f.write("\n")
-    
-    def _get_confidence_level(self, score: float) -> str:
-        """信頼度スコアをレベルに変換"""
-        if score >= 0.8:
-            return "High"
-        elif score >= 0.5:
-            return "Medium"
-        elif score >= 0.3:
-            return "Low"
-        else:
-            return "Very Low"
+        
+    def generate_findings_summary(self, output_path: Path, statistics: dict, findings: List[dict]):
+        """
+        Inline/End FINDINGS の集約サマリーをMarkdownで出力
+        - phase 別件数
+        - category（rule）別件数
+        - rule_matches.rule_id 別件数
+        - sink_function 別件数
+        - トップN項目（ファイル行＋要約）
+        """
+        # 集計
+        total = len(findings)
+        by_phase: Dict[str, int] = {}
+        by_category: Dict[str, int] = {}
+        by_sink: Dict[str, int] = {}
+        by_rule_id: Dict[str, int] = {}
+
+        for it in findings:
+            phase = (it.get("phase") or "middle").lower()
+            by_phase[phase] = by_phase.get(phase, 0) + 1
+
+            category = it.get("category") or (it.get("rule_matches", {}).get("rule_id", ["other"])[0] if isinstance(it.get("rule_matches"), dict) else "other")
+            by_category[category] = by_category.get(category, 0) + 1
+
+            sink = it.get("sink_function") or "unknown"
+            by_sink[sink] = by_sink.get(sink, 0) + 1
+
+            # rule_matches.rule_id を数える（dict 形式/後方互換両対応）
+            rm = it.get("rule_matches", {})
+            if isinstance(rm, dict):
+                for rid in (rm.get("rule_id") or []):
+                    by_rule_id[rid] = by_rule_id.get(rid, 0) + 1
+            elif isinstance(rm, list):
+                # 旧形式の後方互換
+                for rid in rm:
+                    by_rule_id[rid] = by_rule_id.get(rid, 0) + 1
+
+        # Markdown 出力
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write("# Inline Findings Summary\n\n")
+            f.write(f"Generated: {statistics.get('analysis_date','')}\n")
+            f.write(f"LLM Provider: {statistics.get('llm_provider','unknown')}\n")
+            f.write(f"Mode: {statistics.get('analysis_mode','unknown')}, RAG: {'Enabled' if statistics.get('rag_enabled') else 'Disabled'}\n")
+            f.write(f"Total findings: {total}\n\n")
+
+            # Phase 別
+            f.write("## By Phase\n\n")
+            for k, v in sorted(by_phase.items(), key=lambda x: (-x[1], x[0])):
+                f.write(f"- {k}: {v}\n")
+            f.write("\n")
+
+            # Category 別
+            f.write("## By Category (rule)\n\n")
+            for k, v in sorted(by_category.items(), key=lambda x: (-x[1], x[0])):
+                f.write(f"- {k}: {v}\n")
+            f.write("\n")
+
+            # rule_id 別
+            f.write("## By rule_id (rule_matches)\n\n")
+            if by_rule_id:
+                for k, v in sorted(by_rule_id.items(), key=lambda x: (-x[1], x[0])):
+                    f.write(f"- {k}: {v}\n")
+            else:
+                f.write("- (no rule_id classified)\n")
+            f.write("\n")
+
+            # sink_function 別
+            f.write("## By Sink Function\n\n")
+            for k, v in sorted(by_sink.items(), key=lambda x: (-x[1], x[0])):
+                f.write(f"- {k}: {v}\n")
+            f.write("\n")
+
+            # Top N 詳細（位置と一言）
+            f.write("## Top Findings (by file/line)\n\n")
+            # 安定並び：file, line, phase の順
+            sorted_items = sorted(findings, key=lambda it: (str(it.get('file')), int(it.get('line', 0)), (it.get('phase') or 'middle')))
+            TOP_N = min(50, len(sorted_items))
+            for i, it in enumerate(sorted_items[:TOP_N], 1):
+                file_ = it.get("file","unknown")
+                line_ = it.get("line","?")
+                phase = it.get("phase","middle")
+                func = it.get("function","unknown")
+                sink = it.get("sink_function","unknown")
+                category = it.get("category") or "unknown"
+                msg = truncate_string(it.get("message",""), 120)
+                # rule_id の代表
+                rid = ""
+                rm = it.get("rule_matches", {})
+                if isinstance(rm, dict) and (rm.get("rule_id") or []):
+                    rid = f" [rule_id: {', '.join(rm['rule_id'])}]"
+                f.write(f"{i}. `{file_}:{line_}` [{phase}] `{func}` → `{sink}` : **{category}**{rid}\n")
+                if msg:
+                    f.write(f"   - {msg}\n")
+                # with RAG: rag_refs を見せる
+                if "rag_refs" in it and it["rag_refs"]:
+                    refs = ', '.join(it["rag_refs"])
+                    f.write(f"   - refs: {refs}\n")
+                f.write("\n")
