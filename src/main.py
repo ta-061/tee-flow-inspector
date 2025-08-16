@@ -266,7 +266,7 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool,
         print(f"[phase3.7] → {vd_final}\n")
         phase_times["phase3.7_extract_sink_calls"] = time.time() - phase_start
 
-        # Phase5: 危険なフロー（候補）生成
+        # Phase4: 危険なフロー（候補）生成
         phase_start = time.time()
         flows_py = Path(__file__).parent / "identify_flows" / "generate_candidate_flows.py"
         candidate_flows = res_dir / f"{ta_dir.name}_candidate_flows.json"
@@ -276,10 +276,10 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool,
              "--sources", "TA_InvokeCommandEntryPoint,TA_OpenSessionEntryPoint",
              "--output", str(candidate_flows)],
             ta_dir, v)
-        print(f"[phase5 ] → {candidate_flows}\n")
-        phase_times["phase5_generate_candidate_flows"] = time.time() - phase_start
+        print(f"[phase4 ] → {candidate_flows}\n")
+        phase_times["phase4_generate_candidate_flows"] = time.time() - phase_start
 
-        # Phase6: テイント解析と脆弱性検査
+        # Phase5: テイント解析と脆弱性検査
         phase_start = time.time()
         taint_py = Path(__file__).parent / "analyze_vulnerabilities" / "taint_analyzer.py"
         vulnerabilities = res_dir / f"{ta_dir.name}_vulnerabilities.json"
@@ -302,9 +302,9 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool,
             taint_cmd.append("--track-tokens")
         
         run(taint_cmd, ta_dir, v)
-        phase_times["phase6_taint_analysis"] = time.time() - phase_start
+        phase_times["phase5_taint_analysis"] = time.time() - phase_start
 
-        # Phase7: HTMLレポート生成
+        # Phase6: HTMLレポート生成
         phase_start = time.time()
         report_py = Path(__file__).parent / "report" / "generate_report.py"
         report_html = res_dir / f"{ta_dir.name}_vulnerability_report.html"
@@ -317,8 +317,8 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool,
         if v:
             print(f"[DEBUG] Report command: {' '.join(report_cmd)}")
         run(report_cmd, ta_dir, v)
-        print(f"[phase7 ] → {report_html}\n")
-        phase_times["phase7_generate_report"] = time.time() - phase_start
+        print(f"[phase6 ] → {report_html}\n")
+        phase_times["phase6_generate_report"] = time.time() - phase_start
 
     finally:
         # 実行時間計測終了
