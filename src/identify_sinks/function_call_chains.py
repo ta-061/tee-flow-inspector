@@ -35,16 +35,19 @@ class FunctionSummary:
 class CompleteInterproceduralAnalyzer:
     """完全な関数間データフロー解析器"""
     
-    def __init__(self, tus: List, call_graph: List[Dict]):
+    def __init__(self, tus: List, call_graph: List[Dict], verbose: bool = False):
         self.tus = tus
         self.call_graph = call_graph
         self.function_summaries: Dict[str, FunctionSummary] = {}
         self.global_variables: Set[str] = set()
+        self.verbose = verbose
         
         # 全関数のサマリーを事前計算
-        print("[DEBUG] Computing function summaries...")
+        if self.verbose:
+            print("[DEBUG] Computing function summaries...")
         self._compute_all_function_summaries()
-        print(f"[DEBUG] Computed summaries for {len(self.function_summaries)} functions")
+        if self.verbose:
+            print(f"[DEBUG] Computed summaries for {len(self.function_summaries)} functions")
     
     def _compute_all_function_summaries(self):
         """すべての関数のデータフローサマリーを計算"""
@@ -301,7 +304,7 @@ def find_function_containing_vd(tu, vd: dict):
     return walk(tu.cursor)
 
 
-def analyze_vd_data_dependency(tu, vd: dict, func_cursor, analyzer: CompleteInterproceduralAnalyzer):
+def analyze_vd_data_dependency(tu, vd: dict, func_cursor, analyzer: CompleteInterproceduralAnalyzer, verbose: bool = False):
     """VDの引数が関数パラメータに依存するかを解析（改善版）"""
     data_flow_analyzer = DataFlowAnalyzer(tu)
     
@@ -342,7 +345,7 @@ def analyze_vd_data_dependency(tu, vd: dict, func_cursor, analyzer: CompleteInte
     return affected_params
 
 
-def get_chains_for_vd(vd: dict, tus: list, call_graph_edges: list, use_complete: bool = True) -> list[list[str]]:
+def get_chains_for_vd(vd: dict, tus: list, call_graph_edges: list, use_complete: bool = True, verbose: bool = False) -> list[list[str]]:
     """VDに対してデータ依存性を考慮したチェーンを生成"""
     chains = []
     
@@ -358,17 +361,19 @@ def get_chains_for_vd(vd: dict, tus: list, call_graph_edges: list, use_complete:
             break
     
     if not vd_func:
-        print(f"[WARNING] Function containing VD not found: {vd}")
+        if verbose:
+            print(f"[WARNING] Function containing VD not found: {vd}")
         return chains
     
     if use_complete:
         # 完全版の解析器を使用
-        analyzer = CompleteInterproceduralAnalyzer(tus, call_graph_edges)
+        analyzer = CompleteInterproceduralAnalyzer(tus, call_graph_edges, verbose=verbose)
         
         # VDに影響するパラメータを解析
-        dependent_params = analyze_vd_data_dependency(vd_tu, vd, vd_func, analyzer)
+        dependent_params = analyze_vd_data_dependency(vd_tu, vd, vd_func, analyzer, verbose=verbose)
         
-        print(f"[DEBUG] VD in function: {vd_func.spelling}, dependent params: {dependent_params}")
+        if verbose:
+            print(f"[DEBUG] VD in function: {vd_func.spelling}, dependent params: {dependent_params}")
         
         # 完全な関数間追跡を実行
         chains = analyzer.trace_interprocedural_chains(
@@ -377,8 +382,19 @@ def get_chains_for_vd(vd: dict, tus: list, call_graph_edges: list, use_complete:
     else:
         # 簡易版のフォールバック
         from parsing.parse_utils import analyze_interprocedural_dataflow
-        chains = analyze_interprocedural_dataflow(vd_tu, vd, 
-                                                 {edge['callee']: [edge] for edge in call_graph_edges})
+        
+        # 呼び出しグラフを適切な形式に変換
+        call_graph_dict = defaultdict(list)
+        for edge in call_graph_edges:
+            callee = edge.get('callee')
+            if callee:
+                call_graph_dict[callee].append({
+                    'caller': edge.get('caller'),
+                    'call_file': edge.get('call_file', ''),
+                    'call_line': edge.get('call_line', 0)
+                })
+        
+        chains = analyze_interprocedural_dataflow(vd_tu, vd, dict(call_graph_dict))
     
     # チェーンが見つからない場合、現在の関数のみを含むチェーンを作成
     if not chains:
@@ -402,9 +418,15 @@ def main():
     p.add_argument("--output", required=True, help="出力チェインJSONファイル")
     p.add_argument("--devkit", default=None, help="TA_DEV_KIT_DIR")
     p.add_argument("--use-simple", action="store_true", help="簡易版の解析を使用")
+    p.add_argument("--verbose", action="store_true", help="詳細なデバッグ出力を有効化")
+    p.add_argument("--quiet", action="store_true", help="最小限の出力のみ")
     args = p.parse_args()
     
-    print("[INFO] Starting function call chain analysis...")
+    verbose = args.verbose
+    quiet = args.quiet
+    
+    if not quiet:
+        print("[INFO] Starting function call chain analysis...")
     
     # データ読み込み
     call_graph_data = load_json(Path(args.call_graph))
@@ -413,10 +435,12 @@ def main():
     else:
         edges = call_graph_data
     
-    print(f"[INFO] Loaded {len(edges)} call graph edges")
+    if not quiet:
+        print(f"[INFO] Loaded {len(edges)} call graph edges")
     
     vd_list = load_json(Path(args.vd_list))
-    print(f"[INFO] Processing {len(vd_list)} vulnerable destinations")
+    if not quiet:
+        print(f"[INFO] Processing {len(vd_list)} vulnerable destinations")
     
     # TUsを読み込む（データ依存性解析に必要）
     compile_db_path = Path(args.compile_db)
@@ -426,13 +450,21 @@ def main():
     import os
     devkit = args.devkit or os.environ.get("TA_DEV_KIT_DIR")
     
-    print("[INFO] Parsing source files...")
+    if not quiet:
+        print("[INFO] Parsing source files...")
+    
+    # parse_sources_unifiedのverboseオプションを制御
     tus = parse_sources_unified(entries, devkit, verbose=False, ta_dir=ta_dir)
-    print(f"[INFO] Parsed {len(tus)} translation units")
+    
+    if not quiet:
+        print(f"[INFO] Parsed {len(tus)} translation units")
     
     # 各VDに対してチェーンを生成
     result = []
     use_complete = not args.use_simple
+    
+    # プログレスバー的な表示の準備
+    total = len(vd_list)
     
     for i, vd_entry in enumerate(vd_list):
         if isinstance(vd_entry, dict) and "vd" in vd_entry:
@@ -440,9 +472,12 @@ def main():
         else:
             vd = vd_entry
         
-        print(f"[{i+1}/{len(vd_list)}] Processing {vd['sink']} at {vd['file']}:{vd['line']}")
+        # 進捗表示（10件ごとまたはverboseモード）
+        if verbose or (not quiet and (i + 1) % 10 == 0):
+            percent = ((i + 1) / total) * 100
+            print(f"[{i+1}/{total}] ({percent:.1f}%) Processing {vd['sink']} at {vd['file']}:{vd['line']}")
         
-        chains = get_chains_for_vd(vd, tus, edges, use_complete=use_complete)
+        chains = get_chains_for_vd(vd, tus, edges, use_complete=use_complete, verbose=verbose)
         
         # 重複除去
         unique_chains = []
@@ -458,7 +493,8 @@ def main():
             "chains": unique_chains
         })
         
-        print(f"  → Found {len(unique_chains)} unique chains")
+        if verbose:
+            print(f"  → Found {len(unique_chains)} unique chains")
     
     # 結果を出力
     output_path = Path(args.output)
@@ -467,7 +503,15 @@ def main():
         encoding="utf-8"
     )
     
-    print(f"\n[SUCCESS] Generated chains for {len(result)} VDs → {args.output}")
+    # 統計情報を表示
+    if not quiet:
+        total_chains = sum(len(r["chains"]) for r in result)
+        avg_chains = total_chains / len(result) if result else 0
+        print(f"\n[SUCCESS] Results:")
+        print(f"  - Processed: {len(result)} VDs")
+        print(f"  - Total chains: {total_chains}")
+        print(f"  - Average chains per VD: {avg_chains:.2f}")
+        print(f"  - Output: {args.output}")
 
 
 if __name__ == "__main__":

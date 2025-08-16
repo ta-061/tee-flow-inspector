@@ -246,13 +246,16 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool,
         # Phase 3.3
         phase_start = time.time()
         print(f"[phase3.3] → python3 {fcc_py} --call-graph {call_graph} --vd-list {vd_raw} --compile-db {ta_db} --devkit {os.environ.get('TA_DEV_KIT_DIR', '')} --output {chains_out}")
-        run([sys.executable, str(fcc_py),
+        cmd = [
+            sys.executable, str(fcc_py),
             "--call-graph", str(call_graph),
             "--vd-list",    str(vd_raw),
             "--compile-db", str(ta_db),
             "--devkit",     os.environ.get("TA_DEV_KIT_DIR", ""),
-            "--output",     str(chains_out)],
-            ta_dir, v)
+            "--output",     str(chains_out)]
+        if v:
+            cmd.append("--verbose")
+        run(cmd, ta_dir, v)
         print(f"[phase3.3] → {chains_out}\n")
         phase_times["phase3.3_function_call_chains"] = time.time() - phase_start
 
