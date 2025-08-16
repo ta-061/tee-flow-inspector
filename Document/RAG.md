@@ -127,13 +127,13 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-  Q[query/filter_dict] --> VS{StoreType}
-  VS -- Chroma --> CF[convert_to_chroma_filter]\n(similarity_search with filter)
-  VS -- FAISS --> SF[similarity_search (k×3) → 手動フィルタ]
-  CF --> R1[結果]
+  Q["query / filter_dict"] --> VS{"StoreType"}
+  VS -- "Chroma" --> CF["convert_to_chroma_filter\n(similarity_search with filter)"]
+  VS -- "FAISS" --> SF["similarity_search (k×3) → 手動フィルタ"]
+  CF --> R1["結果"]
   SF --> R1
-  R1 --> PP[post_process]\n(api_definitionを先頭へ)
-  PP --> TOPK[Top-K返却]
+  R1 --> PP["post_process\n(api_definition を先頭へ)"]
+  PP --> TOPK["Top-K 返却"]
 ```
 
 * `search_by_api(name)` は類似度で拾った結果から **`api_functions` に name を含むもの**を優先並べ替え。
@@ -147,12 +147,12 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-  A[API名] --> B[複数クエリ生成\n"name"/parameters/description]
-  B --> C[Retriever.retrieve_for_sink_identification]
-  C --> D[API名の厳密一致でフィルタ]\n(正規表現)
-  D --> E[api_definition 優先 + security情報抽出]
-  E --> F[上限3000文字\nソース/ページ付与]
-  F --> G[\n=== TEE API Documentation for X ===\n## API Definition ...\n## Security Considerations ...\n]
+  A["API名"] --> B["複数クエリ生成\n(name / parameters / description)"]
+  B --> C["Retriever.retrieve_for_sink_identification"]
+  C --> D["API名の厳密一致でフィルタ\n(正規表現)"]
+  D --> E["api_definition を優先\n+ security 情報抽出"]
+  E --> F["上限 3000 文字\nソース / ページ付与"]
+  F --> G["整形済みコンテキストを返却\n(TEE API Documentation for X)"]
 ```
 
 * **厳密一致**（`API_NAME`）でノイズ除去
@@ -163,14 +163,14 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-  A[code, sink, param_idx] --> B[Retriever.retrieve_for_vulnerability_analysis]
-  B --> C[別名マップ + 正規表現\nmemmove/snprintf 等]
-  C --> D[スコアリング\n(sink/param語/CWE/overflow/validation)]
-  D --> E[カテゴリ分割\n sink_docs/param_docs/vuln_docs]
-  E --> F[重複除去\n(file_name,page)]
-  F --> G[ウィンドウ抽出\n±500 around sink]
-  G --> H[上限3000文字\nセクション別連結]
-  H --> I[\n=== TEE Security Documentation (RAG) ===\n- Use ONLY the following context ...\n## sink Security Information:\n...]
+  A["code, sink, param_idx"] --> B["Retriever.retrieve_for_vulnerability_analysis"]
+  B --> C["別名マップ + 正規表現\n(memmove / snprintf など)"]
+  C --> D["スコアリング\n(sink語 / param語 / CWE / overflow / validation)"]
+  D --> E["カテゴリ分割\n(sink_docs / param_docs / vuln_docs)"]
+  E --> F["重複除去\n(file_name, page)"]
+  F --> G["ウィンドウ抽出\n±500 around sink"]
+  G --> H["上限 3000 文字\nセクション別に連結"]
+  H --> I["整形済みコンテキストを返却\n(TEE Security Documentation)"]
 ```
 
 * **未初期化時は空文字**（プロンプト汚染を避ける）
