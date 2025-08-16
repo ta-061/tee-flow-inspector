@@ -18,15 +18,15 @@ OP‑TEEの**Trusted Application (TA)** を対象に、LLM・RAG・ルール（D
 
 ```mermaid
 flowchart LR
-  A[Phase0 事前処理/DB生成<br/>src/build.py] --> B[Phase1–2 抽出/分類<br/>src/classify/classifier.py]
-  B --> C1[Phase3.1 シンク同定<br/>identify_sinks.py]
-  C1 --> C2[Phase3.2 シンク呼出抽出<br/>find_sink_calls.py]
-  C2 --> C3[Phase3.3 呼出グラフ生成<br/>generate_call_graph.py]
-  C3 --> C4[Phase3.4–3.6 関数列チェーン生成<br/>function_call_chains.py]
-  C4 --> C5[Phase3.7 VDとチェーンを結合<br/>extract_sink_calls.py]
-  C5 --> D[Phase4 候補フロー (CDF) 生成<br/>identify_flows/generate_candidate_flows.py]
-  D --> E[Phase5 LLMテイント解析/判定<br/>analyze_vulnerabilities/taint_analyzer.py]
-  E --> F[Phase6 HTMLレポート生成<br/>report/generate_report.py]
+  A["Phase0 事前処理/DB生成\nsrc/build.py"] --> B["Phase1–2 抽出/分類\nsrc/classify/classifier.py"]
+  B --> C1["Phase3.1 シンク同定\nidentify_sinks.py"]
+  C1 --> C2["Phase3.2 シンク呼出抽出\nfind_sink_calls.py"]
+  C2 --> C3["Phase3.3 呼出グラフ生成\ngenerate_call_graph.py"]
+  C3 --> C4["Phase3.4–3.6 関数列チェーン生成\nfunction_call_chains.py"]
+  C4 --> C5["Phase3.7 VDとチェーンを結合\nextract_sink_calls.py"]
+  C5 --> D["Phase4 候補フロー (CDF) 生成\nidentify_flows/generate_candidate_flows.py"]
+  D --> E["Phase5 LLMテイント解析/判定\nanalyze_vulnerabilities/taint_analyzer.py"]
+  E --> F["Phase6 HTMLレポート生成\nreport/generate_report.py"]
 ```
 
 ### 主な出力
@@ -201,3 +201,4 @@ python3 ./src/main.py \
 ---
 
 本READMEは研究開発の進捗に合わせて更新します。運用・発展的な話題（評価指標、検知サンプル集、CI連携）は別紙として追加予定です。
+
