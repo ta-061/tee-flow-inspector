@@ -657,15 +657,6 @@ class TaintAnalyzer:
         }
     
     def _ask_llm_with_handler(self, context: Dict) -> str:
-        """
-        LLMリトライハンドラーを使用してLLMに問い合わせ
-        
-        Args:
-            context: コンテキスト情報
-        
-        Returns:
-            LLMのレスポンス
-        """
         messages = self.conversation_manager.get_history()
         
         # コンテキストに追加情報を含める
@@ -674,86 +665,110 @@ class TaintAnalyzer:
             **context
         }
         
-        try:
-            # 最後のメッセージ（プロンプト）を取得
-            if messages and messages[-1]["role"] == "user":
-                prompt = messages[-1]["content"]
+        # エラー収集用
+        errors_encountered = []
+        
+        # 最後のメッセージ（プロンプト）を取得
+        if messages and messages[-1]["role"] == "user":
+            prompt = messages[-1]["content"]
+        else:
+            # フォールバック
+            prompt = json.dumps(messages[-2:]) if len(messages) >= 2 else "No prompt available"
+        
+        # カスタムLLM呼び出し関数を定義
+        def call_llm_with_context():
+            if hasattr(self.client, 'chat_completion_with_tokens'):
+                response, token_usage = self.client.chat_completion_with_tokens(messages)
+                # トークン使用量を記録（必要に応じて）
+                return response
             else:
-                # フォールバック
-                prompt = json.dumps(messages[-2:]) if len(messages) >= 2 else "No prompt available"
-            
-            # リトライハンドラーで実行
-            # 注意: execute_with_retryは単一のpromptを期待するので、
-            # 会話全体を処理するように変更が必要
-            # ここでは、最後のプロンプトのみを送信し、
-            # 実際のLLM呼び出しで全体の会話を使用する
-            
-            # カスタムLLM呼び出し関数を定義
-            def call_llm_with_context():
-                if hasattr(self.client, 'chat_completion_with_tokens'):
-                    response, token_usage = self.client.chat_completion_with_tokens(messages)
-                    # トークン使用量を記録（必要に応じて）
-                    return response
-                else:
-                    return self.client.chat_completion(messages)
-            
-            # 直接リトライロジックを実装
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    response = call_llm_with_context()
+                return self.client.chat_completion(messages)
+        
+        # リトライロジック
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = call_llm_with_context()
+                
+                # 空レスポンスチェック
+                if not response or (isinstance(response, str) and response.strip() == ""):
+                    self.stats["total_empty_responses"] += 1
                     
-                    # 空レスポンスチェック
-                    if not response or (isinstance(response, str) and response.strip() == ""):
-                        self.stats["total_empty_responses"] += 1
-                        
-                        # 診断を実行
-                        diagnosis = ResponseDiagnostics.diagnose_empty_response(
-                            self.client, prompt, str(full_context), response
-                        )
-                        
-                        # 診断をログに記録
-                        self.llm_error_logger.log_diagnosis(diagnosis, full_context)
-                        
-                        raise ValueError(f"Empty response from LLM (attempt {attempt + 1}/{max_retries})")
+                    # 診断を実行
+                    diagnosis = ResponseDiagnostics.diagnose_empty_response(
+                        self.client, prompt, str(full_context), response
+                    )
                     
-                    # 成功
-                    return response
+                    # 診断をログに記録
+                    self.llm_error_logger.log_diagnosis(diagnosis, full_context)
                     
-                except Exception as e:
-                    self.stats["total_llm_errors"] += 1
+                    # エラーオブジェクトを作成
+                    from llm_settings.llm_error_handler import LLMError
+                    error = LLMError(
+                        "EMPTY_RESPONSE",
+                        f"Empty response from LLM (attempt {attempt + 1}/{max_retries})",
+                        {"diagnosis_summary": diagnosis.get("possible_causes", [])}
+                    )
+                    errors_encountered.append(error)
                     
-                    # エラーを分析
+                    raise ValueError(f"Empty response from LLM")
+                
+                # 成功
+                return response
+                
+            except Exception as e:
+                self.stats["total_llm_errors"] += 1
+                
+                # エラーを分析
+                if not isinstance(e, ValueError) or "Empty response" not in str(e):
                     error = LLMErrorAnalyzer.analyze_error(e)
-                    self.llm_error_logger.log_error(error, full_context)
+                    errors_encountered.append(error)
+                
+                # 最後のエラーを取得
+                last_error = errors_encountered[-1] if errors_encountered else None
+                
+                if last_error:
+                    self.llm_error_logger.log_error(last_error, full_context)
+                
+                if attempt < max_retries - 1:
+                    # まだリトライ可能
+                    self.stats["total_llm_retries"] += 1
+                    print(f"[WARN] LLM call failed for {context.get('function', 'unknown')} (attempt {attempt + 1}/{max_retries})")
+                    if last_error:
+                        print(f"       Error: {last_error.error_type} - {last_error.message}")
                     
-                    if attempt < max_retries - 1:
-                        self.stats["total_llm_retries"] += 1
-                        print(f"[WARN] LLM call failed for {context.get('function', 'unknown')} (attempt {attempt + 1}/{max_retries})")
-                        print(f"       Error: {error.error_type} - {error.message}")
-                        
-                        # エラータイプに応じた待機
-                        if error.error_type == "RATE_LIMIT":
-                            wait_time = 2 ** (attempt + 1)
-                        else:
-                            wait_time = 2 ** attempt
-                        
-                        time.sleep(wait_time)
+                    # エラータイプに応じた待機
+                    if last_error and last_error.error_type == "RATE_LIMIT":
+                        wait_time = 2 ** (attempt + 1)
                     else:
-                        # 最終試行失敗
-                        self.logger.writeln(f"[ERROR] LLM call failed after {max_retries} attempts")
-                        self.logger.writeln(f"        Last error: {error.error_type} - {error.message}")
-                        
-                        # エラーレスポンスを返す
-                        return f"[ERROR] Failed to get LLM response: {error.message}"
-            
-        except Exception as e:
-            # 予期しないエラー
-            self.stats["total_llm_errors"] += 1
-            error = LLMErrorAnalyzer.analyze_error(e)
-            self.llm_error_logger.log_error(error, full_context)
-            
-            return f"[ERROR] Unexpected error during LLM call: {str(e)}"
+                        wait_time = 2 ** attempt
+                    
+                    time.sleep(wait_time)
+                else:
+                    # 最終試行も失敗 - ここで処理を続ける
+                    pass
+        
+        # ここに到達 = すべてのリトライが失敗
+        self.logger.writeln(f"[FATAL] LLM call failed after {max_retries} attempts")
+        if errors_encountered:
+            self.logger.writeln(f"        Last error: {errors_encountered[-1].error_type} - {errors_encountered[-1].message}")
+        
+        # 致命的エラーログを保存
+        self.llm_error_logger.log_fatal_error(
+            f"Failed after {max_retries} attempts in taint analysis",
+            errors_encountered,
+            full_context
+        )
+        
+        # プログラムを終了
+        print(f"\n[FATAL] Taint analysis cannot continue without LLM response")
+        print(f"        Function: {context.get('function', 'unknown')}")
+        print(f"        Chain: {context.get('chain', 'unknown')}")
+        print(f"        Total errors encountered: {len(errors_encountered)}")
+        print(f"        See llm_logs/ for detailed error information")
+        
+        # main.pyも終了させる
+        sys.exit(1)
     
     def _generate_prompt(
         self,
