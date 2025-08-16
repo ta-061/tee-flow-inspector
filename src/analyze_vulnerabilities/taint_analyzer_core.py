@@ -5,6 +5,7 @@
 - チェイン接頭辞のキャッシュ
 - チェインのツリー構造化による効率的な解析
 - FINDINGS/END_FINDINGS両方の収集とend優先マージ
+- LLMエラー処理モジュールを使用した堅牢なエラーハンドリング
 """
 
 import sys
@@ -30,6 +31,15 @@ from analyze_vulnerabilities.logger import StructuredLogger
 from analyze_vulnerabilities.conversation import ConversationManager
 from analyze_vulnerabilities.code_extractor import CodeExtractor
 from analyze_vulnerabilities.vulnerability_parser import VulnerabilityParser
+
+# LLMエラー処理モジュールをインポート
+from llm_settings.llm_error_handler import (
+    LLMRetryHandler,
+    LLMErrorLogger,
+    create_retry_handler,
+    ResponseDiagnostics,
+    LLMErrorAnalyzer
+)
 
 
 class ChainTree:
@@ -100,6 +110,7 @@ class PrefixCache:
 class TaintAnalyzer:
     """
     テイント解析のコアロジックを実装するクラス（最適化版）
+    LLMエラー処理モジュールを使用
     """
     
     def __init__(
@@ -111,7 +122,9 @@ class TaintAnalyzer:
         conversation_manager: ConversationManager,
         use_diting_rules: bool = True,
         use_enhanced_prompts: bool = True,
-        use_rag: bool = False
+        use_rag: bool = False,
+        llm_retry_handler: Optional[LLMRetryHandler] = None,
+        llm_error_logger: Optional[LLMErrorLogger] = None
     ):
         self.client = client
         self.code_extractor = code_extractor
@@ -122,6 +135,13 @@ class TaintAnalyzer:
         self.use_enhanced_prompts = use_enhanced_prompts
         self.use_rag = use_rag
         
+        # LLMエラー処理
+        self.llm_retry_handler = llm_retry_handler or create_retry_handler(
+            max_retries=3,
+            log_dir=Path("llm_logs")
+        )
+        self.llm_error_logger = llm_error_logger or LLMErrorLogger(Path("llm_logs"))
+        
         # 最適化用のキャッシュとツリー
         self.prefix_cache = PrefixCache()
         self.chain_tree = ChainTree()
@@ -131,6 +151,9 @@ class TaintAnalyzer:
             "total_chains_analyzed": 0,
             "total_functions_analyzed": 0,
             "total_llm_calls": 0,
+            "total_llm_errors": 0,
+            "total_llm_retries": 0,
+            "total_empty_responses": 0,
             "total_time": 0,
             "unique_prefixes_analyzed": 0,
             "cache_reuse_count": 0,
@@ -151,6 +174,7 @@ class TaintAnalyzer:
             (vulnerabilities, inline_findings)
         """
         print(f"[taint_analyzer] 最適化モードで解析を開始...")
+        print(f"[taint_analyzer] LLMエラー処理: 有効")
         
         # Step 1: チェインをツリー構造に変換
         self._build_chain_tree(flows_data)
@@ -175,7 +199,14 @@ class TaintAnalyzer:
         print(f"  ヒット率: {cache_stats['hit_rate']}")
         print(f"  キャッシュされた接頭辞数: {cache_stats['cached_prefixes']}")
         
-        # Step 5: Findings統計を出力
+        # Step 5: LLMエラー統計を出力
+        print(f"\n[LLMエラー統計]")
+        print(f"  総LLM呼び出し数: {self.stats['total_llm_calls']}")
+        print(f"  エラー発生数: {self.stats['total_llm_errors']}")
+        print(f"  リトライ数: {self.stats['total_llm_retries']}")
+        print(f"  空レスポンス数: {self.stats['total_empty_responses']}")
+        
+        # Step 6: Findings統計を出力
         findings_stats = self.stats["findings_stats"]
         print(f"\n[Findings統計]")
         print(f"  収集された総数: {findings_stats['total_collected']}")
@@ -506,7 +537,7 @@ class TaintAnalyzer:
         results: dict,
         is_final: bool = False
     ):
-        """単一関数の解析"""
+        """単一関数の解析（エラー処理強化版）"""
         self.stats["total_functions_analyzed"] += 1
         
         # 現在の関数のファイル情報を取得
@@ -534,8 +565,16 @@ class TaintAnalyzer:
         # 会話にプロンプトを追加
         self.conversation_manager.add_message("user", prompt)
         
-        # LLMに問い合わせ
-        response = self._ask_llm()
+        # LLMに問い合わせ（エラー処理付き）
+        context = {
+            "phase": "function_analysis",
+            "function": func_name,
+            "position": position,
+            "chain": " -> ".join(chain),
+            "is_final": is_final
+        }
+        
+        response = self._ask_llm_with_handler(context)
         self.stats["total_llm_calls"] += 1
         
         # 会話にレスポンスを追加
@@ -555,7 +594,7 @@ class TaintAnalyzer:
         self._parse_function_analysis(response, func_name, position, chain, extended_vd, results)
     
     def _perform_vulnerability_analysis(self, results: dict, chain: List[str], vd: dict) -> dict:
-        """最終的な脆弱性判定とEND_FINDINGSの収集"""
+        """最終的な脆弱性判定とEND_FINDINGSの収集（エラー処理強化版）"""
         end_prompt = get_end_prompt()
         
         self.conversation_manager.add_message("user", end_prompt)
@@ -564,7 +603,14 @@ class TaintAnalyzer:
         self.logger.writeln(end_prompt)
         self.logger.writeln("")
         
-        vuln_response = self._ask_llm()
+        # LLMに問い合わせ（エラー処理付き）
+        context = {
+            "phase": "vulnerability_analysis",
+            "chain": " -> ".join(chain),
+            "sink": vd.get("sink", "unknown")
+        }
+        
+        vuln_response = self._ask_llm_with_handler(context)
         self.stats["total_llm_calls"] += 1
         
         self.logger.writeln("### Response:")
@@ -609,6 +655,105 @@ class TaintAnalyzer:
             "is_vulnerable": is_vuln,
             "meta": meta
         }
+    
+    def _ask_llm_with_handler(self, context: Dict) -> str:
+        """
+        LLMリトライハンドラーを使用してLLMに問い合わせ
+        
+        Args:
+            context: コンテキスト情報
+        
+        Returns:
+            LLMのレスポンス
+        """
+        messages = self.conversation_manager.get_history()
+        
+        # コンテキストに追加情報を含める
+        full_context = {
+            "project": self.code_extractor.project_root.name if self.code_extractor.project_root else "unknown",
+            **context
+        }
+        
+        try:
+            # 最後のメッセージ（プロンプト）を取得
+            if messages and messages[-1]["role"] == "user":
+                prompt = messages[-1]["content"]
+            else:
+                # フォールバック
+                prompt = json.dumps(messages[-2:]) if len(messages) >= 2 else "No prompt available"
+            
+            # リトライハンドラーで実行
+            # 注意: execute_with_retryは単一のpromptを期待するので、
+            # 会話全体を処理するように変更が必要
+            # ここでは、最後のプロンプトのみを送信し、
+            # 実際のLLM呼び出しで全体の会話を使用する
+            
+            # カスタムLLM呼び出し関数を定義
+            def call_llm_with_context():
+                if hasattr(self.client, 'chat_completion_with_tokens'):
+                    response, token_usage = self.client.chat_completion_with_tokens(messages)
+                    # トークン使用量を記録（必要に応じて）
+                    return response
+                else:
+                    return self.client.chat_completion(messages)
+            
+            # 直接リトライロジックを実装
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    response = call_llm_with_context()
+                    
+                    # 空レスポンスチェック
+                    if not response or (isinstance(response, str) and response.strip() == ""):
+                        self.stats["total_empty_responses"] += 1
+                        
+                        # 診断を実行
+                        diagnosis = ResponseDiagnostics.diagnose_empty_response(
+                            self.client, prompt, str(full_context), response
+                        )
+                        
+                        # 診断をログに記録
+                        self.llm_error_logger.log_diagnosis(diagnosis, full_context)
+                        
+                        raise ValueError(f"Empty response from LLM (attempt {attempt + 1}/{max_retries})")
+                    
+                    # 成功
+                    return response
+                    
+                except Exception as e:
+                    self.stats["total_llm_errors"] += 1
+                    
+                    # エラーを分析
+                    error = LLMErrorAnalyzer.analyze_error(e)
+                    self.llm_error_logger.log_error(error, full_context)
+                    
+                    if attempt < max_retries - 1:
+                        self.stats["total_llm_retries"] += 1
+                        print(f"[WARN] LLM call failed for {context.get('function', 'unknown')} (attempt {attempt + 1}/{max_retries})")
+                        print(f"       Error: {error.error_type} - {error.message}")
+                        
+                        # エラータイプに応じた待機
+                        if error.error_type == "RATE_LIMIT":
+                            wait_time = 2 ** (attempt + 1)
+                        else:
+                            wait_time = 2 ** attempt
+                        
+                        time.sleep(wait_time)
+                    else:
+                        # 最終試行失敗
+                        self.logger.writeln(f"[ERROR] LLM call failed after {max_retries} attempts")
+                        self.logger.writeln(f"        Last error: {error.error_type} - {error.message}")
+                        
+                        # エラーレスポンスを返す
+                        return f"[ERROR] Failed to get LLM response: {error.message}"
+            
+        except Exception as e:
+            # 予期しないエラー
+            self.stats["total_llm_errors"] += 1
+            error = LLMErrorAnalyzer.analyze_error(e)
+            self.llm_error_logger.log_error(error, full_context)
+            
+            return f"[ERROR] Unexpected error during LLM call: {str(e)}"
     
     def _generate_prompt(
         self,
@@ -660,90 +805,6 @@ class TaintAnalyzer:
                     sink_function=sink_function,
                     param_index=param_index
                 )
-
-    def _debug_msgs(self, messages):
-        print(f"[DEBUG] messages_count={len(messages)}")
-        for i, m in enumerate(messages[-8:]):  # 直近だけでも十分
-            role = m.get("role")
-            content = m.get("content")
-            clen = len(content) if isinstance(content, str) else -1
-            print(f"  - [{i}] role={role} len={clen}")
-            if isinstance(content, str):
-                print(f"    head={repr(content[:160])}")
-
-    def _ask_llm(self, max_retries: int = 3) -> str:
-        """LLMに問い合わせ（トークン追跡対応版）"""
-        messages = self.conversation_manager.get_history()
-
-        # current_provider = getattr(self.client, "get_current_provider", lambda: "unknown")()
-        # print(f"[DEBUG] provider={current_provider}")
-        # size_info = self.conversation_manager.get_current_size()
-        # print(f"[DEBUG] estimated_tokens={size_info.get('estimated_tokens')}")
-
-        # if size_info["estimated_tokens"] > 100000:
-        #     print(f"[WARN] Conversation is very long: {size_info['estimated_tokens']} tokens")
-
-        # 直前の会話メッセージ概要を毎回出す
-        # self._debug_msgs(messages)
-
-        for attempt in range(max_retries):
-            try:
-                # 実際のクライアント設定を可視化
-                cfg = getattr(self.client, "get_config", lambda: {})()
-                # print(f"[DEBUG] llm_config={cfg}")
-
-                # モデル別の暫定プリセット（nano安全策）
-                model = (cfg.get("model") or "").lower()
-                if "gpt-5-nano" in model:
-                    # client側にこういうAPIが無い場合は update_config 等を使って事前に設定
-                    try:
-                        self.client.update_config(stop=None)
-                        # “max_tokens” キー名が実装で違うなら、あなたのクライアントに合わせて調整
-                        if not cfg.get("max_tokens") or cfg.get("max_tokens") < 128:
-                            self.client.update_config(max_tokens=512)
-                        # temperatureはデフォルト推奨（0.0非対応モデルがある）
-                        print("[DEBUG] applied_nano_presets: stop=None, max_tokens>=512")
-                    except Exception as _:
-                        pass
-
-                # トークン追跡クライアント経由 / 通常クライアントどちらか
-                if hasattr(self.client, 'chat_completion_with_tokens'):
-                    response, token_usage = self.client.chat_completion_with_tokens(messages)
-                else:
-                    response = self.client.chat_completion(messages)
-
-                # # 生レスポンスの可視化を強化
-                # rlen = len(response) if isinstance(response, str) else -1
-                # print(f"[DEBUG] raw_len={rlen}")
-                # print("=== RAW RESPONSE START ===")
-                # if isinstance(response, str):
-                #     head = response[:400]
-                #     tail = response[-200:] if len(response) > 600 else ""
-                #     print(repr(head))
-                #     if tail:
-                #         print("...<snip>...")
-                #         print(repr(tail))
-                # else:
-                #     print(repr(response))
-                # print("=== RAW RESPONSE END ===")
-
-                if not response or (isinstance(response, str) and response.strip() == ""):
-                    raise ValueError("Empty response from LLM")
-
-                return response
-
-            except Exception as e:
-                print(f"API call failed (attempt {attempt + 1}/{max_retries}): {e}")
-                # 失敗時点の会話を出す（何を投げたか即確認できる）
-                self._debug_msgs(messages)
-
-                if attempt == max_retries - 1:
-                    return f"[ERROR] Failed to get LLM response after {max_retries} attempts: {e}"
-
-                # 2回目は短縮プロンプト、3回目は最小契約のみ…などの段階的フォールバックがあるとさらに◎
-                time.sleep(2 ** attempt)
-
-        return "[ERROR] Maximum retries exceeded"
     
     def _parse_function_analysis(
         self,

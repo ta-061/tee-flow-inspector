@@ -1,10 +1,8 @@
-# /src/identify_sinks/identify_sinks.py
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 フェーズ3: フェーズ1-2の結果を読み込んで、呼び出されている外部 API だけをLLMに問い、シンク候補をJSON出力する
-RAG対応版（トークン追跡機能付き）
-LLM-onlyモード対応版
+LLMエラー処理モジュールを使用した改善版
 """
 
 import sys
@@ -12,11 +10,18 @@ import json
 import re
 import argparse
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# その後でrule_engineをインポート
+# ルールエンジンをインポート
 from rule_engine.pattern_matcher import PatternMatcher
+
+# LLMエラー処理モジュールをインポート
+from llm_settings.llm_error_handler import (
+    LLMRetryHandler,
+    LLMErrorLogger,
+    create_retry_handler
+)
 
 class PromptManager:
     """プロンプトテンプレートを管理するクラス"""
@@ -143,19 +148,23 @@ def extract_called_functions(code: str) -> list[str]:
     return list(set(re.findall(pattern, code)))
 
 
-def ask_llm(client, prompt: str) -> str:
-    """新しいLLM設定システムを使用したLLM呼び出し"""
-    messages = [{"role": "user", "content": prompt}]
+def analyze_external_function_as_sink(client, func_name: str, log_file: Path, 
+                                     use_rag: bool = True, project_name: str = "",
+                                     retry_handler: LLMRetryHandler = None) -> list[dict]:
+    """
+    外部関数をシンクとして分析
     
-    # TokenTrackingClientの場合はchat_completion_with_tokensを使用
-    if hasattr(client, 'chat_completion_with_tokens'):
-        response, _ = client.chat_completion_with_tokens(messages)
-        return response
-    else:
-        return client.chat_completion(messages)
-
-
-def analyze_external_function_as_sink(client, func_name: str, log_file: Path, use_rag: bool = True) -> list[dict]:
+    Args:
+        client: LLMクライアント
+        func_name: 関数名
+        log_file: ログファイルパス
+        use_rag: RAG使用フラグ
+        project_name: プロジェクト名
+        retry_handler: リトライハンドラー
+    
+    Returns:
+        シンクのリスト
+    """
     # RAGを使用する場合、関連情報を取得
     rag_context = ""
     if use_rag and _rag_client is not None:
@@ -173,7 +182,6 @@ def analyze_external_function_as_sink(client, func_name: str, log_file: Path, us
             rag_context=rag_context
         )
     else:
-        # RAGが利用できない場合は通常のプロンプトを使用
         prompt_template = _prompt_manager.load_prompt("sink_identification.txt")
         prompt = prompt_template.format(
             func_name=func_name,
@@ -185,12 +193,33 @@ def analyze_external_function_as_sink(client, func_name: str, log_file: Path, us
             lf.write(f"## RAG Context:\n{rag_context[:500]}...\n")
         lf.write(f"## Prompt:\n{prompt}\n")
     
-    resp = ask_llm(client, prompt)
+    # LLMに問い合わせ（リトライハンドラーを使用）
+    context = {
+        "project": project_name,
+        "function": func_name,
+        "phase": "sink_identification"
+    }
+    
+    if retry_handler:
+        resp = retry_handler.execute_with_retry(client, prompt, context)
+    else:
+        # フォールバック：リトライハンドラーがない場合
+        messages = [{"role": "user", "content": prompt}]
+        if hasattr(client, 'chat_completion_with_tokens'):
+            resp, _ = client.chat_completion_with_tokens(messages)
+        else:
+            resp = client.chat_completion(messages)
+    
+    # レスポンスをクリーニング
     clean = re.sub(r"^```(?:json)?\s*|\s*```$", "", resp.strip(), flags=re.MULTILINE)
     
     with open(log_file, "a", encoding="utf-8") as lf:
         lf.write(f"## Response:\n{resp}\n\n")
     
+    if not resp:
+        return []
+    
+    # パターンマッチングでシンク情報を抽出
     pattern = re.compile(
         r"\(\s*function:\s*([A-Za-z_][A-Za-z0-9_]*)\s*;\s*"
         r"param_index:\s*(\d+)\s*;\s*"
@@ -235,6 +264,8 @@ def main():
     parser.add_argument("--no-track-tokens", action="store_true", help="トークン使用量追跡を無効化")
     parser.add_argument("--llm-only", action="store_true", 
                        help="LLMのみで判定（PatternMatcherを使用しない）")
+    parser.add_argument("--max-retries", type=int, default=3, 
+                       help="LLM呼び出しの最大リトライ回数（デフォルト: 3）")
     args = parser.parse_args()
     
     # トークン追跡はデフォルトで有効
@@ -257,6 +288,13 @@ def main():
     
     # 新しいLLMクライアントを初期化（トークン追跡対応）
     client = init_client(track_tokens=track_tokens)
+    
+    # リトライハンドラーを作成（ログディレクトリは結果ディレクトリに設定）
+    log_dir = out_path.parent / "llm_logs"
+    log_dir.mkdir(exist_ok=True)
+    retry_handler = create_retry_handler(max_retries=args.max_retries, log_dir=log_dir)
+    print(f"[INFO] LLM retry handler initialized (max retries: {args.max_retries})")
+    print(f"[INFO] LLM logs will be saved to: {log_dir}")
 
     # PatternMatcherの初期化（参考情報として使用）
     matcher = PatternMatcher() if use_rules else None
@@ -276,6 +314,10 @@ def main():
     
     phase12 = json.loads(Path(args.input).read_text(encoding="utf-8"))
     project_root = Path(phase12.get("project_root", ""))
+    
+    # プロジェクト名を取得（TAプロジェクトのディレクトリ名）
+    project_name = project_root.name if project_root else "Unknown"
+    
     external_funcs = {f["name"] for f in phase12.get("external_declarations", [])}
     
     # ユーザ定義関数を除外するためのセット
@@ -315,7 +357,10 @@ def main():
         # LLM-onlyモード: 常にLLMに聞く
         if args.llm_only:
             print(f"  Analyzing {func_name} with LLM...")
-            sinks = analyze_external_function_as_sink(client, func_name, log_file, use_rag)
+            sinks = analyze_external_function_as_sink(
+                client, func_name, log_file, use_rag, project_name, retry_handler
+            )
+            
             for s in sinks:
                 s["by"] = "llm"
             all_sinks.extend(sinks)
@@ -324,7 +369,6 @@ def main():
             if matcher and matcher.is_sink(func_name):
                 dangerous_params = matcher.dangerous_params(func_name)
                 print(f"    [INFO] PatternMatcher would have identified params {dangerous_params} as sinks")
-                # ログファイルにも記録
                 with open(log_file, "a", encoding="utf-8") as lf:
                     lf.write(f"# [Reference] PatternMatcher for {func_name}: params {dangerous_params}\n\n")
         
@@ -338,7 +382,7 @@ def main():
                 print(f"  - Rule IDs: {matcher.rules_for(func_name)}")
                 
                 if matcher.is_sink(func_name):
-                    # === ❶ ルールエンジンで確定したパラメータ ===
+                    # ルールエンジンで確定したパラメータ
                     for idx in matcher.dangerous_params(func_name):
                         all_sinks.append({
                             "kind": "function",
@@ -347,25 +391,24 @@ def main():
                             "reason": "DITING-rule",
                             "by": "rule_engine"
                         })
-                    # === ❷ LLM-Lite で追加確認（オプション） ===
-                    # lite_sinks = analyze_external_function_as_sink(
-                    #     client, func_name, log_file, use_rag=False
-                    # )
-                    # all_sinks.extend(lite_sinks)
                 else:
-                    # === ❸ 未知 API → LLM/RAG ===
-                    sinks = analyze_external_function_as_sink(client, func_name, log_file, use_rag)
+                    # 未知 API → LLM/RAG
+                    sinks = analyze_external_function_as_sink(
+                        client, func_name, log_file, use_rag, project_name, retry_handler
+                    )
                     for s in sinks:
                         s["by"] = "llm"
                     all_sinks.extend(sinks)
             else:
                 # matcherがない場合はLLMのみ
-                sinks = analyze_external_function_as_sink(client, func_name, log_file, use_rag)
+                sinks = analyze_external_function_as_sink(
+                    client, func_name, log_file, use_rag, project_name, retry_handler
+                )
                 for s in sinks:
                     s["by"] = "llm"
                 all_sinks.extend(sinks)
     
-    print(f"抽出されたシンク候補: {len(all_sinks)} 個")
+    print(f"\n抽出されたシンク候補: {len(all_sinks)} 個")
     
     # 重複排除 & JSON出力
     unique = []
@@ -398,6 +441,15 @@ def main():
         encoding="utf-8"
     )
     print(f"結果を {out_path} に保存しました")
+    
+    # エラーログがある場合は警告を表示
+    error_logs = list(log_dir.glob("llm_*.log")) + list(log_dir.glob("llm_*.json")) + list(log_dir.glob("llm_*.txt"))
+    if error_logs:
+        print(f"\n[WARN] LLM errors were logged. Check the following files for details:")
+        for log in error_logs[:5]:  # 最初の5個まで表示
+            print(f"  - {log.relative_to(log_dir.parent)}")
+        if len(error_logs) > 5:
+            print(f"  ... and {len(error_logs) - 5} more files")
 
 if __name__ == "__main__":
     main()

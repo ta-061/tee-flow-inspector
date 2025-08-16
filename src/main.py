@@ -18,6 +18,7 @@ def run(cmd: list[str], cwd: Path, verbose: bool):
     res = subprocess.run(cmd, cwd=cwd)
     if res.returncode and verbose:
         print(f"[WARN]   ↳ rc={res.returncode}")
+        sys.exit(res.returncode)
 
 # ------------------------------------------------------------
 

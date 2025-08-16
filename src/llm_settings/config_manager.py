@@ -13,7 +13,7 @@ from typing import Dict, Any, Optional, List
 from enum import Enum
 import requests
 from abc import ABC, abstractmethod
-
+import time, random, threading, functools
 
 class LLMProvider(Enum):
     """サポートされるLLMプロバイダー"""
@@ -25,6 +25,22 @@ class LLMProvider(Enum):
     OPENROUTER = "openrouter"
     GEMINI = "gemini"
 
+class MinIntervalRateLimiter:
+    def __init__(self, min_interval_sec: float = 0.7):
+        self.min_interval = float(min_interval_sec)
+        self._last_call = 0.0
+        self._lock = threading.Lock()
+
+    def wait(self):
+        with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last_call
+            delay = self.min_interval - elapsed
+            if delay > 0:
+                time.sleep(delay + random.random() * 0.15)
+            self._last_call = time.monotonic()
+
+LLM_RATE_LIMITER = MinIntervalRateLimiter(min_interval_sec=0.7)
 
 class LLMConfig:
     """LLM設定を管理するクラス"""
