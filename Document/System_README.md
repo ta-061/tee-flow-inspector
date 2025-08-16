@@ -10,15 +10,15 @@
 
 ```mermaid
 flowchart LR
-  A[Phase0 事前処理/DB生成<br/>src/build.py] --> B[Phase1–2 抽出/分類<br/>src/classify/classifier.py]
-  B --> C1[Phase3.1 シンク同定<br/>identify_sinks.py]
-  C1 --> C2[Phase3.2 シンク呼出抽出<br/>find_sink_calls.py]
-  C2 --> C3[Phase3.3 呼出グラフ生成<br/>generate_call_graph.py]
-  C3 --> C4[Phase3.4–3.6 関数列チェーン生成<br/>function_call_chains.py]
-  C4 --> C5[Phase3.7 VDとチェーンの結合<br/>extract_sink_calls.py]
-  C5 --> D[Phase4 候補フロー生成 (CDF)<br/>identify_flows/generate_candidate_flows.py]
-  D --> E[Phase5 テイント解析/脆弱性判定<br/>analyze_vulnerabilities/taint_analyzer.py]
-  E --> F[Phase6 レポート生成<br/>report/generate_report.py]
+  A["Phase0 事前処理/DB生成\nsrc/build.py"] --> B1["Phase1–2 抽出/分類\nsrc/classify/classifier.py"]
+  B1 --> C1["Phase3.1 シンク同定\nidentify_sinks.py"]
+  C1 --> C2["Phase3.2 シンク呼出抽出\nfind_sink_calls.py"]
+  C2 --> C3["Phase3.3 呼出グラフ生成\ngenerate_call_graph.py"]
+  C3 --> C4["Phase3.4–3.6 関数列チェーン生成\nfunction_call_chains.py"]
+  C4 --> C5["Phase3.7 VDとチェーンの結合\nextract_sink_calls.py"]
+  C5 --> D["Phase4 候補フロー生成 (CDF)\nidentify_flows/generate_candidate_flows.py"]
+  D --> E["Phase5 テイント解析/脆弱性判定\nanalyze_vulnerabilities/taint_analyzer.py"]
+  E --> F["Phase6 レポート生成\nreport/generate_report.py"]
 ```
 
 ### 生成物（主な中間/最終成果）
@@ -391,36 +391,34 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-  subgraph P0[Phase0 事前処理 / DB生成]
-    CC[ta/compile_commands.json]
+  subgraph P0["Phase0 事前処理 / DB生成"]
+    CC["ta/compile_commands.json"]
   end
 
-  subgraph P12[Phase1–2 抽出/分類]
-    PH12[<TA>_phase12.json]
+  subgraph P12["Phase1–2 抽出/分類"]
+    PH12["<TA>_phase12.json"]
   end
 
-  subgraph P3[Phase3 シンク〜チェーン]
-    SINKS[<TA>_sinks.json]
-    VD0[<TA>_vulnerable_destinations.json
-(initial)]
-    CG[<TA>_call_graph.json]
-    CHAINS[<TA>_chains.json]
-    VDF[<TA>_vulnerable_destinations.json
-(final)]
+  subgraph P3["Phase3 シンク〜チェーン"]
+    SINKS["<TA>_sinks.json"]
+    VD0["<TA>_vulnerable_destinations.json\n(initial)"]
+    CG["<TA>_call_graph.json"]
+    CHAINS["<TA>_chains.json"]
+    VDF["<TA>_vulnerable_destinations.json\n(final)"]
   end
 
-  subgraph P4[Phase4 候補フロー（CDF）]
-    CDF[<TA>_candidate_flows.json]
-    SOURCES([--sources 指定])
+  subgraph P4["Phase4 候補フロー（CDF）"]
+    CDF["<TA>_candidate_flows.json"]
+    SOURCES["--sources 指定"]
   end
 
-  subgraph P5[Phase5 テイント解析]
-    VULN[<TA>_vulnerabilities.json]
-    LOG[taint_analysis_log.txt]
+  subgraph P5["Phase5 テイント解析"]
+    VULN["<TA>_vulnerabilities.json"]
+    LOG["taint_analysis_log.txt"]
   end
 
-  subgraph P6[Phase6 レポート]
-    REP[<TA>_vulnerability_report.html]
+  subgraph P6["Phase6 レポート"]
+    REP["<TA>_vulnerability_report.html"]
   end
 
   CC --> PH12
@@ -461,64 +459,51 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  A[開始: シンク同定 identify_sinks.py] --> B{モード}
-  B -- Hybrid --> R[ルール/パターン照合
-(DITING/CodeQL)]
-  R -- ヒット --> S1[シンク集合へ追加]
-  R -- ミス --> P1
-  B -- LLM-only --> P1[PromptManager: sinks_prompt
-(with/without RAG)]
-  P1 --> C{RAG 有効?}
-  C -- はい --> RC[RAG Client -> Retriever -> VectorStore
-→ コンテキスト断片]
-  C -- いいえ --> N[外部文脈なし]
+  A["開始: シンク同定 identify_sinks.py"] --> B{"モード選択"}
+  B -- "Hybrid" --> R["ルール/パターン照合 (DITING / CodeQL)"]
+  R -- "ヒット" --> S1["シンク集合へ追加"]
+  R -- "ミス" --> P1["プロンプト構築 (sinks_prompt)"]
+  B -- "LLM-only" --> P1
+  P1 --> C{"RAG 有効?"}
+  C -- "はい" --> RC["RAG Client → Retriever → VectorStore\n(根拠断片)"]
+  C -- "いいえ" --> N["外部文脈なし"]
   RC --> M
-  N --> M[メッセージ構築 (system+user)
-+ ルールヒント(必要に応じ)]
-  M --> U[Unified LLM Client
-(config_manager.py)]
-  U --> E[llm_error_handler: リトライ/診断]
-  E --> X[LLM応答]
-  X --> O[抽出: 関数名 + param_index
-(正規表現/JSONパース)]
+  N --> M["メッセージ構築 (system+user)\n必要に応じてルールヒント"]
+  M --> U["Unified LLM Client\n(config_manager.py)"]
+  U --> E["llm_error_handler\n(リトライ/診断)"]
+  E --> X["LLM 応答"]
+  X --> O["抽出: 関数名 + param_index\n(正規表現/JSON パース)"]
   O --> S1
-  S1 --> Z[<TA>_sinks.json]
+  S1 --> Z["<TA>_sinks.json"]
 ```
 
 ### F-2. Phase5: テイント解析のLLMフロー
 
 ```mermaid
 flowchart TD
-  A[開始: CDFごと] --> T{接頭辞キャッシュに
-ヒット?}
-  T -- はい --> NXT[未解析部分のみへ]
-  T -- いいえ --> NXT
-  NXT --> L[ループ: チェーンの各関数]
-  L --> CE[CodeExtractor: 関数/シンク周辺の
-ソース抽出]
-  CE --> PM[PromptManager: start/middle/end
-テンプレ選択 + Hybrid/RAG反映]
-  PM --> RAG{RAG 有効?}
-  RAG -- はい --> RC[RAG Client -> Retriever -> VectorStore
-→ コンテキスト断片]
-  RAG -- いいえ --> NO[外部文脈なし]
+  A["開始: CDF ごと"] --> T{"接頭辞キャッシュ\nヒット?"}
+  T -- "はい" --> NXT["未解析部分のみを対象"]
+  T -- "いいえ" --> NXT
+  NXT --> L["ループ: チェーンの各関数"]
+  L --> CE["CodeExtractor: 関数/シンク周辺の\nソース抽出"]
+  CE --> PM["PromptManager: start / middle / end\nテンプレ選択 + Hybrid/RAG 反映"]
+  PM --> RAG{"RAG 有効?"}
+  RAG -- "はい" --> RC["RAG Client → Retriever → VectorStore\n(根拠断片)"]
+  RAG -- "いいえ" --> NO["外部文脈なし"]
   RC --> MSG
-  NO --> MSG[ConversationManager: 履歴最小化
-+ メッセージ構築]
-  MSG --> U[Unified LLM Client]
-  U --> EH[llm_error_handler: リトライ/診断]
-  EH --> RESP[LLM応答]
-  RESP --> VP[VulnerabilityParser: 1行目JSON + FINDINGS抽出]
+  NO --> MSG["ConversationManager: 履歴最小化\n+ メッセージ構築"]
+  MSG --> U["Unified LLM Client"]
+  U --> EH["llm_error_handler: リトライ/診断"]
+  EH --> RESP["LLM 応答"]
+  RESP --> VP["VulnerabilityParser:\n1行目JSON + FINDINGS 抽出"]
   VP --> L
-  L --> END{チェーン末尾?}
-  END -- いいえ --> L
-  END -- はい --> EP[最終プロンプト(end)の送信]
-  EP --> ER[最終応答: vulnerability_found
-+ END_FINDINGS]
-  ER --> MER[END優先でFINDINGS統合
-+ 重複除去]
-  MER --> OUT[チェーン結果に保存]
-  OUT --> AGG[全チェーン集約 → <TA>_vulnerabilities.json]
+  L --> END{"チェーン末尾?"}
+  END -- "いいえ" --> L
+  END -- "はい" --> EP["最終プロンプト (end) を送信"]
+  EP --> ER["最終応答: vulnerability_found\n+ END_FINDINGS"]
+  ER --> MER["END を優先して FINDINGS 統合\n+ 重複除去"]
+  MER --> OUT["チェーン結果に保存"]
+  OUT --> AGG["全チェーンを集約 →\n<TA>_vulnerabilities.json"]
 ```
 
 **補足**
