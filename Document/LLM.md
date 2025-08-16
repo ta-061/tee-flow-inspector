@@ -28,24 +28,27 @@ llm_config test               # または: python -m llm_settings.llm_cli test
 
 ```mermaid
 flowchart TD
-  subgraph Settings[LLM Settings Layer]
-    A[llm_config (CLI)] -->|set/configure| B[llm_config.json]
-    B --> C[UnifiedLLMClient._init_client()]
+  subgraph Settings["LLM Settings Layer"]
+    A["llm_config (CLI)"] --> B["llm_config.json"]
+    B --> C["UnifiedLLMClient._init_client()"]
     C --> D{Provider}
-    D --> E1[OpenAIClient]
-    D --> E2[ClaudeClient]
-    D --> E3[DeepSeekClient]
-    D --> E4[LocalLLMClient (Ollama)]
-    D --> E5[OpenRouterClient]
-    D --> E6[GeminiClient]
+    D --> E1["OpenAIClient"]
+    D --> E2["ClaudeClient"]
+    D --> E3["DeepSeekClient"]
+    D --> E4["LocalLLMClient (Ollama)"]
+    D --> E5["OpenRouterClient"]
+    D --> E6["GeminiClient"]
   end
-  subgraph Calls[LLM Call]
-    M[Messages(list of {role, content})] --> R[LLM_RATE_LIMITER.wait()]
-    R --> K[client.chat_completion()]
+
+  subgraph Calls["LLM Call"]
+    M["Messages (list of {role, content})"] --> R["LLM_RATE_LIMITER.wait()"]
+    R --> K["client.chat_completion()"]
     K --> X{Exception?}
-    X -- no --> Y[Text response]
-    X -- yes --> Z[Retry with backoff] --> K
+    X -- "no" --> Y["Text response"]
+    X -- "yes" --> Z["Retry with backoff"]
+    Z --> K
   end
+
   Settings --> Calls
 ```
 
@@ -176,13 +179,13 @@ text = handler.execute_with_retry(client, prompt, context={"phase": "P5"})
 
 ```mermaid
 flowchart TD
-  P[Prompt] --> RL[LLM_RATE_LIMITER]
-  RL --> CALL[chat_completion]
-  CALL --> VAL{空/無効?}
-  VAL -- yes --> DIAG[diagnose_empty_response]\n+ log_diagnosis/log_error
-  DIAG --> RET[Backoff & Retry]
+  P["Prompt"] --> RL["LLM_RATE_LIMITER"]
+  RL --> CALL["chat_completion"]
+  CALL --> VAL{"空 or 無効?"}
+  VAL -- "yes" --> DIAG["diagnose_empty_response\nlog_diagnosis / log_error"]
+  DIAG --> RET["Backoff & Retry"]
   RET --> CALL
-  VAL -- no --> OUT[文字列応答]
+  VAL -- "no" --> OUT["文字列応答"]
 ```
 
 ---
