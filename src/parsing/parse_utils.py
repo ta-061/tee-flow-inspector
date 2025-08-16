@@ -434,3 +434,104 @@ def _trace_callers_recursive(current_func: str, tainted_params: Set[str],
             chains,
             max_depth
         )
+
+def extract_function_call_arguments(cursor, file_path: str, line: int, func_name: str) -> List[str]:
+    """
+    指定された位置の関数呼び出しから実際の引数名/式を抽出
+    
+    Args:
+        cursor: ASTのルートカーソル
+        file_path: ファイルパス
+        line: 行番号
+        func_name: 関数名
+        
+    Returns:
+        引数の変数名/式のリスト
+    """
+    def find_call_at_location(node):
+        # 指定された位置の関数呼び出しを探す
+        if (node.kind == CursorKind.CALL_EXPR and
+            node.location.file and
+            node.location.file.name == file_path and
+            node.location.line == line):
+            
+            # 関数名を確認
+            called_func = None
+            if node.referenced:
+                called_func = node.referenced.spelling
+            else:
+                for child in node.get_children():
+                    if child.kind == CursorKind.DECL_REF_EXPR:
+                        called_func = child.spelling
+                        break
+            
+            if called_func == func_name:
+                # 引数を抽出
+                args = []
+                for child in node.get_children():
+                    # 最初の子は通常関数名なのでスキップ
+                    if child.kind == CursorKind.DECL_REF_EXPR and not args and child.spelling == func_name:
+                        continue
+                    # 引数を収集
+                    arg_expr = extract_expression_text(child)
+                    if arg_expr:
+                        args.append(arg_expr)
+                return args
+        
+        # 再帰的に探索
+        for child in node.get_children():
+            result = find_call_at_location(child)
+            if result is not None:
+                return result
+        
+        return None
+    
+    result = find_call_at_location(cursor)
+    return result if result is not None else []
+
+def extract_expression_text(cursor) -> str:
+    """
+    カーソルから式のテキスト表現を抽出
+    トークンを使って正確なテキストを再構築
+    """
+    tokens = list(cursor.get_tokens())
+    if tokens:
+        # トークンから式を再構築
+        return ''.join(token.spelling for token in tokens)
+    
+    # トークンがない場合は基本的な情報から推測
+    if cursor.kind == CursorKind.DECL_REF_EXPR:
+        return cursor.spelling
+    elif cursor.kind == CursorKind.INTEGER_LITERAL:
+        # 整数リテラル
+        return cursor.spelling if cursor.spelling else "0"
+    elif cursor.kind == CursorKind.STRING_LITERAL:
+        # 文字列リテラル
+        return cursor.spelling if cursor.spelling else '""'
+    elif cursor.kind == CursorKind.MEMBER_REF_EXPR:
+        # 構造体メンバー参照
+        base = ""
+        for child in cursor.get_children():
+            base = extract_expression_text(child)
+            break
+        return f"{base}.{cursor.spelling}" if base else cursor.spelling
+    elif cursor.kind == CursorKind.ARRAY_SUBSCRIPT_EXPR:
+        # 配列アクセス
+        children = list(cursor.get_children())
+        if len(children) >= 2:
+            array = extract_expression_text(children[0])
+            index = extract_expression_text(children[1])
+            return f"{array}[{index}]"
+    elif cursor.kind == CursorKind.CALL_EXPR:
+        # 関数呼び出し
+        func_name = ""
+        args = []
+        for i, child in enumerate(cursor.get_children()):
+            if i == 0:
+                func_name = extract_expression_text(child)
+            else:
+                args.append(extract_expression_text(child))
+        return f"{func_name}({', '.join(args)})"
+    
+    # デフォルト
+    return cursor.spelling if cursor.spelling else ""

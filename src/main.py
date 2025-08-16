@@ -229,7 +229,7 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool,
              "--output",     str(vd_raw),
              "--devkit",     os.environ.get("TA_DEV_KIT_DIR", "")],
             ta_dir, v)
-        print(f"[phase3.4] → {vd_raw}\n")
+        print(f"[phase3.1] → {vd_raw}\n")
         phase_times["phase3.1_find_sink_calls"] = time.time() - phase_start
         
         # Phase 3.2
@@ -240,7 +240,7 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool,
              "--output",     str(call_graph),
              "--devkit",     os.environ.get("TA_DEV_KIT_DIR", "")],
             ta_dir, v)
-        print(f"[phase3.5] → {call_graph}\n")
+        print(f"[phase3.2] → {call_graph}\n")
         phase_times["phase3.2_generate_call_graph"] = time.time() - phase_start
         
         # Phase 3.3
@@ -253,10 +253,10 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool,
             "--devkit",     os.environ.get("TA_DEV_KIT_DIR", ""),
             "--output",     str(chains_out)],
             ta_dir, v)
-        print(f"[phase3.6] → {chains_out}\n")
+        print(f"[phase3.3] → {chains_out}\n")
         phase_times["phase3.3_function_call_chains"] = time.time() - phase_start
 
-        # Phase 3.7
+        # Phase 3.4
         phase_start = time.time()
         run([sys.executable, str(merge_py),
              "--compile-db", str(ta_db),
@@ -264,8 +264,8 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool,
              "--output",     str(vd_final),
              "--devkit",     os.environ.get("TA_DEV_KIT_DIR", "")],
             ta_dir, v)
-        print(f"[phase3.7] → {vd_final}\n")
-        phase_times["phase3.7_extract_sink_calls"] = time.time() - phase_start
+        print(f"[phase3.4] → {vd_final}\n")
+        phase_times["phase3.4_extract_sink_calls"] = time.time() - phase_start
 
         # Phase4: 危険なフロー（候補）生成
         phase_start = time.time()

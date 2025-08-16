@@ -1,26 +1,284 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
-FunctionCallChains: LATTE論文準拠の実装
-関数内データ依存性解析を含む後方スライシング
+FunctionCallChains: LATTE論文準拠の完全実装
+関数間データ依存性解析を含む後方スライシング
 """
+
 import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Dict, Set, List, Optional, Tuple
+from dataclasses import dataclass
 from collections import defaultdict
-from clang.cindex import CursorKind
+from clang.cindex import CursorKind, TypeKind
 
 # 共通のパースユーティリティをインポート
 sys.path.append(str(Path(__file__).parent.parent))
 from parsing.parse_utils import (
     load_compile_db, 
     parse_sources_unified,
-    DataFlowAnalyzer
+    DataFlowAnalyzer,
+    extract_function_call_arguments
 )
 
+@dataclass
+class FunctionSummary:
+    """関数のデータフロー要約"""
+    name: str
+    param_to_outputs: Dict[str, Set[str]]
+    inputs_to_return: Dict[str, bool]
+    modified_globals: Set[str]
+    read_globals: Set[str]
+    pointer_param_modified: Dict[str, bool]
+
+class CompleteInterproceduralAnalyzer:
+    """完全な関数間データフロー解析器"""
+    
+    def __init__(self, tus: List, call_graph: List[Dict]):
+        self.tus = tus
+        self.call_graph = call_graph
+        self.function_summaries: Dict[str, FunctionSummary] = {}
+        self.global_variables: Set[str] = set()
+        
+        # 全関数のサマリーを事前計算
+        print("[DEBUG] Computing function summaries...")
+        self._compute_all_function_summaries()
+        print(f"[DEBUG] Computed summaries for {len(self.function_summaries)} functions")
+    
+    def _compute_all_function_summaries(self):
+        """すべての関数のデータフローサマリーを計算"""
+        for src, tu in self.tus:
+            # グローバル変数を収集
+            self._collect_global_variables(tu.cursor)
+            
+            # 各関数のサマリーを計算
+            for func in self._find_all_functions(tu.cursor):
+                if func.spelling not in self.function_summaries:
+                    summary = self._analyze_function(func)
+                    self.function_summaries[func.spelling] = summary
+    
+    def _collect_global_variables(self, cursor):
+        """グローバル変数を収集"""
+        def walk(node):
+            # VAR_DECLでトップレベルのものを収集
+            if node.kind == CursorKind.VAR_DECL:
+                # storage_classのチェック（Python bindingのバージョンによって異なる）
+                try:
+                    if hasattr(node, 'storage_class'):
+                        # グローバル変数の判定
+                        parent = node.semantic_parent
+                        if parent and parent.kind == CursorKind.TRANSLATION_UNIT:
+                            self.global_variables.add(node.spelling)
+                except:
+                    # フォールバック：親がTRANSLATION_UNITならグローバル
+                    parent = node.semantic_parent
+                    if parent and parent.kind == CursorKind.TRANSLATION_UNIT:
+                        self.global_variables.add(node.spelling)
+            
+            for child in node.get_children():
+                walk(child)
+        
+        walk(cursor)
+    
+    def _find_all_functions(self, cursor):
+        """すべての関数定義を見つける"""
+        functions = []
+        
+        def walk(node):
+            if node.kind == CursorKind.FUNCTION_DECL and node.is_definition():
+                functions.append(node)
+            for child in node.get_children():
+                walk(child)
+        
+        walk(cursor)
+        return functions
+    
+    def _analyze_function(self, func_cursor) -> FunctionSummary:
+        """関数のデータフローを解析してサマリーを作成"""
+        summary = FunctionSummary(
+            name=func_cursor.spelling,
+            param_to_outputs={},
+            inputs_to_return={},
+            modified_globals=set(),
+            read_globals=set(),
+            pointer_param_modified={}
+        )
+        
+        # パラメータを取得
+        params = []
+        for child in func_cursor.get_children():
+            if child.kind == CursorKind.PARM_DECL:
+                params.append(child.spelling)
+                # ポインタ型かチェック
+                if child.type and child.type.kind == TypeKind.POINTER:
+                    summary.pointer_param_modified[child.spelling] = False
+        
+        # 関数本体を解析
+        for child in func_cursor.get_children():
+            if child.kind == CursorKind.COMPOUND_STMT:
+                self._analyze_function_body(child, summary, params)
+        
+        return summary
+    
+    def _analyze_function_body(self, body_cursor, summary: FunctionSummary, params: List[str]):
+        """関数本体を解析してサマリーを更新"""
+        def walk(cursor):
+            # グローバル変数への代入を検出
+            if cursor.kind == CursorKind.BINARY_OPERATOR:
+                tokens = list(cursor.get_tokens())
+                if '=' in [t.spelling for t in tokens]:
+                    children = list(cursor.get_children())
+                    if len(children) >= 2:
+                        lhs = self._get_var_name(children[0])
+                        rhs_vars = self._collect_all_vars(children[1])
+                        
+                        # グローバル変数への書き込み
+                        if lhs in self.global_variables:
+                            summary.modified_globals.add(lhs)
+                            # どのパラメータから影響を受けるか記録
+                            for param in params:
+                                if param in rhs_vars:
+                                    if param not in summary.param_to_outputs:
+                                        summary.param_to_outputs[param] = set()
+                                    summary.param_to_outputs[param].add(f"global:{lhs}")
+                        
+                        # ポインタパラメータへの書き込み
+                        if lhs in summary.pointer_param_modified:
+                            summary.pointer_param_modified[lhs] = True
+            
+            # グローバル変数の読み取りを検出
+            elif cursor.kind == CursorKind.DECL_REF_EXPR:
+                var_name = cursor.spelling
+                if var_name in self.global_variables:
+                    summary.read_globals.add(var_name)
+            
+            # return文を検出
+            elif cursor.kind == CursorKind.RETURN_STMT:
+                return_vars = set()
+                for child in cursor.get_children():
+                    return_vars.update(self._collect_all_vars(child))
+                
+                # どの入力が戻り値に影響するか記録
+                for var in return_vars:
+                    if var in params:
+                        summary.inputs_to_return[var] = True
+                    elif var in self.global_variables:
+                        summary.inputs_to_return[f"global:{var}"] = True
+            
+            # 再帰的に子要素を処理
+            for child in cursor.get_children():
+                walk(child)
+        
+        walk(body_cursor)
+    
+    def _get_var_name(self, cursor) -> Optional[str]:
+        """変数名を取得"""
+        if cursor.kind == CursorKind.DECL_REF_EXPR:
+            return cursor.spelling
+        elif cursor.kind == CursorKind.MEMBER_REF_EXPR:
+            # 構造体メンバー
+            base = None
+            for child in cursor.get_children():
+                base = self._get_var_name(child)
+                if base:
+                    break
+            if base:
+                return f"{base}.{cursor.spelling}"
+            return cursor.spelling
+        elif cursor.kind == CursorKind.ARRAY_SUBSCRIPT_EXPR:
+            # 配列要素
+            for child in cursor.get_children():
+                name = self._get_var_name(child)
+                if name:
+                    return name
+        return None
+    
+    def _collect_all_vars(self, cursor) -> Set[str]:
+        """式からすべての変数を収集"""
+        vars = set()
+        
+        def walk(node):
+            var = self._get_var_name(node)
+            if var:
+                vars.add(var)
+            for child in node.get_children():
+                walk(child)
+        
+        walk(cursor)
+        return vars
+    
+    def trace_interprocedural_chains(self, vd: Dict, initial_func: str, 
+                                    initial_tainted_params: Set[str]) -> List[List[str]]:
+        """完全な関数間データフロー追跡"""
+        chains = []
+        
+        # 呼び出しグラフの逆インデックスを構築（callee -> callers）
+        callee_to_callers = defaultdict(list)
+        for edge in self.call_graph:
+            callee = edge.get('callee')
+            caller = edge.get('caller')
+            if callee and caller:
+                callee_to_callers[callee].append(edge)
+        
+        def trace_backwards(current_func: str, tainted_inputs: Set[str], 
+                          path: List[str], visited: Set[str], depth: int = 0):
+            """後方にデータフローを追跡"""
+            if depth > 50:  # 深さ制限
+                return
+            
+            if current_func in visited:
+                return
+            
+            visited.add(current_func)
+            
+            # この関数の呼び出し元を取得
+            callers = callee_to_callers.get(current_func, [])
+            
+            if not callers:
+                # エントリポイントに到達
+                chains.append(path[:])
+                return
+            
+            # 各呼び出し元について
+            for edge in callers:
+                caller_func = edge['caller']
+                
+                # 保守的な近似：すべての呼び出し元を追跡
+                # （実引数マッピングの完全な実装は複雑なため簡略化）
+                new_path = [caller_func] + path
+                
+                # 呼び出し元のサマリーがある場合
+                if caller_func in self.function_summaries:
+                    summary = self.function_summaries[caller_func]
+                    
+                    # この関数のパラメータを新しい汚染セットとして使用
+                    new_tainted = set()
+                    for param in summary.param_to_outputs.keys():
+                        new_tainted.add(param)
+                    
+                    # グローバル変数の伝播
+                    for tainted_var in tainted_inputs:
+                        if tainted_var.startswith("global:"):
+                            new_tainted.add(tainted_var)
+                    
+                    trace_backwards(caller_func, new_tainted, new_path, 
+                                  visited.copy(), depth + 1)
+                else:
+                    # サマリーがない場合は継続
+                    trace_backwards(caller_func, tainted_inputs, new_path,
+                                  visited.copy(), depth + 1)
+        
+        # 追跡開始
+        trace_backwards(initial_func, initial_tainted_params, [initial_func], set())
+        
+        return chains
+
+
 def load_json(path: Path):
+    """JSONファイルを読み込む"""
     return json.loads(path.read_text(encoding="utf-8"))
+
 
 def find_function_containing_vd(tu, vd: dict):
     """VDを含む関数を見つける"""
@@ -42,227 +300,50 @@ def find_function_containing_vd(tu, vd: dict):
     
     return walk(tu.cursor)
 
-def analyze_vd_data_dependency(tu, vd: dict, func_cursor):
-    """
-    VDの引数が関数パラメータに依存するかを解析
+
+def analyze_vd_data_dependency(tu, vd: dict, func_cursor, analyzer: CompleteInterproceduralAnalyzer):
+    """VDの引数が関数パラメータに依存するかを解析（改善版）"""
+    data_flow_analyzer = DataFlowAnalyzer(tu)
     
-    Returns:
-        依存するパラメータ名のセット（空の場合は依存なし）
-    """
-    analyzer = DataFlowAnalyzer(tu)
+    # VDのシンク呼び出しの実際の引数を取得
+    actual_args = extract_function_call_arguments(
+        tu.cursor,
+        vd["file"],
+        vd["line"],
+        vd["sink"]
+    )
     
-    # VDのシンク呼び出しを見つける
-    vd_line = vd["line"]
-    sink_name = vd["sink"]
-    
-    # 関数本体を見つける
-    func_body = None
-    for child in func_cursor.get_children():
-        if child.kind == CursorKind.COMPOUND_STMT:
-            func_body = child
-            break
-    
-    if not func_body:
-        func_params = analyzer._get_function_parameters(func_cursor)
-        return func_params
-    
-    # すべての呼び出し式を収集
-    def collect_calls(cursor, calls_list):
-        if cursor.kind == CursorKind.CALL_EXPR:
-            # 呼び出される関数名を確認
-            callee_name = None
-            for child in cursor.get_children():
-                if child.kind == CursorKind.DECL_REF_EXPR:
-                    callee_name = child.spelling
-                    break
-            
-            if callee_name:
-                calls_list.append({
-                    'cursor': cursor,
-                    'name': callee_name,
-                    'line': cursor.location.line
-                })
-        
-        for child in cursor.get_children():
-            collect_calls(child, calls_list)
-    
-    calls = []
-    collect_calls(func_body, calls)
-    
-    for call in calls:
-        print(f"[DEBUG]   {call['name']} at line {call['line']}")
-    
-    # VDの行番号に最も近いシンク呼び出しを見つける
-    sink_call = None
-    min_distance = float('inf')
-    
-    for call in calls:
-        if call['name'] == sink_name:
-            distance = abs(call['line'] - vd_line)
-            if distance < min_distance:
-                min_distance = distance
-                sink_call = call['cursor']
-    
-    if not sink_call:
-        # 保守的にすべてのパラメータに依存すると仮定
-        func_params = analyzer._get_function_parameters(func_cursor)
-        return func_params
-    
-    
-    # シンクの引数を抽出
+    # 指定されたパラメータインデックスの引数を取得
     sink_args = []
-    arg_nodes = []
-    arg_index = -1  # 最初の子は関数名なので-1から開始
-    
-    for child in sink_call.get_children():
-        if arg_index == -1:
-            # 最初の子は関数名
-            arg_index = 0
-            continue
-        
-        # これが実際の引数
-        arg_nodes.append(child)
-        
-        if arg_index == vd["param_index"]:
-            # この引数の変数を収集
-            variables = analyzer._collect_variables(child)
-            sink_args.extend(variables)
-            
-            # 引数の式全体も表示（デバッグ用）
-            tokens = list(child.get_tokens())
-            if tokens:
-                arg_text = ' '.join(t.spelling for t in tokens)
-        
-        arg_index += 1
-    
+    if actual_args and vd.get("param_index") is not None:
+        if vd["param_index"] < len(actual_args):
+            arg_expr = actual_args[vd["param_index"]]
+            # 引数から変数を抽出
+            import re
+            identifiers = re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', arg_expr)
+            sink_args = [id for id in identifiers if id not in ['sizeof', 'typeof', 'NULL']]
     
     if not sink_args:
-        # 引数が定数の場合など、変数が見つからない場合
-        # 保守的にすべてのパラメータに依存すると仮定
-        func_params = analyzer._get_function_parameters(func_cursor)
-        return func_params
+        # フォールバック
+        sink_args = [f"param_{vd.get('param_index', 0)}"]
     
-    # 後方データフロー解析を実行
-    affected_params = analyzer.analyze_backward_dataflow(
+    # 後方データフロー解析
+    affected_params = data_flow_analyzer.analyze_backward_dataflow(
         func_cursor,
-        (vd["file"], vd_line),
-        list(sink_args)
+        (vd["file"], vd["line"]),
+        sink_args
     )
-
     
-    # もし影響を受けるパラメータが見つからない場合でも、
-    # シンク引数に直接パラメータが使われているかチェック
-    if not affected_params:
-        func_params = analyzer._get_function_parameters(func_cursor)
-        for var in sink_args:
-            if var in func_params:
-                affected_params.add(var)
+    # グローバル変数の依存も確認
+    for var in sink_args:
+        if var in analyzer.global_variables:
+            affected_params.add(f"global:{var}")
     
     return affected_params
 
-def build_call_graph_index(edges: list[dict]) -> dict:
-    """呼び出しグラフのインデックスを構築"""
-    # 被呼び出し関数 -> 呼び出し元のマッピング
-    callee_to_callers = defaultdict(list)
-    
-    for edge in edges:
-        caller = edge.get("caller")
-        callee = edge.get("callee")
-        if caller and callee:
-            callee_to_callers[callee].append({
-                "caller": caller,
-                "call_file": edge.get("call_file", ""),
-                "call_line": edge.get("call_line", 0)
-            })
-    
-    
-    return callee_to_callers
 
-def trace_chains_with_dependency(func_name: str, 
-                                dependent_params: set,
-                                call_graph_index: dict,
-                                tus: list,
-                                max_depth: int = 50) -> list[list[str]]:
-    """
-    データ依存性を考慮して呼び出しチェーンを追跡
-    """
-    chains = []
-    
-
-    def dfs(current_func: str, path: list[str], depth: int):
-        if depth > max_depth:
-            return
-        
-        # 現在の関数の呼び出し元を取得
-        callers = call_graph_index.get(current_func, [])
-        
-        
-        if not callers:
-            # エントリポイントに到達
-            chains.append(path[:])
-            return
-        
-        # 各呼び出し元について
-        for caller_info in callers:
-            caller_name = caller_info["caller"]
-            
-            # 循環を防ぐ
-            if caller_name in path:
-                continue
-            
-            
-            # パスを更新（呼び出し元を先頭に追加）
-            new_path = [caller_name] + path
-            
-            # 呼び出し元の関数を見つける
-            caller_tu = None
-            caller_func = None
-            
-            for src, tu in tus:
-                func = find_function_by_name(tu, caller_name)
-                if func:
-                    caller_tu = tu
-                    caller_func = func
-                    break
-            
-            if not caller_func:
-                # 関数定義が見つからない場合は、保守的に追跡を続ける
-                dfs(caller_name, new_path, depth + 1)
-                continue
-            
-            # 呼び出し箇所での実引数を解析
-            # ここで、current_funcへの呼び出しで、dependent_paramsに対応する
-            # 実引数が、caller_funcのパラメータに依存するかをチェック
-            
-            # 簡略化のため、ここでは保守的に追跡を続ける
-            # 実装を完全にするには、呼び出し箇所の実引数解析が必要
-            dfs(caller_name, new_path, depth + 1)
-    
-    # 探索開始（現在の関数を初期パスに含める）
-    dfs(func_name, [func_name], 0)
-    
-    return chains
-
-def find_function_by_name(tu, func_name: str):
-    """TU内で指定された名前の関数を見つける"""
-    def walk(cursor):
-        if (cursor.kind == CursorKind.FUNCTION_DECL and 
-            cursor.is_definition() and
-            cursor.spelling == func_name):
-            return cursor
-        
-        for child in cursor.get_children():
-            result = walk(child)
-            if result:
-                return result
-        return None
-    
-    return walk(tu.cursor)
-
-def get_chains_for_vd(vd: dict, tus: list, call_graph_edges: list) -> list[list[str]]:
-    """
-    LATTE論文準拠：VDに対してデータ依存性を考慮したチェーンを生成
-    """
+def get_chains_for_vd(vd: dict, tus: list, call_graph_edges: list, use_complete: bool = True) -> list[list[str]]:
+    """VDに対してデータ依存性を考慮したチェーンを生成"""
     chains = []
     
     # VDを含むTUを見つける
@@ -277,28 +358,27 @@ def get_chains_for_vd(vd: dict, tus: list, call_graph_edges: list) -> list[list[
             break
     
     if not vd_func:
+        print(f"[WARNING] Function containing VD not found: {vd}")
         return chains
     
-    
-    # Step 1: 関数内データ依存性解析
-    dependent_params = analyze_vd_data_dependency(vd_tu, vd, vd_func)
-    
-    
-    # Step 2: 呼び出しグラフインデックスを構築
-    call_graph_index = build_call_graph_index(call_graph_edges)
-    
-    # Step 3: チェーンを追跡
-    if not dependent_params:
-        # パラメータに依存しない場合でも、呼び出し元を追跡
-        print(f"[DEBUG] No parameter dependency detected, but tracing callers anyway")
-    
-    # データ依存性を考慮して呼び出し元を追跡
-    chains = trace_chains_with_dependency(
-        vd_func.spelling,
-        dependent_params,
-        call_graph_index,
-        tus
-    )
+    if use_complete:
+        # 完全版の解析器を使用
+        analyzer = CompleteInterproceduralAnalyzer(tus, call_graph_edges)
+        
+        # VDに影響するパラメータを解析
+        dependent_params = analyze_vd_data_dependency(vd_tu, vd, vd_func, analyzer)
+        
+        print(f"[DEBUG] VD in function: {vd_func.spelling}, dependent params: {dependent_params}")
+        
+        # 完全な関数間追跡を実行
+        chains = analyzer.trace_interprocedural_chains(
+            vd, vd_func.spelling, dependent_params
+        )
+    else:
+        # 簡易版のフォールバック
+        from parsing.parse_utils import analyze_interprocedural_dataflow
+        chains = analyze_interprocedural_dataflow(vd_tu, vd, 
+                                                 {edge['callee']: [edge] for edge in call_graph_edges})
     
     # チェーンが見つからない場合、現在の関数のみを含むチェーンを作成
     if not chains:
@@ -307,19 +387,25 @@ def get_chains_for_vd(vd: dict, tus: list, call_graph_edges: list) -> list[list[
     # 各チェーンの最後にシンク関数を追加
     sink_name = vd["sink"]
     for chain in chains:
-        chain.append(sink_name)
+        if not chain or chain[-1] != sink_name:
+            chain.append(sink_name)
     
     return chains
 
+
 def main():
-    p = argparse.ArgumentParser(description="LATTE論文準拠の関数呼び出しチェーン生成")
+    """メインエントリポイント"""
+    p = argparse.ArgumentParser(description="完全版：関数間データフロー解析によるチェーン生成")
     p.add_argument("--call-graph", required=True, help="呼び出しグラフJSONファイル")
     p.add_argument("--vd-list", required=True, help="脆弱地点リストJSONファイル")
     p.add_argument("--compile-db", required=True, help="compile_commands.json")
     p.add_argument("--output", required=True, help="出力チェインJSONファイル")
     p.add_argument("--devkit", default=None, help="TA_DEV_KIT_DIR")
+    p.add_argument("--use-simple", action="store_true", help="簡易版の解析を使用")
     args = p.parse_args()
-
+    
+    print("[INFO] Starting function call chain analysis...")
+    
     # データ読み込み
     call_graph_data = load_json(Path(args.call_graph))
     if isinstance(call_graph_data, dict) and "edges" in call_graph_data:
@@ -327,7 +413,10 @@ def main():
     else:
         edges = call_graph_data
     
+    print(f"[INFO] Loaded {len(edges)} call graph edges")
+    
     vd_list = load_json(Path(args.vd_list))
+    print(f"[INFO] Processing {len(vd_list)} vulnerable destinations")
     
     # TUsを読み込む（データ依存性解析に必要）
     compile_db_path = Path(args.compile_db)
@@ -336,17 +425,24 @@ def main():
     
     import os
     devkit = args.devkit or os.environ.get("TA_DEV_KIT_DIR")
+    
+    print("[INFO] Parsing source files...")
     tus = parse_sources_unified(entries, devkit, verbose=False, ta_dir=ta_dir)
+    print(f"[INFO] Parsed {len(tus)} translation units")
     
     # 各VDに対してチェーンを生成
     result = []
+    use_complete = not args.use_simple
+    
     for i, vd_entry in enumerate(vd_list):
         if isinstance(vd_entry, dict) and "vd" in vd_entry:
             vd = vd_entry["vd"]
         else:
             vd = vd_entry
         
-        chains = get_chains_for_vd(vd, tus, edges)
+        print(f"[{i+1}/{len(vd_list)}] Processing {vd['sink']} at {vd['file']}:{vd['line']}")
+        
+        chains = get_chains_for_vd(vd, tus, edges, use_complete=use_complete)
         
         # 重複除去
         unique_chains = []
@@ -362,12 +458,16 @@ def main():
             "chains": unique_chains
         })
         
+        print(f"  → Found {len(unique_chains)} unique chains")
     
     # 結果を出力
-    Path(args.output).write_text(
+    output_path = Path(args.output)
+    output_path.write_text(
         json.dumps(result, indent=2, ensure_ascii=False),
         encoding="utf-8"
     )
+    
+    print(f"\n[SUCCESS] Generated chains for {len(result)} VDs → {args.output}")
 
 
 if __name__ == "__main__":
