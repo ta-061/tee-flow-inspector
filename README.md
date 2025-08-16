@@ -6,7 +6,7 @@ OP‑TEEの**Trusted Application (TA)** を対象に、LLM・RAG・ルール（D
 * 目的: TA内の**危険シンク**に至るデータフローをLLMで精査し、**脆弱性候補**と根拠（コード抜粋・推論過程）を提示
 * 付帯機能: RAG（OP‑TEE/TEE関連ドキュメントの近傍検索）、LLMプロバイダ切替、トークン計測、接頭辞キャッシュ
 
-詳細設計は [Documents](Document) を参照:
+詳細設計は [Documents](Document/) を参照:
 
 * [System_README.md](Document/System_README.md) … 各フェーズの内部処理・入出力契約・フロー
 * [RAG.md](Document/RAG.md) … RAG のインデックス構築・検索戦略・コンテキスト生成
