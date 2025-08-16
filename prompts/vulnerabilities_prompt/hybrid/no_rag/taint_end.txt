@@ -5,51 +5,62 @@ Decision Criteria
 2) Are validations/sanitizers sufficient to block exploitation?
 3) Under what concrete conditions is exploitation plausible?
 
-OUTPUT CONTRACT (STRICT):
-Line 1:
+OUTPUT CONTRACT (STRICT)
+
+Line 1 (REQUIRED):
 {"vulnerability_found":"yes"|"no"}
 
-From line 2, output EXACT JSON:
-{
-  "vulnerability_type": "CWE-XXX",
-  "severity": "low|medium|high|critical",
-  "taint_flow_summary": {
-    "source": "<brief>",
-    "propagation_path": ["A -> B @ <file>:<line>", "..."],
-    "sink": "<brief>"
-  },
-  "exploitation_analysis": {
-    "preconditions": ["..."],
-    "attack_scenario": "<short>",
-    "impact": "<short>"
-  },
-  "missing_mitigations": [
-    {"type":"bounds_check|type_validation|access_control|encryption","location":"function:line|unknown","recommendation":"<specific>"}
-  ],
-  "confidence_factors": {
-    "positive_indicators": ["..."],
-    "negative_indicators": ["..."],
-    "confidence_level": "high|medium|low"
-  },
-  "decision_rationale": "<why this is/isn't a vulnerability>"
-}
-
-Additionally, if a concrete security issue remains at the chain end, output a third line:
-END_FINDINGS={"items":[
+Line 2 (REQUIRED):
+If "yes":
+  EXACT JSON with:
   {
-    "file":"<path|'unknown'>",
-    "line":<int>,
-    "rule":"<short_category>",
-    "why":"<one sentence>",
-    "function":"<SINK_OR_END_FUNCTION>",
-    "phase":"end",
-    "sink_function":"<SINK_API_FN|'unknown'>",
-    "rule_matches":{"rule_id":["<RULE_ID1>", ...],"others":["<freeform>", ...]},
-    "refs":["inline:<id1>","inline:<id2>"],
-    "code_excerpt":"<short>"
+    "vulnerability_type": "CWE-XXX",
+    "severity": "low|medium|high|critical",
+    "taint_flow_summary": {
+      "source": "<brief>",
+      "propagation_path": ["A -> B @ <file>:<line>", "..."],
+      "sink": "<brief>"
+    },
+    "exploitation_analysis": {
+      "preconditions": ["..."],
+      "attack_scenario": "<short>",
+      "impact": "<short>"
+    },
+    "missing_mitigations": [
+      {"type":"bounds_check|type_validation|access_control|encryption","location":"function:line|unknown","recommendation":"<specific>"}
+    ],
+    "confidence_factors": {
+      "positive_indicators": ["..."],
+      "negative_indicators": ["..."],
+      "confidence_level": "high|medium|low"
+    },
+    "decision_rationale": "<why this IS a vulnerability>"
   }
-]}
-If none: END_FINDINGS={"items":[]}
+
+If "no":
+  EXACT JSON with:
+  {
+    "why_no_vulnerability": "<one-sentence summary>",
+    "effective_sanitizers": [
+      {"type":"bounds_check|type_validation|access_control|range_check|mem_access_check",
+       "location":"function:line|unknown",
+       "evidence":"<short excerpt or reason>"}
+    ],
+    "argument_safety": [
+      {"arg":"<name or param ref>", "why_safe":"<e.g., length capped by min(size, dst_cap)>", "evidence":"file:line|unknown"}
+    ],
+    "residual_risks": ["<edge case if any, or empty>"],
+    "confidence_factors": {
+      "positive_indicators": ["<what increased confidence>"],
+      "negative_indicators": ["<what might reduce confidence>"],
+      "confidence_level": "high|medium|low"
+    },
+    "decision_rationale": "<why this ISN'T a vulnerability>"
+  }
+
+Line 3 (OPTIONAL):
+For "yes": END_FINDINGS={"items":[...]}       # required if a concrete end sink remains
+For "no":  END_FINDINGS={"items":[]}          # or omit
 
 Rules:
 - Cite evidence lines where possible; otherwise "unknown".
