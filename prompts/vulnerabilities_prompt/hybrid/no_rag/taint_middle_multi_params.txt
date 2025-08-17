@@ -1,43 +1,68 @@
-Continue the taint analysis for the next step in the call chain (multiple parameter flows).
+Make the FINAL decision for the analyzed code path.
 
-You will receive:
-- Code to analyze: 
-{code}
-- (Optional) Upstream context: {upstream_context}   # a set of previously tainted symbols/params
+Decision criteria (ALL must be considered):
+1) Tainted data actually reaches a dangerous sink.
+2) Validations/sanitizers are (in)sufficient.
+3) Concrete exploitation conditions.
 
-FALSE-POSITIVE GUARDRAILS:
-- Random from TEE_GenerateRandom is NON-sensitive by default.
-- Alloc/Free (TEE_Malloc/TEE_Free) are NOT sinks.
-- Report a finding only when a concrete sink is reached and attacker influence is plausible.
+OUTPUT CONTRACT (STRICT)
 
-WHAT TO INFER:
-- Infer function name from the code signature; else "unknown".
-- Build TAINTED from {upstream_context}; otherwise infer only when code clearly ingests untrusted input.
-- Analyze EACH parameter/symbol independently; track explicit dataflow (buf-len, dst-src-n, ptr-offset-size, index-bound). For control dependence: "implicit:<var>".
+Line 1 (REQUIRED):
+{"vulnerability_found":"yes"|"no"}
 
-OUTPUT CONTRACT (EXACTLY TWO LINES):
-Line 1:
-{"function":"<auto-inferred or 'unknown'>","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":{"rule_id":[],"others":[]}}
-
-Line 2:
-FINDINGS={"items":[
+Line 2 (REQUIRED):
+If "yes":
+  EXACT JSON with:
   {
-    "rule":"unencrypted_output|weak_input_validation|shared_memory_overwrite",
-    "file":"<path|'unknown'>",
-    "line":<int>,
-    "why":"<one sentence>",
-    "function":"<CURRENT_FUNCTION>",
-    "phase":"middle",
-    "sink_function":"<SINK_OR_EXTERNAL_FN|'unknown'>",
-    "rule_matches":{"rule_id":["<RULE_ID1>", ...],"others":["<freeform>", ...]},
-    "code_excerpt":"<short>"
+    "vulnerability_type": "CWE-XXX",
+    "severity": "low|medium|high|critical",
+    "taint_flow_summary": {
+      "source": "<brief>",
+      "propagation_path": ["A -> B @ <file>:<line>", "..."],
+      "sink": "<brief>"
+    },
+    "exploitation_analysis": {
+      "preconditions": ["..."],
+      "attack_scenario": "<short>",
+      "impact": "<short>"
+    },
+    "missing_mitigations": [
+      {"type":"bounds_check|type_validation|access_control|encryption","location":"function:line|unknown","recommendation":"<specific>"}
+    ],
+    "confidence_factors": {
+      "positive_indicators": ["..."],
+      "negative_indicators": ["..."],
+      "confidence_level": "high|medium|low"
+    },
+    "decision_rationale": "<why this IS a vulnerability>"
   }
-]}
-If nothing qualifies: FINDINGS={"items":[]}
 
-Analysis steps:
-1) For EACH possibly tainted parameter/symbol:
-   - Append "LHS <- RHS @ <file>:<line>" into "propagation".
-   - Record validators/sanitizers in "sanitizers" (bounds/type/access checks) with evidence lines.
-   - Identify dangerous sinks and WHICH parameter/symbol they use; record in "sinks" with evidence lines.
-2) If param_types misuse or unchecked size couples attacker input to a sink, note in "evidence" and map to a rule_id if applicable.
+If "no":
+  EXACT JSON with:
+  {
+    "why_no_vulnerability": "<one-sentence summary>",
+    "effective_sanitizers": [
+      {"type":"bounds_check|type_validation|access_control|range_check|mem_access_check",
+       "location":"function:line|unknown",
+       "evidence":"<short excerpt or reason>"}
+    ],
+    "argument_safety": [
+      {"arg":"<name or param ref>", "why_safe":"<e.g., length capped by min(size, dst_cap)>", "evidence":"file:line|unknown"}
+    ],
+    "residual_risks": ["<edge case if any, or empty>"],
+    "confidence_factors": {
+      "positive_indicators": ["<what increased confidence>"],
+      "negative_indicators": ["<what might reduce confidence>"],
+      "confidence_level": "high|medium|low"
+    },
+    "decision_rationale": "<why this ISN'T a vulnerability>"
+  }
+
+Line 3 (OPTIONAL):
+For "yes": END_FINDINGS={"items":[...]}       # required if a concrete end sink remains
+For "no":  END_FINDINGS={"items":[]}          # or omit
+
+Rules:
+- Cite evidence lines where possible; otherwise "unknown".
+- Respect guardrails: alloc/free are non-sinks; random bytes are non-sensitive.
+- Keep outputs concise and follow the two/three line protocol exactly.

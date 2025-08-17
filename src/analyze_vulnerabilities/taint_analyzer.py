@@ -122,6 +122,16 @@ def main():
     code_extractor = CodeExtractor(phase12_data)
     vuln_parser = VulnerabilityParser()
     
+    if not args.no_diting_rules:
+        try:
+            rules_dir = Path(__file__).parent.parent.parent / "rules"
+            rules_json = load_diting_rules_json(rules_dir / "codeql_rules.json")
+            vuln_parser.set_known_rules(rules_json)
+            print(f"[INFO] Known rule_ids set for parser: "
+                f"{', '.join(vuln_parser.known_rules)}")
+        except Exception as e:
+            print(f"[WARN] Failed to set known rules for parser: {e}")
+
     with StructuredLogger(log_file, batch_size=args.batch_size, keep_file_open=True) as logger:
         conversation_manager = ConversationManager()
         
@@ -253,6 +263,13 @@ def main():
             encoding="utf-8"
         )
         
+        if "consistency_stats" in analyzer_stats:
+            consistency_stats = analyzer_stats["consistency_stats"]
+            print(f"\n[整合性チェック統計]")
+            print(f"  再評価実行数: {consistency_stats.get('reevaluations', 0)}")
+            print(f"  ダウングレード数: {consistency_stats.get('downgrades', 0)}")
+            print(f"  総チェック数: {consistency_stats.get('total_consistency_checks', 0)}")
+
         print(f"\n[taint_analyzer] 解析完了:")
         print(f"  所要時間: {format_time_duration(analysis_time)}")
         print(f"  検出脆弱性: {len(vulnerabilities)} 件")
@@ -298,10 +315,8 @@ def setup_diting_rules_enhanced(logger: StructuredLogger, use_rag: bool) -> Opti
     拡張版DITINGルールのセットアップ（Hybridモード用）
     CodeQLルールの統合とヒントブロックの生成を含む
     """
-    # PromptManagerを使用してシステムプロンプトを取得
     from prompts import _prompt_manager
     
-    # Hybridモードでシステムプロンプトを読み込み
     _prompt_manager.set_mode("hybrid", use_rag)
     
     try:
@@ -311,7 +326,6 @@ def setup_diting_rules_enhanced(logger: StructuredLogger, use_rag: bool) -> Opti
         print(f"[WARN] System prompt file not found: {e}")
         return None
     
-    # CodeQLルールをロード（以降は同じ）
     rules_dir = Path(__file__).parent.parent.parent / "rules"
     json_path = rules_dir / "codeql_rules.json"
     
@@ -325,13 +339,7 @@ def setup_diting_rules_enhanced(logger: StructuredLogger, use_rag: bool) -> Opti
         # ルールヒントブロックを生成
         rule_hints = build_rule_hints_block_from_codeql(json_path)
         set_rule_hints(rule_hints)
-        
-        # システムプロンプトを構築（2つの要素を埋め込み）
-        system_prompt = build_system_prompt_enhanced(
-            diting_template, 
-            diting_rules_json,
-            rule_hints
-        )
+        system_prompt = _prompt_manager.get_system_prompt()
         
         logger.write(f"### System Prompt Mode: Hybrid (with DITING + CodeQL Rules)\n")
         logger.write(f"### DITING Rules Loaded: {len(diting_rules.get('detection_rules', []))} detection rules\n")

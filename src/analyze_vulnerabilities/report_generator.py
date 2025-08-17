@@ -32,6 +32,43 @@ class ReportGenerator:
             f.write(f"RAG Mode: {'Enabled' if statistics['rag_enabled'] else 'Disabled'}\n")
             f.write(f"Total chains analyzed: {statistics['total_chains_analyzed']}\n")
             f.write(f"Total vulnerabilities found: {len(vulnerabilities)}\n\n")
+
+            # 脆弱性が見つからなかった場合の処理
+            if not vulnerabilities:
+                f.write("## Analysis Results\n\n")
+                f.write("No vulnerabilities were detected in the analyzed code.\n\n")
+                
+                # 解析の詳細統計を追加
+                f.write("### Analysis Statistics\n\n")
+                f.write(f"- Analysis Mode: {statistics.get('analysis_mode', 'unknown')}\n")
+                f.write(f"- Functions Analyzed: {statistics.get('functions_analyzed', 0)}\n")
+                f.write(f"- LLM Calls: {statistics.get('llm_calls', 0)}\n")
+                f.write(f"- Analysis Time: {statistics.get('analysis_time_formatted', 'unknown')}\n")
+                
+                if statistics.get('cache_enabled'):
+                    cache_stats = statistics.get('cache_stats', {})
+                    f.write(f"- Cache Hit Rate: {cache_stats.get('hit_rate', 'N/A')}\n")
+                    f.write(f"- Cache Reuse Count: {statistics.get('cache_reuse_count', 0)}\n")
+                
+                if statistics.get('token_usage'):
+                    token_usage = statistics['token_usage']
+                    f.write(f"\n### Token Usage\n\n")
+                    f.write(f"- Total Tokens: {token_usage.get('total_tokens', 0):,}\n")
+                    f.write(f"- Input Tokens: {token_usage.get('total_prompt_tokens', 0):,}\n")
+                    f.write(f"- Output Tokens: {token_usage.get('total_completion_tokens', 0):,}\n")
+                    f.write(f"- API Calls: {token_usage.get('api_calls', 0)}\n")
+                
+                if statistics.get('findings_stats'):
+                    findings_stats = statistics['findings_stats']
+                    f.write(f"\n### Findings Statistics\n\n")
+                    f.write(f"- Total Collected: {findings_stats.get('total_collected', 0)}\n")
+                    f.write(f"- Middle Findings: {findings_stats.get('middle_findings', 0)}\n")
+                    f.write(f"- End Findings: {findings_stats.get('end_findings', 0)}\n")
+                    f.write(f"- After Merge: {findings_stats.get('after_merge', 0)}\n")
+                    f.write(f"- Duplicates Removed: {findings_stats.get('duplicates_removed', 0)}\n")
+                
+                f.write("\n")
+                return
             
             # 目次
             if vulnerabilities:
@@ -244,6 +281,22 @@ class ReportGenerator:
             f.write(f"LLM Provider: {statistics.get('llm_provider','unknown')}\n")
             f.write(f"Mode: {statistics.get('analysis_mode','unknown')}, RAG: {'Enabled' if statistics.get('rag_enabled') else 'Disabled'}\n")
             f.write(f"Total findings: {total}\n\n")
+
+            # Findingsが無い場合の処理
+            if not findings:
+                f.write("## Analysis Results\n\n")
+                f.write("No inline findings were detected during the analysis.\n\n")
+                
+                # 統計情報を追加
+                if statistics.get('findings_stats'):
+                    f.write("### Collection Statistics\n\n")
+                    findings_stats = statistics['findings_stats']
+                    f.write(f"- Total Collected: {findings_stats.get('total_collected', 0)}\n")
+                    f.write(f"- Middle Findings: {findings_stats.get('middle_findings', 0)}\n")
+                    f.write(f"- End Findings: {findings_stats.get('end_findings', 0)}\n")
+                    f.write(f"- After Merge: {findings_stats.get('after_merge', 0)}\n")
+                    f.write(f"- Duplicates Removed: {findings_stats.get('duplicates_removed', 0)}\n")
+                return
 
             # Phase 別
             f.write("## By Phase\n\n")

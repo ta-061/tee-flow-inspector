@@ -574,7 +574,7 @@ class TaintAnalyzer:
             "is_final": is_final
         }
         
-        response = self._ask_llm_with_handler(context)
+        response = self._ask_llm_with_format_retry(context, max_format_retries=1)
         self.stats["total_llm_calls"] += 1
         
         # 会話にレスポンスを追加
@@ -594,7 +594,10 @@ class TaintAnalyzer:
         self._parse_function_analysis(response, func_name, position, chain, extended_vd, results)
     
     def _perform_vulnerability_analysis(self, results: dict, chain: List[str], vd: dict) -> dict:
-        """最終的な脆弱性判定とEND_FINDINGSの収集（エラー処理強化版）"""
+        """
+        最終的な脆弱性判定とEND_FINDINGSの収集（整合性チェック強化版）
+        """
+        # 既存の脆弱性判定処理
         end_prompt = get_end_prompt()
         
         self.conversation_manager.add_message("user", end_prompt)
@@ -603,7 +606,6 @@ class TaintAnalyzer:
         self.logger.writeln(end_prompt)
         self.logger.writeln("")
         
-        # LLMに問い合わせ（エラー処理付き）
         context = {
             "phase": "vulnerability_analysis",
             "chain": " -> ".join(chain),
@@ -623,21 +625,16 @@ class TaintAnalyzer:
         
         # END_FINDINGSを抽出
         try:
-            # 最後の関数名を使用（シンク関数）
             func_name = chain[-1] if chain else "unknown"
-            
-            # 現在の関数のファイル情報を取得
             current_func_info = None
             if func_name in self.code_extractor.user_functions:
                 current_func_info = self.code_extractor.user_functions[func_name]
             
-            # vdを拡張
             extended_vd = vd.copy()
             if current_func_info:
                 extended_vd['current_file'] = current_func_info['file']
                 extended_vd['current_line'] = current_func_info['line']
             
-            # END_FINDINGSを抽出
             end_findings = self.vuln_parser.extract_end_findings(
                 vuln_response, func_name, chain, extended_vd,
                 self.code_extractor.project_root
@@ -649,12 +646,53 @@ class TaintAnalyzer:
         except Exception as e:
             self.logger.writeln(f"[WARN] END_FINDINGS parse failed: {e}")
         
-        return {
+        # === 整合性チェック1: テイントフロー ===
+        has_valid_taint_flow = self._validate_taint_flow_consistency(results, chain, vd)
+        
+        if is_vuln and not has_valid_taint_flow:
+            self.logger.writeln("[CONSISTENCY] No valid REE->sink path detected, triggering reevaluation")
+            reevaluation = self._reevaluate_with_consistency_check(results, chain, vd)
+            
+            if reevaluation["reevaluated"]:
+                is_vuln = reevaluation["is_vulnerable"]
+                meta["reevaluated"] = True
+                meta["reevaluation_reason"] = "no_taint_flow_path"
+                vuln_response = reevaluation["reevaluation_response"]
+                
+                self.logger.writeln(f"[CONSISTENCY] Reevaluation result: {'vulnerable' if is_vuln else 'not vulnerable'}")
+        
+        # === 整合性チェック2: Findings一貫性 ===
+        findings_consistency = self._check_findings_consistency(results, is_vuln)
+        
+        if not findings_consistency["is_consistent"]:
+            meta["consistency_warning"] = findings_consistency["inconsistency_type"]
+            
+            # 矛盾が深刻な場合はダウングレード
+            if findings_consistency["suggested_action"] == "downgrade_to_no_vuln":
+                self.logger.writeln("[CONSISTENCY] Downgrading to no vulnerability due to lack of findings")
+                is_vuln = False
+                meta["downgraded"] = True
+                meta["downgrade_reason"] = "no_supporting_findings"
+        
+        # === 最終結果の構築 ===
+        result = {
             "vulnerability": vuln_response,
             "vulnerability_details": vuln_details,
             "is_vulnerable": is_vuln,
-            "meta": meta
+            "meta": meta,
+            "consistency_checks": {
+                "taint_flow_valid": has_valid_taint_flow,
+                "findings_consistent": findings_consistency["is_consistent"]
+            }
         }
+        
+        # 統計更新
+        if meta.get("reevaluated"):
+            self.stats["consistency_reevaluations"] = self.stats.get("consistency_reevaluations", 0) + 1
+        if meta.get("downgraded"):
+            self.stats["consistency_downgrades"] = self.stats.get("consistency_downgrades", 0) + 1
+        
+        return result
     
     def _ask_llm_with_handler(self, context: Dict) -> str:
         messages = self.conversation_manager.get_history()
@@ -770,6 +808,36 @@ class TaintAnalyzer:
         # main.pyも終了させる
         sys.exit(1)
     
+    def _ask_llm_with_format_retry(self, context: Dict, max_format_retries: int = 1) -> str:
+        response = self._ask_llm_with_handler(context)
+
+        if context.get("phase") == "function_analysis":
+            is_valid, error_msg = self.vuln_parser.validate_taint_response_format(response)
+            if not is_valid and max_format_retries > 0:
+                # ログ（再要求の理由を記録）
+                self.logger.writeln(f"[FORMAT] {context.get('function','unknown')}: {error_msg} — requesting reformat")
+
+                # 二行契約に沿った明確な再要求
+                self.conversation_manager.add_message(
+                    "user",
+                    ("Reformat to the EXACT two-line contract. "
+                    "Line 1: JSON object with keys in this strict order — "
+                    "function, propagation, sanitizers, sinks, evidence, rule_matches "
+                    "(and rule_matches has arrays 'rule_id' and 'others'). "
+                    "Line 2: FINDINGS={\"items\":[ ... ]}. "
+                    "No code fences, no extra lines or prose.")
+                )
+                # 2nd call
+                response = self._ask_llm_with_handler({**context, "retry_type": "format"})
+                self.stats["format_retries"] = self.stats.get("format_retries", 0) + 1
+
+                # ログ（再応答も記録）
+                self.logger.writeln("### Response (after format retry):")
+                self.logger.writeln(response if response else "[EMPTY AFTER RETRY]")
+                self.logger.writeln("")
+
+        return response
+    
     def _generate_prompt(
         self,
         func_name: str,
@@ -872,6 +940,129 @@ class TaintAnalyzer:
             print(f"Warning: No param_index or param_indices found in vd: {vd}")
             return []
     
+    def _validate_taint_flow_consistency(self, results: dict, chain: List[str], vd: dict) -> bool:
+        """
+        テイントフロー整合性チェック
+        REE提供データからsinkまでのパスが存在するか確認
+        
+        Returns:
+            True: 整合性あり（パスが存在）
+            False: 整合性なし（パスが存在しない）
+        """
+        has_valid_path = False
+        taint_states = []
+        
+        # 各関数のtaint stateを抽出
+        for analysis in results.get("taint_analysis", []):
+            state = self.vuln_parser.extract_taint_state(analysis.get("analysis", ""))
+            taint_states.append(state)
+            
+            # propagationにREE関連のデータフローがあるかチェック
+            for prop in state.get("propagated_values", []):
+                prop_lower = prop.lower()
+                # REE由来のデータソースを示すキーワード
+                ree_indicators = [
+                    "params", "param_types", "memref", "buffer",
+                    "ree", "untrusted", "input", "external"
+                ]
+                if any(indicator in prop_lower for indicator in ree_indicators):
+                    has_valid_path = True
+                    break
+            
+            # sinksに到達しているかチェック
+            if state.get("reached_sinks"):
+                # sinkに到達していても、REEデータが伝搬していない可能性
+                if not has_valid_path:
+                    self.logger.writeln(f"[WARN] Sink reached but no REE data propagation detected")
+        
+        # デバッグ情報
+        if self.logger:
+            self.logger.writeln(f"[CONSISTENCY] Taint flow validation: {'PASS' if has_valid_path else 'FAIL'}")
+            self.logger.writeln(f"  Chain: {' -> '.join(chain)}")
+            self.logger.writeln(f"  REE data path found: {has_valid_path}")
+        
+        return has_valid_path
+    
+    def _reevaluate_with_consistency_check(self, results: dict, chain: List[str], vd: dict) -> dict:
+        """
+        整合性チェックに基づく再評価
+        """
+        reevaluation_prompt = """Based on the taint analysis, reconsider the vulnerability assessment:
+
+IMPORTANT: A vulnerability exists ONLY if:
+1. Data from REE (untrusted source) actually flows to a dangerous sink
+2. The data flow is explicit and traceable through the code
+3. There are insufficient sanitizers or bounds checks
+
+Review the analysis and provide a corrected assessment.
+Was there an ACTUAL data flow from REE inputs to the sink? Answer with the standard two-line format."""
+
+        # 会話に再評価プロンプトを追加
+        self.conversation_manager.add_message("user", reevaluation_prompt)
+        
+        # LLMに問い合わせ
+        context = {
+            "phase": "consistency_reevaluation",
+            "chain": " -> ".join(chain),
+            "sink": vd.get("sink", "unknown")
+        }
+        
+        response = self._ask_llm_with_handler(context)
+        self.stats["total_llm_calls"] += 1
+        
+        # ログ記録
+        self.logger.writeln("\n[REEVALUATION] Consistency check triggered")
+        self.logger.writeln(response)
+        
+        # 再評価結果をパース
+        is_vuln, meta = self.vuln_parser.parse_vuln_response(response)
+        
+        return {
+            "reevaluated": True,
+            "is_vulnerable": is_vuln,
+            "reevaluation_response": response,
+            "meta": meta
+        }
+    
+    def _check_findings_consistency(self, results: dict, is_vulnerable: bool) -> dict:
+        """
+        Findings整合性チェック
+        findingsが空なのに脆弱性ありと判定された場合の矛盾を検出
+        
+        Returns:
+            整合性チェック結果と修正提案
+        """
+        inline_findings = results.get("inline_findings", [])
+        
+        consistency_result = {
+            "is_consistent": True,
+            "inconsistency_type": None,
+            "suggested_action": None,
+            "confidence_adjustment": 0
+        }
+        
+        # ケース1: 脆弱性ありだがfindingsが空
+        if is_vulnerable and not inline_findings:
+            self.logger.writeln("[INCONSISTENCY] Vulnerability reported but no findings extracted")
+            consistency_result.update({
+                "is_consistent": False,
+                "inconsistency_type": "vuln_without_findings",
+                "suggested_action": "downgrade_to_no_vuln",
+                "confidence_adjustment": -50  # 信頼度を大幅に下げる
+            })
+        
+        # ケース2: 脆弱性なしだが多数のfindingsあり
+        elif not is_vulnerable and len(inline_findings) > 3:
+            self.logger.writeln(f"[INCONSISTENCY] No vulnerability but {len(inline_findings)} findings present")
+            consistency_result.update({
+                "is_consistent": False,
+                "inconsistency_type": "findings_without_vuln",
+                "suggested_action": "review_findings",
+                "confidence_adjustment": -20
+            })
+        
+        return consistency_result
+    
     def _format_param_info(self, param_indices: List[int]) -> str:
         """パラメータ情報をフォーマット"""
         if len(param_indices) == 1:
@@ -883,4 +1074,12 @@ class TaintAnalyzer:
         """統計情報を取得"""
         stats = self.stats.copy()
         stats["cache_stats"] = self.prefix_cache.get_stats()
+        
+        # 整合性チェック統計を追加
+        stats["consistency_stats"] = {
+            "reevaluations": self.stats.get("consistency_reevaluations", 0),
+            "downgrades": self.stats.get("consistency_downgrades", 0),
+            "total_consistency_checks": self.stats.get("total_chains_analyzed", 0)
+        }
+        
         return stats
