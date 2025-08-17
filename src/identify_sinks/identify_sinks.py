@@ -79,7 +79,7 @@ from rag.rag_client import TEERAGClient
 
 # トークン追跡クライアントをインポート
 try:
-    from analyze_vulnerabilities.token_tracking_client import TokenTrackingClient
+    from analyze_vulnerabilities.optimization import TokenTrackingClient
     TOKEN_TRACKING_AVAILABLE = True
 except ImportError:
     TOKEN_TRACKING_AVAILABLE = False

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import List, Dict
 import time
 
-from .utils import truncate_string, format_time_duration
+from analyze_vulnerabilities.utils import truncate_string, format_time_duration
 
 class ReportGenerator:
     """

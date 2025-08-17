@@ -21,12 +21,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from llm_settings.config_manager import UnifiedLLMClient
 
 # analyze_vulnerabilitiesパッケージからインポート
-from analyze_vulnerabilities.logger import StructuredLogger
-from analyze_vulnerabilities.conversation import ConversationManager
-from analyze_vulnerabilities.code_extractor import CodeExtractor
-from analyze_vulnerabilities.vulnerability_parser import VulnerabilityParser
-from analyze_vulnerabilities.taint_analyzer_core import TaintAnalyzer
-from analyze_vulnerabilities.utils import load_diting_rules_json, build_system_prompt
+from analyze_vulnerabilities import StructuredLogger
+from analyze_vulnerabilities import ConversationManager
+from analyze_vulnerabilities import CodeExtractor
+from analyze_vulnerabilities import VulnerabilityParser
+from analyze_vulnerabilities import TaintAnalyzer
+from analyze_vulnerabilities import load_diting_rules_json, build_system_prompt
 
 # promptsモジュールも同様に
 from prompts import (
@@ -97,7 +97,7 @@ def main():
     # トークン追跡機能を有効化
     if args.track_tokens:
         print("[INFO] Token tracking enabled")
-        from analyze_vulnerabilities.token_tracking_client import TokenTrackingClient
+        from analyze_vulnerabilities.optimization import TokenTrackingClient
         client = TokenTrackingClient(base_client)
     else:
         client = base_client
@@ -315,7 +315,7 @@ def setup_diting_rules_enhanced(logger: StructuredLogger, use_rag: bool) -> Opti
     拡張版DITINGルールのセットアップ（Hybridモード用）
     CodeQLルールの統合とヒントブロックの生成を含む
     """
-    from prompts import _prompt_manager
+    from analyze_vulnerabilities.prompts import _prompt_manager
     
     _prompt_manager.set_mode("hybrid", use_rag)
     
@@ -422,7 +422,7 @@ Analyze the code systematically and provide detailed explanations of any vulnera
 
 def generate_summary_report(out_dir: Path, statistics: dict, vulnerabilities: list, inline_findings: list):
     """サマリーレポートを生成（拡張版）"""
-    from analyze_vulnerabilities.report_generator import ReportGenerator
+    from analyze_vulnerabilities.io_handlers import ReportGenerator
     
     generator = ReportGenerator()
     summary_path = out_dir / "vulnerability_summary.md"

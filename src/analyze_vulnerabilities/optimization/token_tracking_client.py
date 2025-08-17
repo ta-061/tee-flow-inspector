@@ -6,7 +6,6 @@ src/analyze_vulnerabilities/token_tracking_client.py
 """
 
 from typing import Dict, List, Tuple
-import time
 
 try:
     import tiktoken
