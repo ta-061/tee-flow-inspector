@@ -2,13 +2,14 @@
 # -*- coding: utf-8 -*-
 """
 フェーズ3: フェーズ1-2の結果を読み込んで、呼び出されている外部 API だけをLLMに問い、シンク候補をJSON出力する
-LLMエラー処理モジュールを使用した改善版
+LLMエラー処理モジュールを使用した改善版（解析時間計測機能追加）
 """
 
 import sys
 import json
 import re
 import argparse
+import time  # 時間計測用に追加
 from pathlib import Path
 from typing import Optional, Dict, List
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -150,7 +151,7 @@ def extract_called_functions(code: str) -> list[str]:
 
 def analyze_external_function_as_sink(client, func_name: str, log_file: Path, 
                                      use_rag: bool = True, project_name: str = "",
-                                     retry_handler: LLMRetryHandler = None) -> list[dict]:
+                                     retry_handler: LLMRetryHandler = None) -> tuple[list[dict], float]:
     """
     外部関数をシンクとして分析
     
@@ -163,8 +164,10 @@ def analyze_external_function_as_sink(client, func_name: str, log_file: Path,
         retry_handler: リトライハンドラー
     
     Returns:
-        シンクのリスト
+        (シンクのリスト, 解析時間)のタプル
     """
+    start_time = time.time()  # 解析開始時間
+    
     # RAGを使用する場合、関連情報を取得
     rag_context = ""
     if use_rag and _rag_client is not None:
@@ -217,7 +220,7 @@ def analyze_external_function_as_sink(client, func_name: str, log_file: Path,
         lf.write(f"## Response:\n{resp}\n\n")
     
     if not resp:
-        return []
+        return [], time.time() - start_time
     
     # パターンマッチングでシンク情報を抽出
     pattern = re.compile(
@@ -236,7 +239,8 @@ def analyze_external_function_as_sink(client, func_name: str, log_file: Path,
                 "reason": reason
             })
     
-    return sinks
+    elapsed_time = time.time() - start_time
+    return sinks, elapsed_time
 
 
 def format_token_stats(stats: Dict) -> str:
@@ -255,6 +259,18 @@ def format_token_stats(stats: Dict) -> str:
     return "\n".join(lines)
 
 
+def format_time(seconds: float) -> str:
+    """秒数を読みやすい形式にフォーマット"""
+    if seconds < 60:
+        return f"{seconds:.2f}秒"
+    elif seconds < 3600:
+        minutes = seconds / 60
+        return f"{minutes:.2f}分"
+    else:
+        hours = seconds / 3600
+        return f"{hours:.2f}時間"
+
+
 def main():
     parser = argparse.ArgumentParser(description="フェーズ3: シンク特定 (RAG対応)")
     parser.add_argument("-i", "--input", required=True, help="フェーズ1-2 JSON 結果ファイル")
@@ -267,6 +283,9 @@ def main():
     parser.add_argument("--max-retries", type=int, default=3, 
                        help="LLM呼び出しの最大リトライ回数（デフォルト: 3）")
     args = parser.parse_args()
+    
+    # 全体の解析開始時間
+    total_start_time = time.time()
     
     # トークン追跡はデフォルトで有効
     track_tokens = not args.no_track_tokens
@@ -346,6 +365,10 @@ def main():
     print("外部 API 関数をシンクとして解析中...")
     all_sinks = []
     
+    # 各関数の解析時間を記録
+    function_times = {}
+    llm_analysis_time = 0.0  # LLM解析の合計時間
+    
     # PatternMatcherのデバッグ情報（LLM-onlyモードでは表示しない）
     if use_rules and matcher:
         print("\n[DEBUG] PatternMatcher initialized")
@@ -353,13 +376,17 @@ def main():
         print(f"[DEBUG] Known functions in index: {len(matcher._index)}")
 
     for func_name in sorted(called_external_funcs):
+        func_start_time = time.time()
         
         # LLM-onlyモード: 常にLLMに聞く
         if args.llm_only:
             print(f"  Analyzing {func_name} with LLM...")
-            sinks = analyze_external_function_as_sink(
+            sinks, analysis_time = analyze_external_function_as_sink(
                 client, func_name, log_file, use_rag, project_name, retry_handler
             )
+            
+            llm_analysis_time += analysis_time
+            function_times[func_name] = analysis_time
             
             for s in sinks:
                 s["by"] = "llm"
@@ -391,24 +418,37 @@ def main():
                             "reason": "DITING-rule",
                             "by": "rule_engine"
                         })
+                    function_times[func_name] = time.time() - func_start_time
                 else:
                     # 未知 API → LLM/RAG
-                    sinks = analyze_external_function_as_sink(
+                    sinks, analysis_time = analyze_external_function_as_sink(
                         client, func_name, log_file, use_rag, project_name, retry_handler
                     )
+                    llm_analysis_time += analysis_time
+                    function_times[func_name] = analysis_time
+                    
                     for s in sinks:
                         s["by"] = "llm"
                     all_sinks.extend(sinks)
             else:
                 # matcherがない場合はLLMのみ
-                sinks = analyze_external_function_as_sink(
+                sinks, analysis_time = analyze_external_function_as_sink(
                     client, func_name, log_file, use_rag, project_name, retry_handler
                 )
+                llm_analysis_time += analysis_time
+                function_times[func_name] = analysis_time
+                
                 for s in sinks:
                     s["by"] = "llm"
                 all_sinks.extend(sinks)
     
+    # 全体の解析時間を計算
+    total_analysis_time = time.time() - total_start_time
+    
     print(f"\n抽出されたシンク候補: {len(all_sinks)} 個")
+    print(f"全関数の解析時間: {format_time(total_analysis_time)}")
+    if llm_analysis_time > 0:
+        print(f"  - LLM解析時間: {format_time(llm_analysis_time)}")
     
     # 重複排除 & JSON出力
     unique = []
@@ -426,7 +466,21 @@ def main():
         print(format_token_stats(token_stats))
     
     result = {
-        "sinks": unique
+        "sinks": unique,
+        "analysis_time": {
+            "total_seconds": total_analysis_time,
+            "total_formatted": format_time(total_analysis_time),
+            "llm_analysis_seconds": llm_analysis_time,
+            "llm_analysis_formatted": format_time(llm_analysis_time),
+            "functions_analyzed": len(called_external_funcs),
+            "per_function": {
+                func: {
+                    "seconds": t,
+                    "formatted": format_time(t)
+                }
+                for func, t in sorted(function_times.items(), key=lambda x: x[1], reverse=True)
+            }
+        }
     }
     
     # モード情報を追加
