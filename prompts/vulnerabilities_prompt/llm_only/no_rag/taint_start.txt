@@ -4,14 +4,13 @@ Tainted parameters: {param_name}
 You MUST respond first with a one-line JSON (no code fences):
 {"function":"{source_function}","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":{"rule_id":[],"others":[]}}
 
-Tasks:
-1) Identify initial taint sources strictly from {code} (e.g., memref from TEE_Param for Normal World input).
-2) Append propagation steps as "LHS <- RHS @ <file>:<line>" to "propagation".
-3) Append any checks/sanitizers (param_types equality, size checks, access rights) with evidence lines.
-4) Append non-alloc dangerous sinks (e.g., memcpy/TEE_MemMove into shared/out buffers) with evidence lines to "sinks".
-5) Append notable facts (param_types mismatch vs actual access, etc.) to "evidence".
-6) Classify matched rules into "rule_matches":{"rule_id":[...],"others":[...]}.
-7) Non-sinks: TEE_Malloc/TEE_Free MUST NOT appear in "sinks". Random from TEE_GenerateRandom is non-sensitive by default.
+Tasks (LLM-only context):
+1) From {code} and {upstream_context}, identify initial taint sources (e.g., REE-provided memref in TEE_Param, session inputs). Initialize TAINTED accordingly.
+2) Append propagation as "LHS <- RHS @ <file>:<line>" to "propagation".
+3) Append validations (param_types equality, bounds checks, TEE_CheckMemoryAccessRights) with evidence lines to "sanitizers".
+4) Append concrete dangerous sinks to "sinks" with evidence lines. (Exclude alloc/free; random bytes are non-sensitive.)
+5) Append notable facts to "evidence".
+6) Classify matches into "rule_matches":{"rule_id":[...],"others":[...]} using available IDs.
 
 Then, on the next line, output:
 FINDINGS={"items":[
@@ -26,6 +25,5 @@ FINDINGS={"items":[
     "rule_matches":{"rule_id":["<RULE_ID1>", ...],"others":["<freeform>", ...]},
     "code_excerpt":"<short>"
   }
-  // optional more items
 ]}
 If nothing qualifies: FINDINGS={"items":[]}

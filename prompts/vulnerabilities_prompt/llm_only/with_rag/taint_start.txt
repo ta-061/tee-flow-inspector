@@ -4,14 +4,13 @@ Tainted parameters: {param_name}
 You MUST respond first with a one-line JSON (no code fences):
 {"function":"{source_function}","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":{"rule_id":[],"others":[]}}
 
-Tasks:
-1) From {code}, identify initial taint sources (e.g., MEMREF_INPUT from TEE_Param; REE-origin buffers).
-2) Append propagation steps as "LHS <- RHS @ <file>:<line>" to "propagation".
-3) Append any validations/sanitizers (param_types equality, bounds checks, TEE_CheckMemoryAccessRights) to "sanitizers" with evidence lines.
-4) Append concrete dangerous sinks (memcpy/TEE_MemMove to shared/out buffers; storage/object I/O) to "sinks" with evidence lines.
-5) Append notable facts to "evidence" (e.g., param_types mismatch vs usage), with "<file>:<line>" or "unknown".
-6) Classify matches into "rule_matches":{"rule_id":[...],"others":[...]} using known rule IDs where applicable; otherwise put into "others".
-7) If you used {rag_context} to justify API semantics, keep lines/dataflow tied to {code} and list brief labels in FINDINGS.rag_refs (e.g., "GP TEE API: §3.4.2").
+Tasks (LLM-only context):
+1) From {code} and {upstream_context}, identify initial taint sources (e.g., REE-provided memref in TEE_Param, session inputs). Initialize TAINTED accordingly.
+2) Append propagation as "LHS <- RHS @ <file>:<line>" to "propagation".
+3) Append validations (param_types equality, bounds checks, TEE_CheckMemoryAccessRights) with evidence lines to "sanitizers".
+4) Append concrete dangerous sinks to "sinks" with evidence lines. (Exclude alloc/free; random bytes are non-sensitive.)
+5) Append notable facts to "evidence".
+6) Classify matches into "rule_matches":{"rule_id":[...],"others":[...]} using available IDs.
 
 Then, on the next line, output:
 FINDINGS={"items":[
@@ -24,9 +23,7 @@ FINDINGS={"items":[
     "phase":"start",
     "sink_function":"<SINK_OR_EXTERNAL_FN|'unknown'>",
     "rule_matches":{"rule_id":["<RULE_ID1>", ...],"others":["<freeform>", ...]},
-    "rag_refs":["<doc:section|page?>", ...],
     "code_excerpt":"<short>"
   }
-  // optional more items
 ]}
 If nothing qualifies: FINDINGS={"items":[]}

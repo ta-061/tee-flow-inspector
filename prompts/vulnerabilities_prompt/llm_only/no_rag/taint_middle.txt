@@ -1,33 +1,31 @@
 Continue the taint analysis for the next step in the call chain.
 
 You will receive:
-- Code to analyze: {code}
+- Code to analyze: 
+{code}
 - (Optional) Upstream context: {upstream_context}
 
-Guardrails (STRICT):
-- Do NOT mark TEE_Malloc/TEE_Free as sinks.
-- Random from TEE_GenerateRandom is NON-sensitive by default.
-- Emit a finding ONLY if (1) a concrete dangerous sink is reached AND (2) attacker influence is plausible from code.
+FALSE-POSITIVE GUARDRAILS:
+- TEE_GenerateRandom output is NON-sensitive by default.
+- Alloc/Free (TEE_Malloc/TEE_Free) are NOT sinks.
+- Emit a finding ONLY if BOTH hold: (1) concrete dangerous sink reached, (2) attacker influence is plausible from code.
 
-OUTPUT CONTRACT:
-Line 1 (single JSON):
-{"function":"<auto or parsed name>","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":{"rule_id":[],"others":[]}}
+WHAT TO INFER:
+- Infer the current function name; else "unknown".
+- Initialize TAINTED from {upstream_context}; otherwise infer taint only when code clearly ingests untrusted input.
+- Track explicit dataflow only (assignments, param passing, reads/writes). For control dependence: "implicit:<var>".
 
-Guidance:
-1) Initialize taint from {upstream_context} if provided; otherwise taint only when code clearly imports untrusted input.
-2) Record dataflow as "LHS <- RHS @ <file>:<line>" in "propagation".
-3) Record validators/sanitizers with evidence lines.
-4) Record dangerous sinks with evidence lines (exclude alloc/free).
-5) Record param_types consistency; if misuse enables attacker control to a sink, reflect in "evidence".
-6) Classify rule matches: known rule IDs -> rule_id[], others -> others[].
+OUTPUT CONTRACT (EXACTLY TWO LINES):
+Line 1:
+{"function":"<auto-inferred or 'unknown'>","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":{"rule_id":[],"others":[]}}
 
-Line 2 (FINDINGS):
+Line 2:
 FINDINGS={"items":[
   {
+    "rule":"unencrypted_output|weak_input_validation|shared_memory_overwrite",
     "file":"<path|'unknown'>",
     "line":<int>,
-    "rule":"<short_category>",
-    "why":"<short_reason>",
+    "why":"<one sentence>",
     "function":"<CURRENT_FUNCTION>",
     "phase":"middle",
     "sink_function":"<SINK_OR_EXTERNAL_FN|'unknown'>",

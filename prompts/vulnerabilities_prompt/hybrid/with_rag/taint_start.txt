@@ -4,17 +4,13 @@ Tainted parameters: {param_name}
 You MUST respond first with a one-line JSON (no code fences):
 {"function":"{source_function}","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":{"rule_id":[],"others":[]}}
 
-Tasks (HYBRID + RAG context):
-1) From {code} and {upstream_context}, identify initial taint sources (e.g., REE-provided memref in TEE_Param, session inputs).
-2) Append propagation steps as "LHS <- RHS @ <file>:<line>" to "propagation".
-3) Append validations (param_types equality, bounds checks, TEE_CheckMemoryAccessRights) to "sanitizers" with evidence lines.
-4) Append concrete dangerous sinks to "sinks" with evidence lines (exclude alloc/free; random bytes are non-sensitive).
-5) Append notable facts (e.g., param_types misuse enabling attacker influence) to "evidence".
-6) Classify into "rule_matches":{"rule_id":[...],"others":[...]} using:
-   - host-provided rule_id whitelist
-   - matching DITING rule IDs (include in rule_id)
-   - otherwise put label in "others"
-7) If {rag_context} is used to justify API semantics, add concise labels (e.g., "GP TEE API: §3.4.2") to rag_refs.
+Tasks (HYBRID context):
+1) From {code} and {upstream_context}, identify initial taint sources (e.g., REE-provided memref in TEE_Param, session inputs). Initialize TAINTED accordingly.
+2) Append propagation as "LHS <- RHS @ <file>:<line>" to "propagation".
+3) Append validations (param_types equality, bounds checks, TEE_CheckMemoryAccessRights) with evidence lines to "sanitizers".
+4) Append concrete dangerous sinks to "sinks" with evidence lines. (Exclude alloc/free; random bytes are non-sensitive.)
+5) Append notable facts (e.g., param_types misuse enabling reads/writes contrary to declaration) to "evidence".
+6) Classify rule matches into "rule_matches":{"rule_id":[...],"others":[...]} using the host-provided IDs when applicable.
 
 Then, on the next line, output:
 FINDINGS={"items":[
@@ -27,7 +23,6 @@ FINDINGS={"items":[
     "phase":"start",
     "sink_function":"<SINK_OR_EXTERNAL_FN|'unknown'>",
     "rule_matches":{"rule_id":["<RULE_ID1>", ...],"others":["<freeform>", ...]},
-    "rag_refs":["<doc:section|page?>", ...],
     "code_excerpt":"<short>"
   }
   // optional more items

@@ -1,43 +1,37 @@
 Continue the taint analysis for the next step in the call chain.
 
 You will receive:
-- Code to analyze: {code}
-- (Optional) Upstream context: {upstream_context}
-- (Optional) TEE API Documentation Context (RAG): {rag_context}
+- Code to analyze: 
+{code}
+- (Optional) Upstream context: {upstream_context}   # tainted symbol(s), call hop, param mapping
+- (Optional) RAG CONTEXT (supporting evidence only): 
+{rag_context}
 
-Guardrails (STRICT):
+FALSE-POSITIVE GUARDRAILS:
+- TEE_GenerateRandom output is NON-sensitive by default (do NOT flag as unencrypted_output when copied out).
 - Alloc/Free (TEE_Malloc/TEE_Free) are NOT sinks.
-- Random from TEE_GenerateRandom is NON-sensitive by default.
-- Emit a finding ONLY if BOTH hold: (1) a concrete dangerous sink is reached, AND (2) attacker influence is plausible from code.
+- Emit a finding ONLY if BOTH hold: (1) concrete dangerous sink reached, (2) attacker influence is plausible from code.
 
-Tasks:
-1) Initialize taint from upstream_context; otherwise taint only when code clearly ingests untrusted input.
-2) Record dataflow as "LHS <- RHS @ <file>:<line>" in "propagation".
-3) Record validations in "sanitizers" (bounds/type/access checks) with evidence lines.
-4) Record dangerous sinks in "sinks" with evidence lines.
-5) If param_types declaration conflicts with actual access, note in "evidence".
-6) Classify into "rule_matches":{"rule_id":[...],"others":[...]}:
-   - include host-provided rule IDs if applicable
-   - include DITING rule IDs if matching
-   - otherwise use "others"
-7) If you used rag_context for semantics, include brief labels in rag_refs.
+WHAT TO INFER:
+- Infer the current function name from the signature; else "unknown".
+- Initialize TAINTED from {upstream_context}; otherwise infer taint only when code clearly ingests untrusted input.
+- Track explicit dataflow only (assignments, param passing, reads/writes). For control dependence, annotate as "implicit:<var>".
 
-OUTPUT CONTRACT:
+OUTPUT CONTRACT (EXACTLY TWO LINES):
 Line 1:
-{"function":"<auto or parsed name>","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":{"rule_id":[],"others":[]}}
+{"function":"<auto-inferred or 'unknown'>","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":{"rule_id":[],"others":[]}}
 
 Line 2:
 FINDINGS={"items":[
   {
+    "rule":"unencrypted_output|weak_input_validation|shared_memory_overwrite",
     "file":"<path|'unknown'>",
     "line":<int>,
-    "rule":"<short_category>",
-    "why":"<short_reason>",
+    "why":"<one sentence>",
     "function":"<CURRENT_FUNCTION>",
     "phase":"middle",
     "sink_function":"<SINK_OR_EXTERNAL_FN|'unknown'>",
     "rule_matches":{"rule_id":["<RULE_ID1>", ...],"others":["<freeform>", ...]},
-    "rag_refs":["<doc:section|page?>", ...],
     "code_excerpt":"<short>"
   }
 ]}

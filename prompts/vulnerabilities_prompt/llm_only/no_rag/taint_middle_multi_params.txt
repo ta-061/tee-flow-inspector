@@ -1,32 +1,32 @@
 Continue the taint analysis for the next step in the call chain (multiple parameter flows).
 
-Inputs:
-- Code to analyze: {code}
+You will receive:
+- Code to analyze:
+{code}
 - (Optional) Upstream context: {upstream_context}
+- Target parameters (indices): {param_indices}
 
-STRICT RATIONALE:
-- Use {upstream_context} to initialize taint.
-- Focus on parameter pairs/tuples (buf-len, dst-src-n, ptr-offset-size, index-bound).
-- Exclude alloc/free as sinks; random bytes are non-sensitive by default.
+FALSE-POSITIVE GUARDRAILS:
+- Random from TEE_GenerateRandom is NON-sensitive by default.
+- Alloc/Free (TEE_Malloc/TEE_Free) are NOT sinks.
+- Report a finding only when a concrete sink is reached and attacker influence is plausible.
 
-OUTPUT CONTRACT:
-Line 1 (single JSON):
-{"function":"<auto or parsed name>","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":{"rule_id":[],"others":[]}}
+WHAT TO INFER:
+- Infer function name; else "unknown".
+- Build TAINTED from {upstream_context}; otherwise infer only when code clearly ingests untrusted input.
+- Analyze EACH parameter/symbol independently; track explicit dataflow (buf-len, dst-src-n, ptr-offset-size, index-bound). For control dependence: "implicit:<var>".
 
-Guidance:
-1) Record aliasing/flows across multi-parameter relations: "LHS <- RHS @ <file>:<line>".
-2) Record sanitizers (bounds checks, access rights, type validation).
-3) Record dangerous sinks (memcpy/TEE_MemMove into shared/out buffers, storage/output APIs) with lines.
-4) If param_types misuse or unchecked size couples attacker input to a sink, record in "evidence".
-5) Classify rules into rule_matches: known IDs -> rule_id[], else others[].
+OUTPUT CONTRACT (EXACTLY TWO LINES):
+Line 1:
+{"function":"<auto-inferred or 'unknown'>","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":{"rule_id":[],"others":[]}}
 
-Line 2 (FINDINGS):
+Line 2:
 FINDINGS={"items":[
   {
+    "rule":"unencrypted_output|weak_input_validation|shared_memory_overwrite",
     "file":"<path|'unknown'>",
     "line":<int>,
-    "rule":"<short_category>",
-    "why":"<short_reason>",
+    "why":"<one sentence>",
     "function":"<CURRENT_FUNCTION>",
     "phase":"middle",
     "sink_function":"<SINK_OR_EXTERNAL_FN|'unknown'>",

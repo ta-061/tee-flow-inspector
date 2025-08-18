@@ -1,31 +1,38 @@
 Continue the taint analysis for the next step in the call chain.
 
 You will receive:
-- Code to analyze: {code}
-- (Optional) Upstream context: {upstream_context}   # e.g., previously tainted vars/params
-- (Optional) TEE API Documentation Context (RAG): {rag_context}
+- Code to analyze: 
+{code}
+- (Optional) Upstream context: {upstream_context}
+- (Optional) RAG CONTEXT (supporting evidence only):
+{rag_context}
 
-=== RAG POLICY (STRICT) ===
-- Use rag_context ONLY to infer OP-TEE API semantics (parameter directions, Normal/ Secure World memory expectations).
-- NEVER use RAG to assert dataflow or lines not present in code. If RAG conflicts with code, PREFER code.
+FALSE-POSITIVE GUARDRAILS:
+- TEE_GenerateRandom output is NON-sensitive by default.
+- Alloc/Free (TEE_Malloc/TEE_Free) are NOT sinks.
+- Emit a finding ONLY if BOTH hold: (1) concrete dangerous sink reached, (2) attacker influence is plausible from code.
 
-=== FALSE-POSITIVE GUARDRAILS ===
-- DO NOT mark allocators/deallocators (TEE_Malloc / TEE_Free) as sinks.
-- Random from TEE_GenerateRandom is NON-SENSITIVE by default; copying it to MEMREF_OUTPUT is NOT "unencrypted_output".
-- Emit a finding ONLY if BOTH hold:
-  (1) A concrete dangerous sink is reached (actual write/copy/output with evidence), AND
-  (2) Attacker influence or cross-world exposure is plausible from the shown code (e.g., memref from Normal World, param_types misuse).
+WHAT TO INFER:
+- Infer the current function name; else "unknown".
+- Initialize TAINTED from {upstream_context}; otherwise infer taint only when code clearly ingests untrusted input.
+- Track explicit dataflow only. For control dependence: "implicit:<var>".
 
-=== OUTPUT CONTRACT (STRICT) ===
+OUTPUT CONTRACT (EXACTLY TWO LINES):
 Line 1:
-{"function":"<auto or parsed name>","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":[]}
-
-- "propagation": append "LHS <- RHS @ <file>:<line>" for each flow/alias.
-- "sanitizers": concrete checks (param_types equality, bounds, access rights) with lines.
-- "sinks": dangerous writes/copies (TEE_MemMove/memcpy/strcpy, writes into MEMREF_OUTPUT/INOUT, storage/output APIs) with lines.
-- "evidence": other relevant facts (e.g., param_types declared NONE but params[i] used) with lines or "unknown".
-- Keep "rule_matches":[] (reserved; LLM-only mode).
+{"function":"<auto-inferred or 'unknown'>","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":{"rule_id":[],"others":[]}}
 
 Line 2:
-FINDINGS={"items":[{"rule":"unencrypted_output|weak_input_validation|shared_memory_overwrite","why":"<one sentence>","evidence":"<file>:<line>|unknown","code_excerpt":"<short>"}]}
+FINDINGS={"items":[
+  {
+    "rule":"unencrypted_output|weak_input_validation|shared_memory_overwrite",
+    "file":"<path|'unknown'>",
+    "line":<int>,
+    "why":"<one sentence>",
+    "function":"<CURRENT_FUNCTION>",
+    "phase":"middle",
+    "sink_function":"<SINK_OR_EXTERNAL_FN|'unknown'>",
+    "rule_matches":{"rule_id":["<RULE_ID1>", ...],"others":["<freeform>", ...]},
+    "code_excerpt":"<short>"
+  }
+]}
 If nothing qualifies: FINDINGS={"items":[]}

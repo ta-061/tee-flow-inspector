@@ -1,43 +1,38 @@
 Continue the taint analysis for the next step in the call chain (multiple parameter flows).
 
-Inputs:
-- Code to analyze: {code}
+You will receive:
+- Code to analyze:
+{code}
 - (Optional) Upstream context: {upstream_context}
-- (Optional) TEE API Documentation Context (RAG): {rag_context}
-
-RAG POLICY (STRICT):
-- Use rag_context only to reason about OP-TEE semantics (e.g., MEMREF_INOUT behavior, storage/crypto constraints, API parameter directions).
-- Prefer code for dataflow; never invent lines.
+- Target parameters (indices): {param_indices}
+- (Optional) RAG CONTEXT (supporting evidence only):
+{rag_context}
 
 FALSE-POSITIVE GUARDRAILS:
-- TEE_Malloc / TEE_Free are NOT sinks.
 - Random from TEE_GenerateRandom is NON-sensitive by default.
-- Report only when a concrete sink is reached and attacker influence is plausible from {code}.
+- Alloc/Free (TEE_Malloc/TEE_Free) are NOT sinks.
+- Report a finding only when a concrete sink is reached and attacker influence is plausible.
 
-OUTPUT CONTRACT:
-Line 1 (single JSON):
-{"function":"<auto or parsed name>","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":{"rule_id":[],"others":[]}}
+WHAT TO INFER:
+- Infer function name; else "unknown".
+- Build TAINTED from {upstream_context}; otherwise infer only when code clearly ingests untrusted input.
+- Analyze EACH parameter/symbol independently; track explicit dataflow (buf-len, dst-src-n, ptr-offset-size, index-bound). For control dependence: "implicit:<var>".
 
-Guidance:
-1) Track multi-parameter relations (buf-len, dst-src-n, ptr-offset-size, index-bound). Record "LHS <- RHS @ <file>:<line>".
-2) Record sanitizers (bounds/length checks, access rights, type validation).
-3) Record dangerous sinks (e.g., memcpy/TEE_MemMove to shared/out; persistent storage; outbound object writes) with lines.
-4) If param_types misuse or unchecked size couples attacker input to a sink, put evidence lines in "evidence".
-5) Classify rules into rule_matches: known IDs -> rule_id[], else others[].
-6) If rag_context informs constraints (e.g., storage API expectations), add brief labels in FINDINGS.rag_refs.
+OUTPUT CONTRACT (EXACTLY TWO LINES):
+Line 1:
+{"function":"<auto-inferred or 'unknown'>","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":{"rule_id":[],"others":[]}}
 
-Line 2 (FINDINGS):
+Line 2:
 FINDINGS={"items":[
   {
+    "rule":"unencrypted_output|weak_input_validation|shared_memory_overwrite",
     "file":"<path|'unknown'>",
     "line":<int>,
-    "rule":"<short_category>",
-    "why":"<short_reason>",
+    "why":"<one sentence>",
     "function":"<CURRENT_FUNCTION>",
     "phase":"middle",
     "sink_function":"<SINK_OR_EXTERNAL_FN|'unknown'>",
     "rule_matches":{"rule_id":["<RULE_ID1>", ...],"others":["<freeform>", ...]},
-    "rag_refs":["<doc:section|page?>", ...],
     "code_excerpt":"<short>"
   }
 ]}
