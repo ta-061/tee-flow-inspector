@@ -263,7 +263,9 @@ class ReportGenerator:
             phase = (it.get("phase") or "middle").lower()
             by_phase[phase] = by_phase.get(phase, 0) + 1
 
-            category = it.get("category") or (it.get("rule_matches", {}).get("rule_id", ["other"])[0] if isinstance(it.get("rule_matches"), dict) else "other")
+            rule_ids = it.get("rule_matches", {}).get("rule_id", []) if isinstance(it.get("rule_matches"), dict) else []
+            category = it.get("category") or (rule_ids[0] if rule_ids else "other")
+
             by_category[category] = by_category.get(category, 0) + 1
 
             sink = it.get("sink_function") or "unknown"

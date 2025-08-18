@@ -1,68 +1,79 @@
-Based on the taint analysis above, decide if there is an ACTUAL vulnerability in the analyzed code path.
+Based on the complete taint analysis above, output the FINAL decision for THIS chain only.
 
-Decision Criteria
-1) Does tainted data actually reach a dangerous sink?
-2) Are validations/sanitizers sufficient to block exploitation?
-3) Under what concrete conditions is exploitation plausible?
+DECISION RULES (short)
+- Vulnerable ONLY if untrusted REE data actually reaches a dangerous sink AND sanitization/bounds checks are insufficient.
+- Non-sinks: memory alloc/free (e.g., TEE_Malloc/TEE_Free) are NOT sinks. Random bytes from TEE_GenerateRandom are NOT sensitive unless misused.
+- Prefer concrete code evidence (file:line). Use "unknown" when unavailable.
 
-OUTPUT CONTRACT (STRICT)
+STRICT OUTPUT CONTRACT — EXACT LINES (no prose, no code fences)
 
-Line 1 (REQUIRED):
+Line 1 (REQUIRED): EXACT JSON object with the decision flag
 {"vulnerability_found":"yes"|"no"}
 
-Line 2 (REQUIRED):
-If "yes":
-  EXACT JSON with:
+Line 2 (REQUIRED): EXACT JSON object with details (no label)
+If "yes", use:
+{
+  "vulnerability_type": "CWE-XXX",
+  "severity": "low|medium|high|critical",
+  "taint_flow_summary": {
+    "source": "<brief>",
+    "propagation_path": ["A -> B @ <file>:<line>", "..."],
+    "sink": "<brief>"
+  },
+  "exploitation_analysis": {
+    "preconditions": ["..."],
+    "attack_scenario": "<short>",
+    "impact": "<short>"
+  },
+  "missing_mitigations": [
+    {"type":"bounds_check|type_validation|access_control|encryption|range_check|mem_access_check",
+     "location":"function:line|unknown",
+     "recommendation":"<specific>"}
+  ],
+  "confidence_factors": {
+    "positive_indicators": ["..."],
+    "negative_indicators": ["..."],
+    "confidence_level": "high|medium|low"
+  },
+  "decision_rationale": "<why this IS a vulnerability>"
+}
+
+If "no", use:
+{
+  "why_no_vulnerability": "<one-sentence summary>",
+  "effective_sanitizers": [
+    {"type":"bounds_check|type_validation|access_control|range_check|mem_access_check",
+     "location":"function:line|unknown",
+     "evidence":"<short excerpt or reason>"}
+  ],
+  "argument_safety": [
+    {"arg":"<name or param ref>", "why_safe":"<e.g., length capped by min(size, dst_cap)>", "evidence":"file:line|unknown"}
+  ],
+  "residual_risks": ["<edge case if any, or empty>"],
+  "confidence_factors": {
+    "positive_indicators": ["<what increased confidence>"],
+    "negative_indicators": ["<what might reduce confidence>"],
+    "confidence_level": "high|medium|low"
+  },
+  "decision_rationale": "<why this ISN'T a vulnerability>"
+}
+
+Line 3 (REQUIRED): EXACT END_FINDINGS block (do NOT use FINDINGS here)
+END_FINDINGS={"items":[
   {
-    "vulnerability_type": "CWE-XXX",
-    "severity": "low|medium|high|critical",
-    "taint_flow_summary": {
-      "source": "<brief>",
-      "propagation_path": ["A -> B @ <file>:<line>", "..."],
-      "sink": "<brief>"
-    },
-    "exploitation_analysis": {
-      "preconditions": ["..."],
-      "attack_scenario": "<short>",
-      "impact": "<short>"
-    },
-    "missing_mitigations": [
-      {"type":"bounds_check|type_validation|access_control|encryption","location":"function:line|unknown","recommendation":"<specific>"}
-    ],
-    "confidence_factors": {
-      "positive_indicators": ["..."],
-      "negative_indicators": ["..."],
-      "confidence_level": "high|medium|low"
-    },
-    "decision_rationale": "<why this IS a vulnerability>"
+    "file":"<path>|unknown",
+    "line":<int>|0,
+    "function":"<current_or_related_fn>",
+    "sink_function":"<sink_name>",
+    "rule_matches":{"rule_id":["<known_rule_id or 'other'>"],"others":[]},
+    "why":"<one-line reason>",
+    "code_excerpt":"<short optional snippet>"
   }
+  /* zero or more items */
+]}
 
-If "no":
-  EXACT JSON with:
-  {
-    "why_no_vulnerability": "<one-sentence summary>",
-    "effective_sanitizers": [
-      {"type":"bounds_check|type_validation|access_control|range_check|mem_access_check",
-       "location":"function:line|unknown",
-       "evidence":"<short excerpt or reason>"}
-    ],
-    "argument_safety": [
-      {"arg":"<name or param ref>", "why_safe":"<e.g., length capped by min(size, dst_cap)>", "evidence":"file:line|unknown"}
-    ],
-    "residual_risks": ["<edge case if any, or empty>"],
-    "confidence_factors": {
-      "positive_indicators": ["<what increased confidence>"],
-      "negative_indicators": ["<what might reduce confidence>"],
-      "confidence_level": "high|medium|low"
-    },
-    "decision_rationale": "<why this ISN'T a vulnerability>"
-  }
-
-Line 3 (OPTIONAL):
-For "yes": END_FINDINGS={"items":[{"file":"<path>","line":<int>,"function":"<fn>","sink_function":"<sink>","rule_matches":{"rule_id":["<ID>"],"others":[]},"code_excerpt":"<short>"}]}
-For "no":  END_FINDINGS={"items":[]}
-
-Rules:
-- Cite evidence lines where possible; otherwise "unknown".
-- Respect guardrails: alloc/free are non-sinks; random bytes are non-sensitive.
-- Keep outputs concise and follow the two/three line protocol exactly.
+Formatting constraints:
+- Three lines only (Line1 JSON, Line2 JSON, Line3 END_FINDINGS=...).
+- No extra lines, no code fences, no markdown, no explanations.
+- Use double quotes for all JSON keys/strings. Integers for "line". Use "unknown" when needed.
+- NEVER print "FINDINGS" on Line 3; ALWAYS "END_FINDINGS=".
