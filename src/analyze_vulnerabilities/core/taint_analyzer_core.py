@@ -384,11 +384,11 @@ class TaintAnalyzer:
         # LLMエラー統計
         llm_stats = self.llm_handler.get_stats()
         print(f"\n[LLMエラー統計]")
-        print(f"  総LLM呼び出し数: {self.stats['total_llm_calls']}")
-        print(f"  エラー発生数: {self.stats['total_llm_errors']}")
-        print(f"  リトライ数: {self.stats['total_llm_retries']}")
-        print(f"  空レスポンス数: {self.stats['total_empty_responses']}")
-
+        print(f"  総LLM呼び出し数: {llm_stats['total_calls']}")
+        print(f"  エラー発生数: {llm_stats['total_errors']}")
+        print(f"  リトライ数: {llm_stats['total_retries']}")
+        print(f"  空レスポンス数: {llm_stats['empty_responses']}")
+        
         # Findings統計
         findings_stats = self.findings_merger.get_stats()
         print(f"\n[Findings統計]")
