@@ -107,12 +107,15 @@ class TaintAnalyzer:
         # Findingsマージャー
         self.findings_merger = FindingsMerger()
         
-        # 統計情報
+        # より詳細な統計情報
         self.stats = {
-            "total_chains_analyzed": 0,
+            "total_chains_analyzed": 0,      # 解析されたチェイン総数
+            "unique_chains_analyzed": 0,     # 一意なチェイン数
+            "vulnerabilities_found": 0,      # 発見された脆弱性数
             "total_time": 0,
             "unique_prefixes_analyzed": 0,
-            "cache_reuse_count": 0
+            "cache_reuse_count": 0,
+            "total_flows": 0,                # 入力フロー総数
         }
     
     def analyze_all_flows(self, flows_data: List[dict]) -> Tuple[List[dict], List[dict]]:
@@ -163,6 +166,7 @@ class TaintAnalyzer:
         
         # すべての一意なチェインを処理
         total_unique = self.chain_tree.get_chain_count()
+        self.stats["unique_chains_analyzed"] = total_unique
         
         for idx, (chain_tuple, flow_infos) in enumerate(self.chain_tree.chain_to_flows.items(), 1):
             chain = list(chain_tuple)
@@ -183,6 +187,7 @@ class TaintAnalyzer:
                 )
         
         # 統計を更新
+        self.stats["vulnerabilities_found"] = len(vulnerabilities)
         self.findings_merger.stats["total_collected"] = len(all_inline_findings)
         
         # inline_findingsのend優先マージ
@@ -317,11 +322,13 @@ class TaintAnalyzer:
             specific_vd.get("line")
         )
         
+        # 解析されたチェインをカウント（脆弱性の有無に関わらず）
+        self.stats["total_chains_analyzed"] += 1
+        
         # 重複チェックして脆弱性を追加
         if result_copy.get("is_vulnerable") and vuln_key not in seen_vulnerabilities:
             seen_vulnerabilities.add(vuln_key)
             vulnerabilities.append(result_copy)
-            self.stats["total_chains_analyzed"] += 1
         
         # inline_findingsを収集
         if result_copy.get("inline_findings"):
@@ -350,7 +357,9 @@ class TaintAnalyzer:
         """初期統計情報を出力"""
         unique_chains = self.chain_tree.get_chain_count()
         total_chains = sum(len(flow.get("chains", [])) for flow in flows_data)
+        self.stats["total_flows"] = len(flows_data)
         
+        print(f"  入力フロー数: {len(flows_data)}")
         print(f"  総チェイン数: {total_chains}")
         print(f"  一意なチェイン数: {unique_chains}")
         print(f"  削減率: {(1 - unique_chains/total_chains)*100:.1f}%")
@@ -365,14 +374,21 @@ class TaintAnalyzer:
         print(f"  ヒット率: {cache_stats['hit_rate']}")
         print(f"  キャッシュされた接頭辞数: {cache_stats['cached_prefixes']}")
         
+        # 解析統計
+        print(f"\n[解析統計]")
+        print(f"  入力フロー数: {self.stats['total_flows']}")
+        print(f"  解析されたチェイン総数: {self.stats['total_chains_analyzed']}")
+        print(f"  一意なチェイン数: {self.stats['unique_chains_analyzed']}")
+        print(f"  発見された脆弱性: {self.stats['vulnerabilities_found']}")
+        
         # LLMエラー統計
         llm_stats = self.llm_handler.get_stats()
         print(f"\n[LLMエラー統計]")
-        print(f"  総LLM呼び出し数: {llm_stats['total_calls']}")
-        print(f"  エラー発生数: {llm_stats['total_errors']}")
-        print(f"  リトライ数: {llm_stats['total_retries']}")
-        print(f"  空レスポンス数: {llm_stats['empty_responses']}")
-        
+        print(f"  総LLM呼び出し数: {self.stats['total_llm_calls']}")
+        print(f"  エラー発生数: {self.stats['total_llm_errors']}")
+        print(f"  リトライ数: {self.stats['total_llm_retries']}")
+        print(f"  空レスポンス数: {self.stats['total_empty_responses']}")
+
         # Findings統計
         findings_stats = self.findings_merger.get_stats()
         print(f"\n[Findings統計]")

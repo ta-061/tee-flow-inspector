@@ -30,7 +30,9 @@ class ReportGenerator:
             f.write(f"Generated: {statistics['analysis_date']}\n")
             f.write(f"LLM Provider: {statistics['llm_provider']}\n")
             f.write(f"RAG Mode: {'Enabled' if statistics['rag_enabled'] else 'Disabled'}\n")
-            f.write(f"Total chains analyzed: {statistics['total_chains_analyzed']}\n")
+            f.write(f"Total flows analyzed: {statistics.get('total_flows', 0)}\n")
+            f.write(f"Total chains analyzed: {statistics.get('total_chains_analyzed', 0)}\n")
+            f.write(f"Unique chains analyzed: {statistics.get('unique_chains_analyzed', 0)}\n")
             f.write(f"Total vulnerabilities found: {len(vulnerabilities)}\n\n")
 
             # 脆弱性が見つからなかった場合の処理
@@ -41,6 +43,9 @@ class ReportGenerator:
                 # 解析の詳細統計を追加
                 f.write("### Analysis Statistics\n\n")
                 f.write(f"- Analysis Mode: {statistics.get('analysis_mode', 'unknown')}\n")
+                f.write(f"- Input Flows: {statistics.get('total_flows', 0)}\n")
+                f.write(f"- Total Chains Analyzed: {statistics.get('total_chains_analyzed', 0)}\n")
+                f.write(f"- Unique Chains: {statistics.get('unique_chains_analyzed', 0)}\n")
                 f.write(f"- Functions Analyzed: {statistics.get('functions_analyzed', 0)}\n")
                 f.write(f"- LLM Calls: {statistics.get('llm_calls', 0)}\n")
                 f.write(f"- Analysis Time: {statistics.get('analysis_time_formatted', 'unknown')}\n")
