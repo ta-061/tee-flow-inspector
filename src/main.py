@@ -1,4 +1,3 @@
-# src/main.py
 #!/usr/bin/env python3
 """main.py – TA 静的解析ドライバ (プロンプトモード対応版)"""
 from __future__ import annotations
@@ -12,13 +11,68 @@ from classify.classifier import classify_functions          # type: ignore
 
 # ------------------------------------------------------------
 
-def run(cmd: list[str], cwd: Path, verbose: bool):
+def run(cmd: list[str], cwd: Path, verbose: bool, phase_name: str = ""):
+    """
+    コマンドを実行し、エラー時は適切に処理
+    
+    Args:
+        cmd: 実行するコマンド
+        cwd: 作業ディレクトリ
+        verbose: 詳細出力フラグ
+        phase_name: フェーズ名（エラーメッセージ用）
+    """
     if verbose:
         print(f"[INFO] $ {' '.join(cmd)}  (cwd={cwd})")
-    res = subprocess.run(cmd, cwd=cwd)
-    if res.returncode and verbose:
-        print(f"[WARN]   ↳ rc={res.returncode}")
-        sys.exit(res.returncode)
+    
+    try:
+        res = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=600)
+        
+        # エラーが発生した場合
+        if res.returncode != 0:
+            error_msg = f"Command failed with return code {res.returncode}"
+            if phase_name:
+                error_msg = f"[ERROR] {phase_name} failed: {error_msg}"
+            else:
+                error_msg = f"[ERROR] {error_msg}"
+            
+            print(error_msg)
+            
+            # エラー出力を表示
+            if res.stderr:
+                print(f"[STDERR] {res.stderr[:500]}")  # 最初の500文字のみ表示
+            
+            # verboseモードの場合は完全な出力を表示
+            if verbose:
+                print(f"[WARN]   ↳ rc={res.returncode}")
+                if res.stdout:
+                    print(f"[STDOUT] {res.stdout}")
+                if res.stderr and len(res.stderr) > 500:
+                    print(f"[STDERR Full] {res.stderr}")
+            
+            # エラー時は常に終了（verboseに関わらず）
+            sys.exit(res.returncode)
+        
+        # 成功時でもverboseモードなら出力を表示
+        if verbose and res.stdout:
+            print(f"[STDOUT] {res.stdout}")
+            
+    except subprocess.TimeoutExpired:
+        error_msg = f"Command timed out after 600 seconds"
+        if phase_name:
+            error_msg = f"[ERROR] {phase_name}: {error_msg}"
+        else:
+            error_msg = f"[ERROR] {error_msg}"
+        print(error_msg)
+        sys.exit(124)  # timeout用の終了コード
+        
+    except Exception as e:
+        error_msg = f"Unexpected error: {e}"
+        if phase_name:
+            error_msg = f"[ERROR] {phase_name}: {error_msg}"
+        else:
+            error_msg = f"[ERROR] {error_msg}"
+        print(error_msg)
+        sys.exit(1)
 
 # ------------------------------------------------------------
 
@@ -125,23 +179,29 @@ if DEVKIT:
 
 # ------------------------------------------------------------
 
-def get_analysis_mode_description(llm_only: bool, use_rag: bool) -> str:
+def get_analysis_mode_description(llm_only: bool, use_rag: bool, include_debug_macros: bool) -> str:
     """解析モードの説明文を生成"""
+    base_mode = ""
     if llm_only:
         if use_rag:
-            return "LLM-only with RAG enhancement"
+            base_mode = "LLM-only with RAG enhancement"
         else:
-            return "LLM-only without external knowledge"
+            base_mode = "LLM-only without external knowledge"
     else:
         if use_rag:
-            return "Hybrid (DITING rules + RAG)"
+            base_mode = "Hybrid (DITING rules + RAG)"
         else:
-            return "Hybrid (DITING rules only)"
+            base_mode = "Hybrid (DITING rules only)"
+    
+    # マクロ情報を追加
+    macro_info = " + Debug macros" if include_debug_macros else " (excluding debug macros)"
+    return base_mode + macro_info
 
 # ------------------------------------------------------------
 
 def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool, 
-                    use_rag: bool, skip_clean: bool, track_tokens: bool, llm_only: bool):
+                    use_rag: bool, skip_clean: bool, track_tokens: bool, 
+                    llm_only: bool, include_debug_macros: bool):
     # 実行時間計測開始
     start_time = time.time()
     start_datetime = datetime.now()
@@ -159,13 +219,18 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool,
     print(f"\n=== Project: {proj.name} / TA: {ta_dir.name} ===")
     
     # 解析モードの表示
-    mode_desc = get_analysis_mode_description(llm_only, use_rag)
+    mode_desc = get_analysis_mode_description(llm_only, use_rag, include_debug_macros)
     print(f"[INFO] Analysis mode: {mode_desc}")
     
     if track_tokens:
         print("[INFO] Token tracking is enabled")
     else:
         print("[INFO] Token tracking is disabled")
+    
+    if include_debug_macros:
+        print("[INFO] Debug macros (DMSG, IMSG, etc.) will be included in analysis")
+    else:
+        print("[INFO] Debug macros will be excluded from analysis")
 
     # resultsディレクトリを早めに作成
     res_dir = ta_dir / "results"
@@ -173,7 +238,8 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool,
     
     # 各フェーズの実行時間を記録する辞書
     phase_times = {}
-
+    
+    # エラーハンドリングを強化
     try:
         # 解析前にクリーンアップを実行（オプションで無効化可能）
         phase_start = time.time()
@@ -181,21 +247,29 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool,
             clean_project_dependencies(proj, verbose=v)
         phase_times["cleaning"] = time.time() - phase_start
 
-        # Step1
+        # Step1: データベース構築
         phase_start = time.time()
-        ta_db = ensure_ta_db(ta_dir, proj, DEVKIT, v)
+        try:
+            ta_db = ensure_ta_db(ta_dir, proj, DEVKIT, v)
+        except Exception as e:
+            print(f"[ERROR] Failed to build database: {e}")
+            sys.exit(1)
         phase_times["build_db"] = time.time() - phase_start
 
-        # Step2
+        # Step2: 関数分類
         phase_start = time.time()
-        users, externals = classify_functions(ta_dir, ta_db)
-        phase12 = res_dir / f"{ta_dir.name}_phase12.json"
-        phase12.write_text(json.dumps({
-            "project_root": str(ta_dir),
-            "user_defined_functions": users,
-            "external_declarations": externals,
-        }, indent=2, ensure_ascii=False))
-        print(f"[phase1-2] → {phase12}")
+        try:
+            users, externals = classify_functions(ta_dir, ta_db)
+            phase12 = res_dir / f"{ta_dir.name}_phase12.json"
+            phase12.write_text(json.dumps({
+                "project_root": str(ta_dir),
+                "user_defined_functions": users,
+                "external_declarations": externals,
+            }, indent=2, ensure_ascii=False))
+            print(f"[phase1-2] → {phase12}")
+        except Exception as e:
+            print(f"[ERROR] Failed in phase 1-2 (function classification): {e}")
+            sys.exit(1)
         phase_times["phase1-2"] = time.time() - phase_start
 
         # Step3 (シンク特定フェーズ) - LLM-onlyモードは常に適用
@@ -206,87 +280,59 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool,
             identify_cmd.append("--no-rag")
         if not track_tokens:
             identify_cmd.append("--no-track-tokens")
-        run(identify_cmd, ta_dir, v)
+        run(identify_cmd, ta_dir, v, "Phase 3: Identify Sinks")
         print(f"[phase3 ] → {sinks}\n")
         phase_times["phase3_identify_sinks"] = time.time() - phase_start
 
-        find_py   = Path(__file__).parent / "identify_sinks" / "find_sink_calls.py"
-        graph_py  = Path(__file__).parent / "identify_sinks" / "generate_call_graph.py"
-        fcc_py    = Path(__file__).parent / "identify_sinks" / "function_call_chains.py"
-        merge_py  = Path(__file__).parent / "identify_sinks" / "extract_sink_calls.py"
-
-        vd_raw   = res_dir / f"{ta_dir.name}_vulnerable_destinations.json"
-        call_graph = res_dir / f"{ta_dir.name}_call_graph.json"
-        chains_out = res_dir / f"{ta_dir.name}_chains.json"
-        vd_final  = vd_raw  # 上書き保存
-        
-        # Phase 3.1
-        phase_start = time.time()
-        print(f"[phase3.1] → python3 {find_py} --compile-db {ta_db} --sinks {sinks} --output {vd_raw} --devkit {os.environ.get('TA_DEV_KIT_DIR', '')}")
-        run([sys.executable, str(find_py),
-             "--compile-db", str(ta_db),
-             "--sinks",      str(sinks),
-             "--output",     str(vd_raw),
-             "--devkit",     os.environ.get("TA_DEV_KIT_DIR", "")],
-            ta_dir, v)
-        print(f"[phase3.1] → {vd_raw}\n")
-        phase_times["phase3.1_find_sink_calls"] = time.time() - phase_start
-        
-        # Phase 3.2
-        phase_start = time.time()
-        print(f"[phase3.2] → python3 {graph_py} --compile-db {ta_db} --output {call_graph} --devkit {os.environ.get('TA_DEV_KIT_DIR', '')}")    
-        run([sys.executable, str(graph_py),
-             "--compile-db", str(ta_db),
-             "--output",     str(call_graph),
-             "--devkit",     os.environ.get("TA_DEV_KIT_DIR", "")],
-            ta_dir, v)
-        print(f"[phase3.2] → {call_graph}\n")
-        phase_times["phase3.2_generate_call_graph"] = time.time() - phase_start
-        
-        # Phase 3.3
-        phase_start = time.time()
-        print(f"[phase3.3] → python3 {fcc_py} --call-graph {call_graph} --vd-list {vd_raw} --compile-db {ta_db} --devkit {os.environ.get('TA_DEV_KIT_DIR', '')} --output {chains_out}")
-        cmd = [
-            sys.executable, str(fcc_py),
-            "--call-graph", str(call_graph),
-            "--vd-list",    str(vd_raw),
-            "--compile-db", str(ta_db),
-            "--devkit",     os.environ.get("TA_DEV_KIT_DIR", ""),
-            "--output",     str(chains_out)]
-        if v:
-            cmd.append("--verbose")
-        run(cmd, ta_dir, v)
-        print(f"[phase3.3] → {chains_out}\n")
-        phase_times["phase3.3_function_call_chains"] = time.time() - phase_start
-
-        # Phase 3.4
-        phase_start = time.time()
-        run([sys.executable, str(merge_py),
-             "--compile-db", str(ta_db),
-             "--sinks",      str(sinks),
-             "--output",     str(vd_final),
-             "--devkit",     os.environ.get("TA_DEV_KIT_DIR", "")],
-            ta_dir, v)
-        print(f"[phase3.4] → {vd_final}\n")
-        phase_times["phase3.4_extract_sink_calls"] = time.time() - phase_start
-
-        # Phase4: 危険なフロー（候補）生成
+        # Phase4: 統合版候補フロー生成（旧Phase3.1〜3.4を統合）
         phase_start = time.time()
         flows_py = Path(__file__).parent / "identify_flows" / "generate_candidate_flows.py"
-        candidate_flows = res_dir / f"{ta_dir.name}_candidate_flows.json"
-        print(f"[phase5_command] → python3 {flows_py} --chains {chains_out} --sources TA_InvokeCommandEntryPoint,TA_OpenSessionEntryPoint --output {candidate_flows}")
-        run([sys.executable, str(flows_py),
-             "--chains", str(chains_out),
-             "--sources", "TA_InvokeCommandEntryPoint,TA_OpenSessionEntryPoint",
-             "--output", str(candidate_flows)],
-            ta_dir, v)
+        
+        # マクロを含める場合と含めない場合で出力ファイル名を変更
+        if include_debug_macros:
+            candidate_flows = res_dir / f"{ta_dir.name}_candidate_flows_with_macros.json"
+        else:
+            candidate_flows = res_dir / f"{ta_dir.name}_candidate_flows.json"
+        
+        # 統合版のコマンドライン引数
+        flow_cmd = [
+            sys.executable, str(flows_py),
+            "--compile-db", str(ta_db),
+            "--sinks", str(sinks),
+            "--phase12", str(phase12),
+            "--sources", "TA_InvokeCommandEntryPoint,TA_OpenSessionEntryPoint",
+            "--output", str(candidate_flows)
+        ]
+        
+        # オプション引数
+        if os.environ.get("TA_DEV_KIT_DIR"):
+            flow_cmd.extend(["--devkit", os.environ.get("TA_DEV_KIT_DIR")])
+        if v:
+            flow_cmd.append("--verbose")
+        
+        # マクロを含める場合のオプション
+        if include_debug_macros:
+            flow_cmd.append("--include-debug-macros")
+        
+        print(f"[phase4 ] Integrated candidate flow generation")
+        if include_debug_macros:
+            print(f"          (Including debug macros: DMSG, IMSG, etc.)")
+        print(f"          → {flows_py.name} --compile-db {ta_db.name} --sinks {sinks.name} --phase12 {phase12.name} --sources ... --output {candidate_flows.name}")
+        
+        run(flow_cmd, ta_dir, v, "Phase 4: Generate Candidate Flows (Integrated)")
         print(f"[phase4 ] → {candidate_flows}\n")
         phase_times["phase4_generate_candidate_flows"] = time.time() - phase_start
 
         # Phase5: テイント解析と脆弱性検査
         phase_start = time.time()
         taint_py = Path(__file__).parent / "analyze_vulnerabilities" / "taint_analyzer.py"
-        vulnerabilities = res_dir / f"{ta_dir.name}_vulnerabilities.json"
+        
+        # マクロを含める場合と含めない場合で出力ファイル名を変更
+        if include_debug_macros:
+            vulnerabilities = res_dir / f"{ta_dir.name}_vulnerabilities_with_macros.json"
+        else:
+            vulnerabilities = res_dir / f"{ta_dir.name}_vulnerabilities.json"
+        
         taint_cmd = [sys.executable, str(taint_py),
                     "--flows", str(candidate_flows),
                     "--phase12", str(phase12),
@@ -305,25 +351,44 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool,
         if track_tokens:
             taint_cmd.append("--track-tokens")
         
-        run(taint_cmd, ta_dir, v)
+        print(f"[phase5_command] → python3 {taint_py} {' '.join(taint_cmd[1:])}")
+        run(taint_cmd, ta_dir, v, "Phase 5: Taint Analysis")
         phase_times["phase5_taint_analysis"] = time.time() - phase_start
 
         # Phase6: HTMLレポート生成
         phase_start = time.time()
         report_py = Path(__file__).parent / "report" / "generate_report.py"
-        report_html = res_dir / f"{ta_dir.name}_vulnerability_report.html"
+        
+        # マクロを含める場合と含めない場合で出力ファイル名を変更
+        if include_debug_macros:
+            report_html = res_dir / f"{ta_dir.name}_vulnerability_report_with_macros.html"
+        else:
+            report_html = res_dir / f"{ta_dir.name}_vulnerability_report.html"
+        
         report_cmd = [sys.executable, str(report_py),
              "--vulnerabilities", str(vulnerabilities),
              "--phase12", str(phase12),
              "--project-name", proj.name,
              "--output", str(report_html)]
         report_cmd.extend(["--sinks", str(sinks)])
+        
         if v:
             print(f"[DEBUG] Report command: {' '.join(report_cmd)}")
-        run(report_cmd, ta_dir, v)
+        print(f"[phase6_command] → python3 {report_py} {' '.join(report_cmd[1:])}")
+        run(report_cmd, ta_dir, v, "Phase 6: Generate Report")
         print(f"[phase6 ] → {report_html}\n")
         phase_times["phase6_generate_report"] = time.time() - phase_start
 
+        print(f"[SUCCESS] All phases completed successfully for {proj.name}")
+
+    except Exception as e:
+        # 予期しないエラーをキャッチ
+        print(f"[ERROR] Unexpected error in process_project: {e}")
+        import traceback
+        if v:
+            traceback.print_exc()
+        sys.exit(1)
+        
     finally:
         # 実行時間計測終了
         end_time = time.time()
@@ -332,26 +397,30 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool,
         
         # 実行時間をファイルに記録
         time_file = res_dir / "time.txt"
-        with open(time_file, 'w', encoding='utf-8') as f:
-            f.write(f"Project: {proj.name}\n")
-            f.write(f"TA: {ta_dir.name}\n")
-            f.write(f"Analysis Mode: {mode_desc}\n")
-            f.write(f"Token Tracking: {'Enabled' if track_tokens else 'Disabled'}\n")
-            f.write(f"=" * 60 + "\n")
-            f.write(f"Start Time: {start_datetime.strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"End Time: {end_datetime.strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"Total Duration: {format_duration(total_time)}\n")
-            f.write(f"Total Seconds: {total_time:.2f}s\n")
-            f.write(f"=" * 60 + "\n")
-            f.write(f"Phase Breakdown:\n")
+        try:
+            with open(time_file, 'w', encoding='utf-8') as f:
+                f.write(f"Project: {proj.name}\n")
+                f.write(f"TA: {ta_dir.name}\n")
+                f.write(f"Analysis Mode: {mode_desc}\n")
+                f.write(f"Token Tracking: {'Enabled' if track_tokens else 'Disabled'}\n")
+                f.write(f"Debug Macros: {'Included' if include_debug_macros else 'Excluded'}\n")
+                f.write(f"=" * 60 + "\n")
+                f.write(f"Start Time: {start_datetime.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"End Time: {end_datetime.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Total Duration: {format_duration(total_time)}\n")
+                f.write(f"Total Seconds: {total_time:.2f}s\n")
+                f.write(f"=" * 60 + "\n")
+                f.write(f"Phase Breakdown:\n")
+                
+                # 各フェーズの実行時間を記録
+                for phase_name, phase_time in phase_times.items():
+                    percentage = (phase_time / total_time) * 100 if total_time > 0 else 0
+                    f.write(f"  {phase_name:40s}: {format_duration(phase_time):15s} ({percentage:5.1f}%)\n")
             
-            # 各フェーズの実行時間を記録
-            for phase_name, phase_time in phase_times.items():
-                percentage = (phase_time / total_time) * 100 if total_time > 0 else 0
-                f.write(f"  {phase_name:40s}: {format_duration(phase_time):15s} ({percentage:5.1f}%)\n")
-        
-        print(f"[INFO] Execution time recorded in: {time_file}")
-        print(f"[INFO] Total execution time: {format_duration(total_time)}")
+            print(f"[INFO] Execution time recorded in: {time_file}")
+            print(f"[INFO] Total execution time: {format_duration(total_time)}")
+        except Exception as e:
+            print(f"[WARN] Failed to write time.txt: {e}")
 
 # ---------------------------------------------------------------------------
 
@@ -361,21 +430,25 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Analysis Modes:
-  Default:     Hybrid mode with DITING rules, no RAG
+  Default:     Hybrid mode with DITING rules, no RAG, exclude debug macros
   --llm-only:  Pure LLM analysis without DITING rules
   --rag:       Enable RAG enhancement (works with both modes)
+  --include-debug-macros: Include debug macros (DMSG, IMSG, etc.) in analysis
   
 Mode Combinations:
-  (default)           → Hybrid + No RAG  (DITING rules only)
-  --rag               → Hybrid + RAG     (DITING rules + RAG)
-  --llm-only          → LLM-only + No RAG (Pure LLM)
-  --llm-only --rag    → LLM-only + RAG   (LLM + RAG enhancement)
+  (default)                        → Hybrid + No RAG + No Macros
+  --rag                            → Hybrid + RAG + No Macros
+  --llm-only                       → LLM-only + No RAG + No Macros
+  --llm-only --rag                 → LLM-only + RAG + No Macros
+  --include-debug-macros           → Hybrid + No RAG + Include Macros
+  --llm-only --rag --include-debug-macros → LLM-only + RAG + Include Macros
 
 Examples:
-  %(prog)s -p benchmark/random                    # Hybrid mode (DITING rules)
-  %(prog)s -p benchmark/random --rag              # Hybrid + RAG
-  %(prog)s -p benchmark/random --llm-only         # Pure LLM analysis
-  %(prog)s -p benchmark/random --llm-only --rag   # LLM with RAG
+  %(prog)s -p benchmark/random                    # Hybrid mode (DITING rules), no macros
+  %(prog)s -p benchmark/random --rag              # Hybrid + RAG, no macros
+  %(prog)s -p benchmark/random --llm-only         # Pure LLM analysis, no macros
+  %(prog)s -p benchmark/random --include-debug-macros  # Include debug macros
+  %(prog)s -p benchmark/random --llm-only --rag --include-debug-macros  # All options
         """
     )
     
@@ -393,13 +466,19 @@ Examples:
     mode_group.add_argument("--rag", action="store_true", 
                            help="Enable RAG enhancement for the selected mode (default: disabled)")
     
+    # マクロ制御オプション
+    macro_group = ap.add_argument_group('macro control')
+    macro_group.add_argument("--include-debug-macros", action="store_true",
+                            help="Include debug macros (DMSG, IMSG, EMSG, FMSG) in analysis (default: excluded)")
+    
     # その他のオプション
-    ap.add_argument("--skip-clean", action="store_true",
-                    help="Skip cleaning dependency files before analysis")
-    ap.add_argument("--clean-all", action="store_true",
-                    help="Clean all .d and .o files (not just stale ones)")
-    ap.add_argument("--no-track-tokens", action="store_true",
-                    help="Disable token usage tracking")
+    other_group = ap.add_argument_group('other options')
+    other_group.add_argument("--skip-clean", action="store_true",
+                            help="Skip cleaning dependency files before analysis")
+    other_group.add_argument("--clean-all", action="store_true",
+                            help="Clean all .d and .o files (not just stale ones)")
+    other_group.add_argument("--no-track-tokens", action="store_true",
+                            help="Disable token usage tracking")
     
     args = ap.parse_args()
 
@@ -407,9 +486,10 @@ Examples:
     print("="*60)
     print("TA Static Analysis Driver")
     print("="*60)
-    mode_desc = get_analysis_mode_description(args.llm_only, args.rag)
+    mode_desc = get_analysis_mode_description(args.llm_only, args.rag, args.include_debug_macros)
     print(f"Analysis Configuration: {mode_desc}")
     print(f"Token Tracking: {'Disabled' if args.no_track_tokens else 'Enabled'}")
+    print(f"Debug Macros: {'Included' if args.include_debug_macros else 'Excluded'}")
     print("="*60)
 
     identify_py = Path(__file__).resolve().parent / "identify_sinks" / "identify_sinks.py"
@@ -431,16 +511,30 @@ Examples:
                             print(f"[WARN] Failed to remove {file}: {e}")
         print("[INFO] Cleanup completed")
 
+    # プロジェクトごとに解析を実行
     for proj in args.project:
-        # トークン追跡はデフォルトで有効（--no-track-tokensで無効化）
-        track_tokens = not args.no_track_tokens
-        process_project(
-            proj, 
-            identify_py, 
-            skip, 
-            args.verbose, 
-            args.rag, 
-            args.skip_clean, 
-            track_tokens,
-            args.llm_only  # LLM-onlyモードフラグを追加
-        )
+        try:
+            # トークン追跡はデフォルトで有効（--no-track-tokensで無効化）
+            track_tokens = not args.no_track_tokens
+            process_project(
+                proj, 
+                identify_py, 
+                skip, 
+                args.verbose, 
+                args.rag, 
+                args.skip_clean, 
+                track_tokens,
+                args.llm_only,  # LLM-onlyモードフラグ
+                args.include_debug_macros  # デバッグマクロ制御フラグを追加
+            )
+        except SystemExit as e:
+            # プロセスが明示的に終了された場合
+            print(f"[ERROR] Analysis failed for project {proj} with exit code {e.code}")
+            sys.exit(e.code)
+        except Exception as e:
+            # その他の予期しないエラー
+            print(f"[ERROR] Unexpected error processing project {proj}: {e}")
+            if args.verbose:
+                import traceback
+                traceback.print_exc()
+            sys.exit(1)

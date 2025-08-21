@@ -1,185 +1,242 @@
-# src/identify_flows/generate_candidate_flows.py
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
-generate_candidate_flows.py のデバッグ版
-各ステップでの削減を可視化
+generate_candidate_flows.py - 統合版フェーズ4メインコントローラー
+フェーズ3.1〜3.4の機能を統合し、呼び出し元の行番号情報を保持
 """
-import argparse, json
+
+import argparse
+import json
+import sys
 from pathlib import Path
-from collections import defaultdict
+from typing import List, Dict, Any, Set, Tuple
 
-def parse_sources(spec: str) -> dict[str, list[str]]:
-    """ソース関数の仕様をパース"""
-    mapping: dict[str, list[str]] = {}
-    for item in spec.split(";"):
-        item = item.strip()
-        if not item:
-            continue
-        if ":" in item:
-            fn, params = item.split(":", 1)
-            mapping[fn.strip()] = [p.strip() for p in params.split(",") if p.strip()]
-        else:
-            mapping[item] = []
-    return mapping
+# コアモジュールのインポート
+from core.sink_detector import SinkDetector
+from core.call_graph_builder import CallGraphBuilder
+from core.chain_tracer import ChainTracer
+from core.flow_optimizer import FlowOptimizer
 
-def is_subsequence(short: list[str], long: list[str]) -> bool:
-    """shortがlongのサブシーケンスかどうかを判定"""
-    it = iter(long)
-    return all(elem in it for elem in short)
+# ユーティリティのインポート
+from utils.clang_utils import ClangUtils
+from utils.data_structures import CandidateFlow, VulnerableDestination
+
+
+class CandidateFlowGenerator:
+    """候補フロー生成の統合コントローラー"""
+    
+    def __init__(self, compile_db_path: Path, sinks_path: Path, phase12_path: Path,
+                 sources: str, devkit: str = None, verbose: bool = False,
+                 include_debug_macros: bool = False):
+        """
+        Args:
+            compile_db_path: compile_commands.jsonのパス
+            sinks_path: ta_sinks.jsonのパス
+            phase12_path: ta_phase12.jsonのパス
+            sources: エントリポイント関数（カンマ区切り）
+            devkit: TA_DEV_KIT_DIRのパス
+            verbose: 詳細出力フラグ
+            include_debug_macros: デバッグマクロを含めるかどうか
+        """
+        self.compile_db_path = compile_db_path
+        self.sinks_path = sinks_path
+        self.phase12_path = phase12_path
+        self.sources = [s.strip() for s in sources.split(',')]
+        self.devkit = devkit
+        self.verbose = verbose
+        self.include_debug_macros = include_debug_macros
+        
+        # 各種データを読み込み
+        self._load_data()
+        
+        # コアモジュールの初期化
+        self.clang_utils = ClangUtils(compile_db_path, devkit, verbose)
+        self.sink_detector = SinkDetector(
+            self.sinks_data, 
+            self.phase12_data,  # phase12データを渡す
+            verbose, 
+            include_debug_macros
+        )
+        self.call_graph_builder = CallGraphBuilder(verbose)
+        self.chain_tracer = ChainTracer(verbose)
+        self.flow_optimizer = FlowOptimizer(verbose)
+    
+    def _load_data(self):
+        """必要なJSONファイルを読み込み"""
+        try:
+            # ta_sinks.json
+            with open(self.sinks_path, 'r', encoding='utf-8') as f:
+                sinks_raw = json.load(f)
+                self.sinks_data = sinks_raw.get('sinks', sinks_raw)
+            
+            # ta_phase12.json
+            with open(self.phase12_path, 'r', encoding='utf-8') as f:
+                self.phase12_data = json.load(f)
+            
+            if self.verbose:
+                print(f"[INFO] Loaded {len(self.sinks_data)} sink functions")
+                print(f"[INFO] Source functions: {self.sources}")
+                
+        except Exception as e:
+            print(f"[ERROR] Failed to load data files: {e}")
+            sys.exit(1)
+    
+    def generate(self) -> List[Dict[str, Any]]:
+        """
+        候補フローを生成
+        
+        Returns:
+            候補フローのリスト
+        """
+        print("[Phase 4] Starting integrated candidate flow generation...")
+        
+        # Step 1: ソースコードをパース
+        if self.verbose:
+            print("[Step 1] Parsing source files...")
+        tus = self.clang_utils.parse_all_sources()
+        
+        # Step 2: コールグラフを構築
+        if self.verbose:
+            print("[Step 2] Building call graph...")
+        call_graph = self.call_graph_builder.build(tus)
+        
+        # Step 3: シンク呼び出しを検出
+        if self.verbose:
+            print("[Step 3] Detecting sink calls...")
+        sink_calls = self.sink_detector.detect_all_calls(tus)
+        
+        # Step 4: 各シンク呼び出しに対してチェインを追跡
+        if self.verbose:
+            print("[Step 4] Tracing call chains...")
+        all_flows = []
+        
+        for sink_call in sink_calls:
+            # このシンク呼び出しに到達する全てのチェインを追跡
+            chains = self.chain_tracer.trace_chains(
+                sink_call, 
+                call_graph, 
+                self.sources,
+                tus
+            )
+            
+            # 各チェインをフローとして記録
+            for chain_info in chains:
+                flow = self._create_flow(sink_call, chain_info)
+                all_flows.append(flow)
+        
+        # Step 5: フローを最適化（重複除去、同一引数のマージ等）
+        if self.verbose:
+            print("[Step 5] Optimizing flows...")
+        optimized_flows = self.flow_optimizer.optimize(all_flows)
+        
+        print(f"[Phase 4] Generated {len(optimized_flows)} candidate flows")
+        return optimized_flows
+    
+    def _create_flow(self, sink_call: Dict, chain_info: Dict) -> Dict:
+        """
+        シンク呼び出しとチェイン情報からフローを作成
+        
+        Args:
+            sink_call: シンク呼び出し情報
+            chain_info: チェイン情報（関数列と行番号列）
+        
+        Returns:
+            フロー辞書
+        """
+        vd = VulnerableDestination(
+            file=sink_call['file'],
+            line=sink_call['line'],
+            sink=sink_call['sink'],
+            param_index=sink_call['param_index'],
+            param_indices=sink_call.get('param_indices', [sink_call['param_index']])
+        )
+        
+        flow = CandidateFlow(
+            vd=vd.to_dict(),
+            chains={
+                'function_chain': chain_info['function_chain'],
+                'function_call_line': chain_info['call_lines']
+            },
+            source_func=chain_info['source_func'],
+            source_params=chain_info.get('source_params', [])
+        )
+        
+        return flow.to_dict()
+    
+    def save_results(self, output_path: Path, flows: List[Dict]):
+        """
+        結果をJSONファイルに保存
+        
+        Args:
+            output_path: 出力ファイルパス
+            flows: 候補フローのリスト
+        """
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(flows, f, indent=2, ensure_ascii=False)
+        
+        print(f"[SUCCESS] Saved {len(flows)} candidate flows to {output_path}")
+
 
 def main():
-    p = argparse.ArgumentParser(description="フェーズ5: 危険フロー生成（デバッグ版）")
-    p.add_argument("--chains",  required=True, help="フェーズ3で生成したチェインJSON")
-    p.add_argument("--sources", required=True, help="ソース指定")
-    p.add_argument("--output",  required=True, help="出力候補フローJSON")
-    p.add_argument("--debug", action="store_true", help="デバッグ出力を有効化")
-    args = p.parse_args()
-
-    chains_path = Path(args.chains)
-    data = json.loads(chains_path.read_text(encoding="utf-8"))
+    """メインエントリポイント"""
+    parser = argparse.ArgumentParser(
+        description="Generate candidate vulnerability flows (Integrated Phase 4)"
+    )
     
-    print(f"[DEBUG] 入力チェーン数: {len(data)}")
-
-    # ,で分割
-    src_keys = args.sources.split(",")
-    src_map = parse_sources(src_keys[0])
-    if len(src_keys) > 1:
-        # 2つ目以降のソースマップを統合
-        for i in range(1, len(src_keys)):
-            additional_map = parse_sources(src_keys[i])
-            src_map.update(additional_map)
-    print(f"[DEBUG] ソース関数マッピング: {src_map}")
-    print(f"[DEBUG] ソース関数: {list(src_map.keys())}")
-
+    # 必須引数
+    parser.add_argument('--compile-db', required=True, type=Path,
+                        help='Path to compile_commands.json')
+    parser.add_argument('--sinks', required=True, type=Path,
+                        help='Path to ta_sinks.json')
+    parser.add_argument('--phase12', required=True, type=Path,
+                        help='Path to ta_phase12.json')
+    parser.add_argument('--sources', required=True,
+                        help='Comma-separated list of entry point functions')
+    parser.add_argument('--output', required=True, type=Path,
+                        help='Output path for candidate flows JSON')
+    
+    # オプション引数
+    parser.add_argument('--devkit', default=None,
+                        help='Path to TA_DEV_KIT_DIR')
+    parser.add_argument('--verbose', action='store_true',
+                        help='Enable verbose output')
+    parser.add_argument('--debug', action='store_true',
+                        help='Enable debug output')
+    parser.add_argument('--include-debug-macros', action='store_true',
+                        help='Include debug macros (DMSG, IMSG, etc.) in analysis')
+    
+    args = parser.parse_args()
+    
+    # デバッグモードの場合はverboseも有効化
     if args.debug:
-        for fn, params in src_map.items():
-            print(f"  - {fn}: {params if params else 'no params'}")
-    # ステップ1: 各チェーンエントリからCDFを抽出
-    all_cdfs = []
+        args.verbose = True
     
-    for entry in data:
-        vd = entry["vd"]
-        chains = entry.get("chains", [])
+    try:
+        # ジェネレータを初期化
+        generator = CandidateFlowGenerator(
+            compile_db_path=args.compile_db,
+            sinks_path=args.sinks,
+            phase12_path=args.phase12,
+            sources=args.sources,
+            devkit=args.devkit,
+            verbose=args.verbose,
+            include_debug_macros=args.include_debug_macros
+        )
         
-        for chain in chains:
-            if not chain:
-                continue
-            
-            # チェーン内でソースを探す
-            for i, func in enumerate(chain):
-                if func in src_map:
-                    # ソースから始まるCDFを作成
-                    cdf = {
-                        "vd": vd,
-                        "chains": [chain[i:]],  # ソースから始まるチェーン（リスト形式）
-                        "source_func": func,
-                        "source_params": src_map[func]
-                    }
-                    all_cdfs.append(cdf)
-                    break  # 最初に見つかったソースで停止
-    
-    print(f"[DEBUG] ステップ1後: {len(all_cdfs)} CDFs")
-    if args.debug:
-        for cdf in all_cdfs:
-            vd = cdf["vd"]
-            print(f"  - {vd['sink']} at line {vd['line']}, param_index={vd['param_index']}")
-    
-    # ステップ2: 同じVDに対する重複を処理
-    # VDごとにグループ化
-    vd_groups = defaultdict(list)
-    for cdf in all_cdfs:
-        vd = cdf["vd"]
-        source_func = cdf["source_func"]
-        key = (vd["file"], vd["line"], vd["sink"], vd["param_index"], source_func)
-        vd_groups[key].append(cdf)
-    
+        # 候補フローを生成
+        flows = generator.generate()
+        
+        # 結果を保存
+        generator.save_results(args.output, flows)
+        
+    except Exception as e:
+        print(f"[ERROR] {e}")
+        if args.debug:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
 
-    # 各グループから最長のチェーンを選択（同じVD+ソースの場合のみ統合）
-    longest_cdfs = []
-    for group in vd_groups.values():
-        if group:
-            # 同じVD+ソースの場合は最長チェーンのみ選択
-            longest = max(group, key=lambda x: len(x["chains"][0]) if x["chains"] else 0)
-            longest_cdfs.append(longest)
-    
-    print(f"[DEBUG] ステップ2後: {len(longest_cdfs)} CDFs（同じVD+ソースの最長チェーンのみ）")
-    
-    # ステップ3: サブチェーンの除去
-    filtered_cdfs = []
-    removed_count = 0
-    for i, cdf in enumerate(longest_cdfs):
-        is_subchain = False
-        chain = cdf["chains"][0] if cdf["chains"] else []
-        
-        for j, other_cdf in enumerate(longest_cdfs):
-            if i != j:
-                other_chain = other_cdf["chains"][0] if other_cdf["chains"] else []
-                # 同じVDの場合のみサブチェーンチェック
-                vd1 = cdf["vd"]
-                vd2 = other_cdf["vd"]
-                if (vd1["file"] == vd2["file"] and
-                    vd1["line"] == vd2["line"] and
-                    vd1["sink"] == vd2["sink"] and
-                    vd1["param_index"] == vd2["param_index"]):
-                    if chain and other_chain and is_subsequence(chain, other_chain):
-                        is_subchain = True
-                        removed_count += 1
-                        if args.debug:
-                            print(f"  [REMOVED] サブチェーン: {' -> '.join(chain)}")
-                        break
-        
-        if not is_subchain:
-            filtered_cdfs.append(cdf)
-    
-    print(f"[DEBUG] ステップ3後: {len(filtered_cdfs)} CDFs（{removed_count} 個のサブチェーンを削除）")
-    # ステップ4: 同じ脆弱性を表す可能性のあるCDFを統合（オプション）
-    # グループ化のキー：(file, line, sink, chain)
-    grouped = defaultdict(list)
-    
-    for cdf in filtered_cdfs:
-        vd = cdf["vd"]
-        chain_tuple = tuple(cdf["chains"][0]) if cdf["chains"] else ()
-        key = (vd["file"], vd["line"], vd["sink"], chain_tuple)
-        grouped[key].append(cdf)
-    
-    print(f"[DEBUG] ステップ4: {len(grouped)} グループ")
-    
-    final_cdfs = []
-    merged_count = 0
-    for key, group in grouped.items():
-        if len(group) == 1:
-            # 単一のCDF
-            final_cdfs.append(group[0])
-        else:
-            # 複数のparam_indexを持つ同じ脆弱性
-            merged_count += 1
-            base_cdf = group[0].copy()
-            param_indices = sorted(set(g["vd"]["param_index"] for g in group))
-            
-            if args.debug:
-                print(f"  [MERGED] {key[2]} at line {key[1]}: param_indices = {param_indices}")
-            
-            # 統合されたVDを作成
-            base_cdf["vd"]["param_indices"] = param_indices
-            # 元のparam_indexも保持（互換性のため）
-            base_cdf["vd"]["param_index"] = param_indices[0]
-            
-            final_cdfs.append(base_cdf)
-    
-    print(f"[DEBUG] ステップ4後: {len(final_cdfs)} CDFs（{merged_count} グループがマージされた）")
-    print(f"[DEBUG] 最終的な危険フロー:")
-    for cdf in final_cdfs:
-        vd = cdf["vd"]
-        chain = cdf["chains"][0] if cdf["chains"] else []
-        param_info = vd.get("param_indices", [vd.get("param_index")])
-        print(f"  - {vd['sink']} at line {vd['line']}, params={param_info}: {' -> '.join(chain)}")
-    
-    # 出力
-    out = Path(args.output)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(final_cdfs, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"\n[generate_candidate_flows] {len(final_cdfs)} 件 → {out}")
 
 if __name__ == "__main__":
     main()
