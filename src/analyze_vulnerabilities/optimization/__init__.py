@@ -1,20 +1,20 @@
+### ファイル2: src/analyze_vulnerabilities/optimization/__init__.py
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-最適化関連モジュール
+最適化モジュール
 
-パフォーマンス向上のためのキャッシュ、データ構造、
-トークン追跡などの機能を提供
+解析パフォーマンス向上のための最適化機能を提供
+ChainTree削除による簡略化
 """
 
-from .chain_tree import ChainTree
+# PrefixCacheのみインポート（ChainTree削除）
 from .prefix_cache import PrefixCache
 from .token_tracking_client import TokenTrackingClient
 
 __all__ = [
-    'ChainTree',
-    'PrefixCache', 
-    'TokenTrackingClient'
+    'PrefixCache',
+    'TokenTrackingClient',
 ]
 
-__version__ = '1.0.0'
+__version__ = '2.0.0'

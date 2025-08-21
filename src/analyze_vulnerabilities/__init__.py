@@ -1,3 +1,4 @@
+### ファイル1: src/analyze_vulnerabilities/__init__.py
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -20,9 +21,8 @@ from .core import (
     FindingsMerger
 )
 
-# 最適化モジュールから
+# 最適化モジュールから（ChainTree削除）
 from .optimization import (
-    ChainTree,
     PrefixCache,
     TokenTrackingClient
 )
@@ -34,7 +34,7 @@ from .parsing import (
     JSONRepair
 )
 
-# I/Oハンドラーモジュールから（ioからio_handlersに変更）
+# I/Oハンドラーモジュールから
 from .io_handlers import (
     StructuredLogger,
     FastBatchLogger,
@@ -48,7 +48,6 @@ from .prompts import (
     PromptManager,
     get_start_prompt,
     get_middle_prompt,
-    get_middle_prompt_multi_params,
     get_end_prompt,
     set_analysis_mode,
     set_rag_enabled,
@@ -58,7 +57,8 @@ from .prompts import (
     get_current_mode,
     get_current_config,
     reload_prompts,
-    build_rule_hints_block_from_codeql
+    build_rule_hints_block_from_codeql,
+    setup_system_prompt
 )
 
 # ユーティリティから
@@ -73,7 +73,7 @@ from .utils import (
     sanitize_json_string
 )
 
-# 公開API
+# 公開API（ChainTree削除）
 __all__ = [
     # メインクラス
     'TaintAnalyzer',
@@ -85,8 +85,7 @@ __all__ = [
     'LLMHandler',
     'FindingsMerger',
     
-    # 最適化
-    'ChainTree',
+    # 最適化（ChainTree削除）
     'PrefixCache',
     'TokenTrackingClient',
     
@@ -106,7 +105,6 @@ __all__ = [
     'PromptManager',
     'get_start_prompt',
     'get_middle_prompt',
-    'get_middle_prompt_multi_params',
     'get_end_prompt',
     'set_analysis_mode',
     'set_rag_enabled',
@@ -117,6 +115,7 @@ __all__ = [
     'get_current_config',
     'reload_prompts',
     'build_rule_hints_block_from_codeql',
+    'setup_system_prompt',
     
     # ユーティリティ
     'load_diting_rules_json',
@@ -169,9 +168,10 @@ def verify_imports():
     """すべてのインポートが正常に動作するか確認"""
     import_status = {}
     
+    # ChainTree削除
     modules_to_check = [
         ('core', ['TaintAnalyzer']),
-        ('optimization', ['ChainTree', 'PrefixCache']),
+        ('optimization', ['PrefixCache']),  # ChainTree削除
         ('parsing', ['CodeExtractor', 'VulnerabilityParser']),
         ('io_handlers', ['StructuredLogger', 'ConversationManager']),
         ('prompts', ['PromptManager']),

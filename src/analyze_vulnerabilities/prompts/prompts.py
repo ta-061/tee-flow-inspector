@@ -1,48 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-prompts.py - LLMプロンプトテンプレート管理（拡張版）
-4つのモード（hybrid/llm_only × no_rag/with_rag）に対応
-DITING/CodeQLルール統合、upstream_context対応
+prompts.py - LLMプロンプトテンプレート管理システム
+4つのモード（hybrid/llm_only × with_rag/no_rag）に完全対応
+すべてのプロンプト生成と置換処理を一元管理
 """
 
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Tuple, Any
 import sys
 import os
-import re
 import json
-
-def _fill_template(template: str, **values) -> str:
-    """
-    テンプレート内の変数を置換
-    未定義の変数は空文字列に置換
-    """
-    # デフォルト値の設定
-    defaults = {
-        'source_function': '',
-        'param_name': '',
-        'code': '',
-        'rag_context': '',
-        'upstream_context': '',
-        'param_indices': '',
-        'diting_rules_json': '',
-        'RULE_HINTS_BLOCK': '',
-        'sink_function': '',
-        'param_index': ''
-    }
-    
-    # valuesで上書き
-    for key in defaults:
-        if key not in values or values[key] is None:
-            values[key] = defaults[key]
-    
-    # テンプレート置換
-    result = template
-    for key, value in values.items():
-        result = result.replace(f"{{{key}}}", str(value))
-    
-    return result
 
 # RAGシステムをインポート
 sys.path.append(str(Path(__file__).parent.parent))
@@ -54,15 +22,252 @@ except ImportError:
     print("[WARN] RAG module not available. RAG features disabled.")
 
 
+# =============================================================================
+# メイン公開関数（taint_analyzer.pyから呼び出される）
+# =============================================================================
+
+def setup_system_prompt(mode: str, use_rag: bool, rules_path: Path) -> Tuple[str, Dict[str, Any]]:
+    """
+    指定されたモードとRAG設定に基づいてシステムプロンプトを生成
+    
+    Args:
+        mode: "hybrid" または "llm_only"
+        use_rag: RAGを使用するかどうか
+        rules_path: codeql_rules.jsonのパス
+    
+    Returns:
+        (system_prompt, metadata) のタプル
+    """
+    global _prompt_manager
+    
+    # 有効なモードの検証
+    if mode not in ["hybrid", "llm_only"]:
+        print(f"[WARN] Invalid mode: {mode}. Using 'hybrid'")
+        mode = "hybrid"
+    
+    print(f"[INFO] Setting up prompt system:")
+    print(f"  - Mode: {mode}")
+    print(f"  - RAG: {'enabled' if use_rag else 'disabled'}")
+    print(f"  - Rules path: {rules_path}")
+    
+    # PromptManagerを適切なモードで初期化
+    _prompt_manager = PromptManager(mode=mode, use_rag=use_rag)
+    
+    # 4つのモードを判定
+    if mode == "hybrid" and use_rag:
+        return _setup_hybrid_with_rag(rules_path)
+    elif mode == "hybrid" and not use_rag:
+        return _setup_hybrid_no_rag(rules_path)
+    elif mode == "llm_only" and use_rag:
+        return _setup_llm_only_with_rag(rules_path)
+    else:  # llm_only and not use_rag
+        return _setup_llm_only_no_rag(rules_path)
+
+
+# =============================================================================
+# 4つのモード用の個別セットアップ関数
+# =============================================================================
+
+def _setup_hybrid_with_rag(rules_path: Path) -> Tuple[str, Dict[str, Any]]:
+    """Hybridモード + RAG有りのセットアップ"""
+    global _prompt_manager
+    
+    print("[INFO] Setting up: Hybrid mode with RAG")
+    
+    try:
+        # DITINGルールを読み込み
+        diting_rules = _load_diting_rules(rules_path)
+        diting_rules_json = json.dumps(diting_rules, ensure_ascii=False, separators=(',', ':'))
+        
+        # ルールヒントブロックを生成
+        rule_hints = build_rule_hints_block_from_codeql(rules_path)
+        
+        # PromptManagerに設定
+        _prompt_manager.set_diting_rules_json(diting_rules_json)
+        _prompt_manager.set_rule_hints_block(rule_hints)
+        
+        # システムプロンプトを取得
+        system_prompt = _prompt_manager.get_system_prompt()
+        
+        # メタデータを作成
+        metadata = {
+            "mode": "hybrid",
+            "rag_enabled": True,
+            "rag_available": is_rag_available(),
+            "diting_rules_count": len(diting_rules.get('detection_rules', [])),
+            "rule_ids": [r.get('rule_id', '') for r in diting_rules.get('detection_rules', [])],
+            "rule_hints": rule_hints,
+            "rules_json_size": len(diting_rules_json),
+            "prompt_dir": str(_prompt_manager.current_dir)
+        }
+        
+        _validate_prompt(system_prompt, "Hybrid with RAG")
+        return system_prompt, metadata
+        
+    except Exception as e:
+        print(f"[FATAL] Failed to setup Hybrid with RAG: {e}")
+        sys.exit(1)
+
+
+def _setup_hybrid_no_rag(rules_path: Path) -> Tuple[str, Dict[str, Any]]:
+    """Hybridモード + RAG無しのセットアップ"""
+    global _prompt_manager
+    
+    print("[INFO] Setting up: Hybrid mode without RAG")
+    
+    try:
+        # DITINGルールを読み込み
+        diting_rules = _load_diting_rules(rules_path)
+        diting_rules_json = json.dumps(diting_rules, ensure_ascii=False, separators=(',', ':'))
+        
+        # ルールヒントブロックを生成
+        rule_hints = build_rule_hints_block_from_codeql(rules_path)
+        
+        # PromptManagerに設定
+        _prompt_manager.set_diting_rules_json(diting_rules_json)
+        _prompt_manager.set_rule_hints_block(rule_hints)
+        
+        # システムプロンプトを取得
+        system_prompt = _prompt_manager.get_system_prompt()
+        
+        # メタデータを作成
+        metadata = {
+            "mode": "hybrid",
+            "rag_enabled": False,
+            "rag_available": False,
+            "diting_rules_count": len(diting_rules.get('detection_rules', [])),
+            "rule_ids": [r.get('rule_id', '') for r in diting_rules.get('detection_rules', [])],
+            "rule_hints": rule_hints,
+            "rules_json_size": len(diting_rules_json),
+            "prompt_dir": str(_prompt_manager.current_dir)
+        }
+        
+        _validate_prompt(system_prompt, "Hybrid without RAG")
+        return system_prompt, metadata
+
+    except Exception as e:
+        print(f"[FATAL] Failed to setup Hybrid without RAG: {e}")
+        sys.exit(1)
+
+
+def _setup_llm_only_with_rag(rules_path: Path) -> Tuple[str, Dict[str, Any]]:
+    """LLM-onlyモード + RAG有りのセットアップ"""
+    global _prompt_manager
+    
+    print("[INFO] Setting up: LLM-only mode with RAG")
+    
+    try:
+        # LLM-onlyモードでもCodeQLヒントは追加（軽量版）
+        rule_hints = ""
+        if rules_path and rules_path.exists():
+            rule_hints = build_rule_hints_block_from_codeql(rules_path)
+            _prompt_manager.set_rule_hints_block(rule_hints)
+        
+        # DITINGルールは空（LLM-onlyモードなので）
+        _prompt_manager.set_diting_rules_json("")
+        
+        # システムプロンプトを取得
+        system_prompt = _prompt_manager.get_system_prompt()
+        
+        # メタデータを作成
+        metadata = {
+            "mode": "llm_only",
+            "rag_enabled": True,
+            "rag_available": is_rag_available(),
+            "rule_hints": rule_hints,
+            "has_codeql_hints": bool(rule_hints),
+            "prompt_dir": str(_prompt_manager.current_dir)
+        }
+        
+        _validate_prompt(system_prompt, "LLM-only with RAG")
+        return system_prompt, metadata
+        
+    except Exception as e:
+        print(f"[FATAL] Failed to setup LLM-only with RAG: {e}")
+        sys.exit(1)
+
+
+def _setup_llm_only_no_rag(rules_path: Path) -> Tuple[str, Dict[str, Any]]:
+    """LLM-onlyモード + RAG無しのセットアップ"""
+    global _prompt_manager
+    
+    print("[INFO] Setting up: LLM-only mode without RAG")
+    
+    try:
+        # LLM-onlyモードでもCodeQLヒントは追加（軽量版）
+        rule_hints = ""
+        if rules_path and rules_path.exists():
+            rule_hints = build_rule_hints_block_from_codeql(rules_path)
+            _prompt_manager.set_rule_hints_block(rule_hints)
+        
+        # DITINGルールは空（LLM-onlyモードなので）
+        _prompt_manager.set_diting_rules_json("")
+        
+        # システムプロンプトを取得
+        system_prompt = _prompt_manager.get_system_prompt()
+        
+        # メタデータを作成
+        metadata = {
+            "mode": "llm_only",
+            "rag_enabled": False,
+            "rag_available": False,
+            "rule_hints": rule_hints,
+            "has_codeql_hints": bool(rule_hints),
+            "prompt_dir": str(_prompt_manager.current_dir)
+        }
+        
+        _validate_prompt(system_prompt, "LLM-only without RAG")
+        return system_prompt, metadata
+        
+    except Exception as e:
+        print(f"[FATAL] Failed to setup LLM-only without RAG: {e}")
+        sys.exit(1)
+
+
+# =============================================================================
+# ヘルパー関数
+# =============================================================================
+
+def _load_diting_rules(rules_path: Path) -> Dict:
+    """DITINGルールをファイルから読み込み"""
+    try:
+        if not rules_path.exists():
+            print(f"[WARN] DITING rules file not found: {rules_path}")
+            print("[INFO] Using empty rules for LLM-only mode")
+            return {"detection_rules": []}
+            
+        with open(rules_path, 'r', encoding='utf-8') as f:
+            rules = json.load(f)
+            
+        if not rules or not rules.get("detection_rules"):
+            print(f"[WARN] DITING rules file is empty or invalid: {rules_path}")
+            return {"detection_rules": []}
+            
+        return rules
+        
+    except json.JSONDecodeError as e:
+        print(f"[ERROR] Failed to parse DITING rules JSON: {e}")
+        return {"detection_rules": []}
+    except Exception as e:
+        print(f"[ERROR] Failed to load DITING rules from {rules_path}: {e}")
+        return {"detection_rules": []}
+
+
+def _validate_prompt(prompt: str, mode_name: str) -> None:
+    """プロンプトの検証（プレースホルダーが残っていないか確認）"""
+    unreplaced = []
+    if "{diting_rules_json}" in prompt:
+        unreplaced.append("{diting_rules_json}")
+    if "{RULE_HINTS_BLOCK}" in prompt:
+        unreplaced.append("{RULE_HINTS_BLOCK}")
+    
+    if unreplaced:
+        print(f"[WARN] Unreplaced placeholders in {mode_name} prompt: {', '.join(unreplaced)}")
+
+
 def build_rule_hints_block_from_codeql(json_path: Path) -> str:
     """
     codeql_rules.jsonから最小のルールヒントブロックを生成
-    
-    Args:
-        json_path: codeql_rules.jsonのパス
-    
-    Returns:
-        ルールヒントブロック文字列
     """
     try:
         with open(json_path, 'r', encoding='utf-8') as f:
@@ -74,18 +279,12 @@ def build_rule_hints_block_from_codeql(json_path: Path) -> str:
             for rule in codeql_rules['detection_rules']:
                 if 'rule_id' in rule:
                     rule_ids.append(rule['rule_id'])
-        elif 'rules' in codeql_rules:
-            for rule in codeql_rules['rules']:
-                if 'rule_id' in rule:
-                    rule_ids.append(rule['rule_id'])
         
         # ルールIDリストの構築（常に'other'を追加）
         if rule_ids:
-            # 実際のルールIDがある場合はそれを使用し、最後に'other'を追加
             rule_ids.append('other')
             rule_id_list = ', '.join(rule_ids)
         else:
-            # ルールIDが見つからない場合はデフォルトを使用
             rule_id_list = 'unencrypted_output, weak_input_validation, shared_memory_overwrite, other'
         
         # ヒントブロックを構築
@@ -99,11 +298,15 @@ def build_rule_hints_block_from_codeql(json_path: Path) -> str:
         
     except Exception as e:
         print(f"[WARN] Failed to build rule hints from {json_path}: {e}")
-        # フォールバック（'other'を含む）
+        # フォールバック
         return """RULE CLASSIFICATION HINTS:
 - rule_id: unencrypted_output, weak_input_validation, shared_memory_overwrite, other
 - Focus: TEE vulnerabilities (buffer overflow, info disclosure, memory corruption)"""
 
+
+# =============================================================================
+# PromptManagerクラス
+# =============================================================================
 
 class PromptManager:
     """プロンプトテンプレートを管理するクラス"""
@@ -135,19 +338,23 @@ class PromptManager:
         # ディレクトリの存在確認
         if not self.current_dir.exists():
             print(f"[WARN] Prompt directory not found: {self.current_dir}")
-            print(f"[INFO] Available directories:")
-            for mode_dir in ["hybrid", "llm_only"]:
-                for rag_dir in ["no_rag", "with_rag"]:
-                    path = self.base_dir / mode_dir / rag_dir
-                    if path.exists():
-                        print(f"  - {mode_dir}/{rag_dir}")
+            self._print_available_dirs()
         else:
-            print(f"[INFO] Using prompts from: {self.current_dir.relative_to(self.base_dir)}")
+            print(f"[INFO] Using prompts from: {self.current_dir}")
         
         # RAGクライアント
         self._rag_client = None
         if use_rag and RAG_AVAILABLE:
             self._init_rag_client()
+    
+    def _print_available_dirs(self):
+        """利用可能なディレクトリを表示"""
+        print(f"[INFO] Available directories:")
+        for mode_dir in ["hybrid", "llm_only"]:
+            for rag_dir in ["no_rag", "with_rag"]:
+                path = self.base_dir / mode_dir / rag_dir
+                if path.exists():
+                    print(f"  - {mode_dir}/{rag_dir}")
     
     def _init_rag_client(self):
         """RAGクライアントの初期化"""
@@ -165,12 +372,14 @@ class PromptManager:
     def set_diting_rules_json(self, json_str: str):
         """DITINGルールのJSON文字列を設定"""
         self._diting_rules_json = json_str
-        print(f"[INFO] DITING rules JSON set ({len(json_str)} chars)")
+        if json_str:
+            print(f"[INFO] DITING rules JSON set ({len(json_str)} chars)")
     
     def set_rule_hints_block(self, text: str):
         """ルールヒントブロックを設定"""
         self._rule_hints_block = text
-        print(f"[INFO] Rule hints block set ({len(text)} chars)")
+        if text:
+            print(f"[INFO] Rule hints block set ({len(text)} chars)")
     
     def load_prompt(self, filename: str) -> str:
         """
@@ -186,58 +395,52 @@ class PromptManager:
         
         # ファイルが存在しない場合のフォールバック
         if not prompt_path.exists():
-            # 1. 逆のRAG設定を試す
-            alt_rag = "no_rag" if self.use_rag_mode else "with_rag"
-            fallback1 = self.base_dir / self.mode / alt_rag / filename
-            
-            # 2. ベースディレクトリ（旧構造）
-            fallback2 = self.base_dir / filename
-            
-            for fallback in [fallback1, fallback2]:
-                if fallback.exists():
-                    print(f"[WARN] Using fallback: {fallback.relative_to(self.base_dir)}")
-                    prompt_path = fallback
-                    break
-            else:
-                raise FileNotFoundError(
-                    f"Prompt file not found: {filename}\n"
-                    f"Searched in: {prompt_path}\n"
-                    f"Current mode: {self.mode}/{('with_rag' if self.use_rag_mode else 'no_rag')}"
-                )
+            prompt_path = self._find_fallback_path(filename)
         
         try:
             prompt = prompt_path.read_text(encoding="utf-8")
             self._cache[cache_key] = prompt
-            print(f"[DEBUG] Loaded: {prompt_path.relative_to(self.base_dir)}")
+            print(f"[DEBUG] Loaded prompt: {prompt_path.relative_to(self.base_dir)}")
             return prompt
         except Exception as e:
             raise RuntimeError(f"Failed to read prompt file {prompt_path}: {e}")
     
-    def set_mode(self, mode: str, use_rag: Optional[bool] = None):
-        """モードを切り替える"""
-        if mode not in ["hybrid", "llm_only"]:
-            print(f"[WARN] Invalid mode: {mode}. Using 'hybrid'")
-            mode = "hybrid"
+    def _find_fallback_path(self, filename: str) -> Path:
+        """フォールバックパスを探す"""
+        # 1. 逆のRAG設定を試す
+        alt_rag = "no_rag" if self.use_rag_mode else "with_rag"
+        fallback1 = self.base_dir / self.mode / alt_rag / filename
         
-        self.mode = mode
-        if use_rag is not None:
-            self.use_rag_mode = use_rag
+        # 2. デフォルトモード（hybrid/no_rag）
+        fallback2 = self.base_dir / "hybrid" / "no_rag" / filename
         
-        # ディレクトリを更新
-        rag_subdir = "with_rag" if self.use_rag_mode else "no_rag"
-        self.current_dir = self.base_dir / mode / rag_subdir
+        for fallback in [fallback1, fallback2]:
+            if fallback.exists():
+                print(f"[WARN] Using fallback: {fallback.relative_to(self.base_dir)}")
+                return fallback
         
-        # キャッシュをクリア
-        self._cache.clear()
+        # ファイルが見つからない場合
+        raise FileNotFoundError(f"Prompt file not found: {filename}")
+    
+    def get_system_prompt(self) -> str:
+        """システムプロンプトを取得（確実に置換を実行）"""
+        template = self.load_prompt("system.txt")
         
-        print(f"[INFO] Mode set to: {mode}/{rag_subdir}")
+        # 置換を実行
+        result = template
         
-        # RAGクライアントの更新
-        if self.use_rag_mode and RAG_AVAILABLE and self._rag_client is None:
-            self._init_rag_client()
-        elif not self.use_rag_mode and self._rag_client is not None:
-            self._rag_client = None
-            print("[INFO] RAG client disabled")
+        # DITINGルールの置換（hybridモードのみ）
+        if "{diting_rules_json}" in result:
+            if self.mode == "hybrid" and self._diting_rules_json:
+                result = result.replace("{diting_rules_json}", self._diting_rules_json)
+            else:
+                result = result.replace("{diting_rules_json}", "")
+        
+        # ルールヒントの置換
+        if "{RULE_HINTS_BLOCK}" in result:
+            result = result.replace("{RULE_HINTS_BLOCK}", self._rule_hints_block or "")
+        
+        return result
     
     def get_rag_context_for_vulnerability(self, code: str, sink_function: str, param_index: int) -> Optional[str]:
         """脆弱性解析用のRAGコンテキストを取得"""
@@ -249,32 +452,46 @@ class PromptManager:
                 code, sink_function, param_index
             )
             if context and "[ERROR]" not in context:
-                print(f"[DEBUG] RAG context retrieved for {sink_function} (param {param_index})")
+                print(f"[DEBUG] RAG context retrieved for {sink_function}")
                 return context
         except Exception as e:
             print(f"[WARN] RAG search failed: {e}")
         
         return None
-    
-    def get_system_prompt(self) -> str:
-        """システムプロンプトを取得（DITINGルールとヒントブロックを注入）"""
-        template = self.load_prompt("system.txt")
-        
-        # テンプレート変数を置換
-        return _fill_template(
-            template,
-            diting_rules_json=self._diting_rules_json,
-            RULE_HINTS_BLOCK=self._rule_hints_block
-        )
 
+
+# =============================================================================
+# テンプレート置換関数
+# =============================================================================
+
+def _fill_template(template: str, **values) -> str:
+    """
+    テンプレート内の変数を確実に置換
+    """
+    result = template
+    for key, value in values.items():
+        placeholder = f"{{{key}}}"
+        if placeholder in result:
+            result = result.replace(placeholder, str(value) if value is not None else "")
+    
+    return result
+
+
+# =============================================================================
+# グローバルインスタンスと公開関数
+# =============================================================================
 
 # グローバルインスタンス（デフォルト: hybrid/no_rag）
-_prompt_manager = PromptManager(mode="hybrid", use_rag=False)
+_prompt_manager = None
 
 
 def get_start_prompt(source_function: str, param_name: str, code: str, 
                     upstream_context: str = "") -> str:
     """スタートプロンプトを生成"""
+    global _prompt_manager
+    if _prompt_manager is None:
+        _prompt_manager = PromptManager(mode="hybrid", use_rag=False)
+    
     template = _prompt_manager.load_prompt("taint_start.txt")
     return _fill_template(
         template,
@@ -285,22 +502,32 @@ def get_start_prompt(source_function: str, param_name: str, code: str,
     )
 
 
-def get_middle_prompt(source_function: str, param_name: str, code: str,
-                     sink_function: Optional[str] = None,
-                     param_index: Optional[int] = None,
-                     upstream_context: str = "") -> str:
-    """中間プロンプトを生成"""
+def get_middle_prompt(
+    source_function: str, 
+    param_name: str, 
+    code: str,
+    sink_function: Optional[str] = None,
+    target_params: str = "",
+    upstream_context: str = "",
+) -> str:
+    """ミドルプロンプトを生成"""
+    global _prompt_manager
+    if _prompt_manager is None:
+        _prompt_manager = PromptManager(mode="hybrid", use_rag=False)
+    
     print(f"[DEBUG] get_middle_prompt: mode={_prompt_manager.mode}, rag={_prompt_manager.use_rag_mode}")
     
-    # RAGコンテキストの取得（RAGモードの場合のみ）
+    # RAGコンテキストの取得
     rag_context = ""
-    if _prompt_manager.use_rag_mode and sink_function and param_index is not None:
+    if _prompt_manager.use_rag_mode and sink_function:
         rag_context = _prompt_manager.get_rag_context_for_vulnerability(
-            code, sink_function, param_index
+            code, sink_function, 0
         ) or ""
     
+    # テンプレートをロード
     template = _prompt_manager.load_prompt("taint_middle.txt")
     
+    # テンプレートを埋める
     return _fill_template(
         template,
         source_function=source_function,
@@ -309,40 +536,16 @@ def get_middle_prompt(source_function: str, param_name: str, code: str,
         rag_context=rag_context,
         upstream_context=upstream_context,
         sink_function=sink_function or "",
-        param_index=str(param_index) if param_index is not None else ""
-    )
-
-
-def get_middle_prompt_multi_params(source_function: str, param_name: str, code: str,
-                                  sink_function: Optional[str] = None,
-                                  param_indices: Optional[list] = None,
-                                  upstream_context: str = "") -> str:
-    """複数パラメータ用の中間プロンプトを生成"""
-    print(f"[DEBUG] get_middle_prompt_multi_params: mode={_prompt_manager.mode}, rag={_prompt_manager.use_rag_mode}")
-    
-    # RAGコンテキストの取得
-    rag_context = ""
-    if _prompt_manager.use_rag_mode and sink_function and param_indices:
-        rag_context = _prompt_manager.get_rag_context_for_vulnerability(
-            code, sink_function, param_indices[0]
-        ) or ""
-    
-    template = _prompt_manager.load_prompt("taint_middle_multi_params.txt")
-    
-    return _fill_template(
-        template,
-        source_function=source_function,
-        param_name=param_name,
-        code=code,
-        rag_context=rag_context,
-        param_indices=str(param_indices) if param_indices else "",
-        upstream_context=upstream_context,
-        sink_function=sink_function or ""
+        target_params=target_params
     )
 
 
 def get_end_prompt() -> str:
     """エンドプロンプトを生成"""
+    global _prompt_manager
+    if _prompt_manager is None:
+        _prompt_manager = PromptManager(mode="hybrid", use_rag=False)
+    
     return _prompt_manager.load_prompt("taint_end.txt")
 
 
@@ -350,56 +553,72 @@ def set_analysis_mode(mode: str, use_rag: Optional[bool] = None):
     """解析モードを設定"""
     global _prompt_manager
     print(f"[INFO] Setting analysis mode: {mode} (RAG: {use_rag})")
-    _prompt_manager.set_mode(mode, use_rag)
+    
+    if _prompt_manager is None:
+        _prompt_manager = PromptManager(mode=mode, use_rag=use_rag if use_rag is not None else False)
+    else:
+        _prompt_manager.mode = mode
+        if use_rag is not None:
+            _prompt_manager.use_rag_mode = use_rag
+            rag_subdir = "with_rag" if use_rag else "no_rag"
+            _prompt_manager.current_dir = _prompt_manager.base_dir / mode / rag_subdir
+            _prompt_manager._cache.clear()
 
 
 def set_rag_enabled(enabled: bool):
     """RAGの有効/無効を設定"""
     global _prompt_manager
-    _prompt_manager.use_rag_mode = enabled
-    
-    # ディレクトリを更新
-    rag_subdir = "with_rag" if enabled else "no_rag"
-    _prompt_manager.current_dir = _prompt_manager.base_dir / _prompt_manager.mode / rag_subdir
-    
-    # RAGクライアントの更新
-    if enabled and RAG_AVAILABLE:
-        if _prompt_manager._rag_client is None:
-            _prompt_manager._init_rag_client()
+    if _prompt_manager is None:
+        _prompt_manager = PromptManager(mode="hybrid", use_rag=enabled)
     else:
-        _prompt_manager._rag_client = None
-    
-    # キャッシュをクリア
-    _prompt_manager._cache.clear()
+        _prompt_manager.use_rag_mode = enabled
+        rag_subdir = "with_rag" if enabled else "no_rag"
+        _prompt_manager.current_dir = _prompt_manager.base_dir / _prompt_manager.mode / rag_subdir
+        _prompt_manager._cache.clear()
     
     print(f"[INFO] RAG {'enabled' if enabled else 'disabled'}")
-    print(f"[INFO] Now using: {_prompt_manager.current_dir.relative_to(_prompt_manager.base_dir)}")
 
 
 def set_diting_rules(json_str: str):
     """DITINGルールを設定"""
     global _prompt_manager
+    if _prompt_manager is None:
+        _prompt_manager = PromptManager()
     _prompt_manager.set_diting_rules_json(json_str)
 
 
 def set_rule_hints(hints: str):
     """ルールヒントブロックを設定"""
     global _prompt_manager
+    if _prompt_manager is None:
+        _prompt_manager = PromptManager()
     _prompt_manager.set_rule_hints_block(hints)
 
 
 def is_rag_available() -> bool:
     """RAGが利用可能かチェック"""
-    return _prompt_manager._rag_client is not None
+    return RAG_AVAILABLE
 
 
 def get_current_mode() -> str:
     """現在のモードを取得"""
+    global _prompt_manager
+    if _prompt_manager is None:
+        return "hybrid"
     return _prompt_manager.mode
 
 
 def get_current_config() -> Dict[str, any]:
     """現在の設定を取得"""
+    global _prompt_manager
+    if _prompt_manager is None:
+        return {
+            "mode": "hybrid",
+            "rag_enabled": False,
+            "rag_available": RAG_AVAILABLE,
+            "prompt_dir": "not initialized"
+        }
+    
     return {
         "mode": _prompt_manager.mode,
         "rag_enabled": _prompt_manager.use_rag_mode,
@@ -412,82 +631,7 @@ def get_current_config() -> Dict[str, any]:
 
 def reload_prompts():
     """プロンプトキャッシュをクリア"""
-    _prompt_manager._cache.clear()
-    print("[INFO] Prompt cache cleared")
-
-
-# テスト用メイン関数
-def main():
-    """動作確認"""
-    print("="*60)
-    print("Enhanced Prompt Manager Test")
-    print("="*60)
-    
-    # ルールヒントのテスト
-    rules_path = Path("/workspace/rules/codeql_rules.json")
-    if rules_path.exists():
-        hints = build_rule_hints_block_from_codeql(rules_path)
-        print("Generated rule hints:")
-        print(hints)
-        print()
-        set_rule_hints(hints)
-    
-    # 現在の設定を表示
-    config = get_current_config()
-    print(f"Current configuration:")
-    for key, value in config.items():
-        print(f"  {key}: {value}")
-    
-    print("\n" + "="*60)
-    print("Testing all 4 configurations:")
-    print("="*60)
-    
-    # 全4パターンをテスト
-    configurations = [
-        ("hybrid", False),
-        ("hybrid", True),
-        ("llm_only", False),
-        ("llm_only", True)
-    ]
-    
-    for mode, use_rag in configurations:
-        print(f"\n### Testing {mode}/{('with_rag' if use_rag else 'no_rag')} ###")
-        set_analysis_mode(mode, use_rag)
-        
-        test_passed = True
-        
-        # 各プロンプトファイルをテスト
-        tests = [
-            ("system.txt", lambda: _prompt_manager.get_system_prompt()),
-            ("taint_start.txt", lambda: get_start_prompt("func", "param", "code", "upstream")),
-            ("taint_middle.txt", lambda: get_middle_prompt("func", "param", "code", "sink", 0, "upstream")),
-            ("taint_middle_multi_params.txt", lambda: get_middle_prompt_multi_params("func", "param", "code", "sink", [0,1], "upstream")),
-            ("taint_end.txt", lambda: get_end_prompt())
-        ]
-        
-        for filename, loader in tests:
-            try:
-                content = loader()
-                print(f"  ✓ {filename}: {len(content)} chars")
-                # DITINGルールとヒントが注入されているか確認
-                if filename == "system.txt" and mode == "hybrid":
-                    has_rules = "{diting_rules_json}" not in content or _prompt_manager._diting_rules_json
-                    has_hints = "{RULE_HINTS_BLOCK}" not in content or _prompt_manager._rule_hints_block
-                    print(f"    - DITING rules injected: {has_rules}")
-                    print(f"    - Rule hints injected: {has_hints}")
-            except Exception as e:
-                print(f"  ✗ {filename}: {e}")
-                test_passed = False
-        
-        if test_passed:
-            print(f"  → All prompts loaded successfully!")
-        else:
-            print(f"  → Some prompts failed to load")
-    
-    print("\n" + "="*60)
-    print("Test complete!")
-    print("="*60)
-
-
-if __name__ == "__main__":
-    main()
+    global _prompt_manager
+    if _prompt_manager:
+        _prompt_manager._cache.clear()
+        print("[INFO] Prompt cache cleared")

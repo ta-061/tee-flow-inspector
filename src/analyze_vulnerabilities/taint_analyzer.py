@@ -4,7 +4,6 @@
 フェーズ6: LLMによるテイント解析と脆弱性検査（メインファイル）
 最適化版（チェイン接頭辞キャッシュ対応）
 DITINGルール有り/無しの切り替え対応
-CodeQLルール統合とupstream_context伝搬対応
 """
 
 import sys
@@ -12,7 +11,7 @@ import json
 import argparse
 from pathlib import Path
 import time
-from typing import Optional, Dict, List
+from typing import Dict, Tuple
 
 # スクリプトの親ディレクトリ（src/）をパスに追加
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -26,17 +25,7 @@ from analyze_vulnerabilities import ConversationManager
 from analyze_vulnerabilities import CodeExtractor
 from analyze_vulnerabilities import VulnerabilityParser
 from analyze_vulnerabilities import TaintAnalyzer
-from analyze_vulnerabilities import load_diting_rules_json, build_system_prompt
-
-# promptsモジュールも同様に
-from prompts import (
-    set_rag_enabled, 
-    is_rag_available, 
-    set_analysis_mode,
-    set_diting_rules,
-    set_rule_hints,
-    build_rule_hints_block_from_codeql
-)
+from analyze_vulnerabilities import setup_system_prompt
 
 
 def main():
@@ -55,32 +44,23 @@ def main():
 
     args = parser.parse_args()
     
-    # RAGの設定（ここで先に定義）
+    # RAGの設定
     use_rag = not args.no_rag
     
-    # モード表示とプロンプト設定
-    if args.no_diting_rules:
-        print("[INFO] LLM-only mode: DITING rules disabled")
-        print("[INFO] Using standard vulnerability analysis prompts without rule-based guidance")
-        # RAGの設定状態も含めてモードを設定
-        set_analysis_mode("llm_only", use_rag=use_rag)
-    else:
-        print("[INFO] Hybrid mode: DITING rules enabled")
-        print("[INFO] Using rule-enhanced vulnerability analysis prompts")
-        set_analysis_mode("hybrid", use_rag=use_rag)
+    # モードの決定
+    mode = "llm_only" if args.no_diting_rules else "hybrid"
     
-    # RAG設定の詳細表示（モード設定後）
-    if use_rag:
-        print("[INFO] RAG mode enabled for taint analysis")
-        set_rag_enabled(True)
-        if is_rag_available():
-            print("[INFO] RAG system successfully initialized")
-        else:
-            print("[WARN] RAG system initialization failed, continuing without RAG")
-            use_rag = False
+    # モード表示
+    print("[INFO] ===== Taint Analysis Configuration =====")
+    if mode == "llm_only":
+        print("[INFO] Mode: LLM-only (DITING rules disabled)")
     else:
-        print("[INFO] RAG mode disabled")
-        set_rag_enabled(False)
+        print("[INFO] Mode: Hybrid (DITING rules enabled)")
+    
+    print(f"[INFO] RAG: {'Enabled' if use_rag else 'Disabled'}")
+    print(f"[INFO] Cache: {'Disabled (Debug mode)' if args.no_cache else 'Enabled (Optimization mode)'}")
+    print(f"[INFO] Token tracking: {'Enabled' if args.track_tokens else 'Disabled'}")
+    print("[INFO] ========================================")
     
     # 出力ディレクトリを準備
     out_path = Path(args.output)
@@ -96,60 +76,51 @@ def main():
     
     # トークン追跡機能を有効化
     if args.track_tokens:
-        print("[INFO] Token tracking enabled")
+        print("[INFO] Initializing token tracking...")
         from analyze_vulnerabilities.optimization import TokenTrackingClient
         client = TokenTrackingClient(base_client)
     else:
         client = base_client
     
     if args.provider:
-        print(f"LLMプロバイダーを {args.provider} に切り替えます...")
+        print(f"[INFO] Switching LLM provider to: {args.provider}")
         client.switch_provider(args.provider)
     
-    print(f"使用中のLLMプロバイダー: {client.get_current_provider()}")
-    
-    # キャッシュモードの表示
-    if args.no_cache:
-        print("[INFO] 接頭辞キャッシュは無効です（デバッグモード）")
-    else:
-        print("[INFO] 接頭辞キャッシュが有効です（最適化モード）")
+    print(f"[INFO] Current LLM provider: {client.get_current_provider()}")
     
     # 入力データを読み込み
-    flows_data = json.loads(Path(args.flows).read_text(encoding="utf-8"))
-    phase12_data = json.loads(Path(args.phase12).read_text(encoding="utf-8"))
+    try:
+        flows_data = json.loads(Path(args.flows).read_text(encoding="utf-8"))
+        phase12_data = json.loads(Path(args.phase12).read_text(encoding="utf-8"))
+    except FileNotFoundError as e:
+        print(f"[FATAL] Input file not found: {e}")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"[FATAL] Invalid JSON in input file: {e}")
+        sys.exit(1)
     
     # コンポーネントを初期化
     code_extractor = CodeExtractor(phase12_data)
     vuln_parser = VulnerabilityParser()
-    
-    if not args.no_diting_rules:
-        try:
-            rules_dir = Path(__file__).parent.parent.parent / "rules"
-            rules_json = load_diting_rules_json(rules_dir / "codeql_rules.json")
-            vuln_parser.set_known_rules(rules_json)
-            print(f"[INFO] Known rule_ids set for parser: "
-                f"{', '.join(vuln_parser.known_rules)}")
-        except Exception as e:
-            print(f"[WARN] Failed to set known rules for parser: {e}")
 
     with StructuredLogger(log_file, batch_size=args.batch_size, keep_file_open=True) as logger:
         conversation_manager = ConversationManager()
         
         # システムプロンプトの設定
-        if not args.no_diting_rules:
-            # DITINGルールを使用する場合
-            system_prompt = setup_diting_rules_enhanced(logger, use_rag)
-            if system_prompt:
-                conversation_manager.set_system_prompt(system_prompt)
-                logger.writeln("[INFO] Using DITING rules-enhanced system prompt with CodeQL integration")
-        else:
-            # LLM-onlyモード：標準の脆弱性解析プロンプトを使用
-            system_prompt = setup_standard_system_prompt(logger, use_rag)
-            if system_prompt:
-                conversation_manager.set_system_prompt(system_prompt)
-                logger.writeln("[INFO] Using standard vulnerability analysis system prompt (LLM-only mode)")
+        print("[INFO] Setting up system prompt...")
+        system_prompt, metadata = setup_system_prompt_wrapper(mode, use_rag)
+        
+        if not system_prompt:
+            print("[FATAL] Failed to generate system prompt")
+            sys.exit(1)
+        
+        conversation_manager.set_system_prompt(system_prompt)
+        
+        # ログにメタデータを記録
+        log_prompt_metadata(logger, metadata, system_prompt)
         
         # TaintAnalyzerを初期化
+        print("[INFO] Initializing TaintAnalyzer...")
         analyzer = TaintAnalyzer(
             client=client,
             code_extractor=code_extractor,
@@ -163,19 +134,35 @@ def main():
         
         # キャッシュを無効化する場合の処理
         if args.no_cache:
-            # キャッシュ機能を無効化（既存の非最適化版の動作にフォールバック）
             analyzer.prefix_cache = None
             analyzer.chain_tree = None
+            print("[INFO] Prefix cache disabled for debugging")
         
         # 解析開始時刻を記録
         start_time = time.time()
         
+
         # 解析を実行
-        print(f"\n[INFO] 解析を開始します...")
-        print(f"  候補フロー数: {len(flows_data)}")
-        print(f"  総チェーン数: {sum(len(flow.get('chains', [])) for flow in flows_data)}")
+        print(f"\n[INFO] Starting analysis...")
+        print(f"  Candidate flows: {len(flows_data)}")
         
-        vulnerabilities, inline_findings = analyzer.analyze_all_flows(flows_data)
+        # 新JSONフォーマットのチェック
+        if flows_data and "chains" in flows_data[0] and isinstance(flows_data[0]["chains"], dict):
+            # 新フォーマット（単一チェーン）
+            print(f"  Total flows: {len(flows_data)}")
+            print("[INFO] Detected new JSON format (single chain per flow)")
+        else:
+            # 旧フォーマット（互換性のため残す）
+            print(f"  Total chains: {sum(len(flow.get('chains', [])) for flow in flows_data)}")
+            print("[INFO] Using legacy JSON format")
+        
+        try:
+            vulnerabilities, inline_findings = analyzer.analyze_all_flows(flows_data)
+        except Exception as e:
+            print(f"[FATAL] Analysis failed: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
         
         # 解析時間
         analysis_time = time.time() - start_time
@@ -195,29 +182,29 @@ def main():
             
             # ログファイルにも記録
             logger.log_section("Token Usage Summary", level=1)
-            logger.writeln(f"総トークン数: {token_usage['total_tokens']:,}")
-            logger.writeln(f"入力トークン: {token_usage['total_prompt_tokens']:,}")
-            logger.writeln(f"出力トークン: {token_usage['total_completion_tokens']:,}")
-            logger.writeln(f"API呼び出し回数: {token_usage['api_calls']:,}")
+            logger.writeln(f"Total tokens: {token_usage['total_tokens']:,}")
+            logger.writeln(f"Prompt tokens: {token_usage['total_prompt_tokens']:,}")
+            logger.writeln(f"Completion tokens: {token_usage['total_completion_tokens']:,}")
+            logger.writeln(f"API calls: {token_usage['api_calls']:,}")
             
             # キャッシュ統計もログに記録
             if not args.no_cache and "cache_stats" in analyzer_stats:
                 logger.log_section("Cache Statistics", level=1)
                 cache_stats = analyzer_stats["cache_stats"]
-                logger.writeln(f"キャッシュヒット: {cache_stats['hits']}")
-                logger.writeln(f"キャッシュミス: {cache_stats['misses']}")
-                logger.writeln(f"ヒット率: {cache_stats['hit_rate']}")
-                logger.writeln(f"キャッシュされた接頭辞: {cache_stats['cached_prefixes']}")
+                logger.writeln(f"Cache hits: {cache_stats['hits']}")
+                logger.writeln(f"Cache misses: {cache_stats['misses']}")
+                logger.writeln(f"Hit rate: {cache_stats['hit_rate']}")
+                logger.writeln(f"Cached prefixes: {cache_stats['cached_prefixes']}")
         
         # Findings統計もログに記録
         if "findings_stats" in analyzer_stats:
             logger.log_section("Findings Statistics", level=1)
             findings_stats = analyzer_stats["findings_stats"]
-            logger.writeln(f"収集された総数: {findings_stats['total_collected']}")
+            logger.writeln(f"Total collected: {findings_stats['total_collected']}")
             logger.writeln(f"Middle findings: {findings_stats['middle_findings']}")
             logger.writeln(f"End findings: {findings_stats['end_findings']}")
-            logger.writeln(f"マージ後: {findings_stats['after_merge']}")
-            logger.writeln(f"削除された重複: {findings_stats['duplicates_removed']}")
+            logger.writeln(f"After merge: {findings_stats['after_merge']}")
+            logger.writeln(f"Duplicates removed: {findings_stats['duplicates_removed']}")
         
         # 統計情報
         statistics = {
@@ -225,10 +212,10 @@ def main():
             "analysis_time_seconds": analysis_time,
             "analysis_time_formatted": format_time_duration(analysis_time),
             "llm_provider": client.get_current_provider(),
-            "analysis_mode": "llm_only" if args.no_diting_rules else "hybrid",
+            "analysis_mode": mode,
             "diting_rules_used": not args.no_diting_rules,
             "enhanced_prompts_used": not args.no_enhanced_prompts,
-            "rag_enabled": use_rag and is_rag_available(),
+            "rag_enabled": use_rag,
             "cache_enabled": not args.no_cache,
             "total_chains_analyzed": analyzer_stats.get("total_chains_analyzed", 0),
             "unique_prefixes_analyzed": analyzer_stats.get("unique_prefixes_analyzed", 0),
@@ -258,166 +245,164 @@ def main():
             "inline_findings": inline_findings
         }
         
-        out_path.write_text(
-            json.dumps(output_data, ensure_ascii=False, indent=2),
-            encoding="utf-8"
-        )
+        try:
+            out_path.write_text(
+                json.dumps(output_data, ensure_ascii=False, indent=2),
+                encoding="utf-8"
+            )
+            print(f"[INFO] Results saved to: {out_path}")
+        except Exception as e:
+            print(f"[FATAL] Failed to save results: {e}")
+            sys.exit(1)
         
+        # 整合性チェック統計の表示
         if "consistency_stats" in analyzer_stats:
             consistency_stats = analyzer_stats["consistency_stats"]
-            print(f"\n[整合性チェック統計]")
-            print(f"  再評価実行数: {consistency_stats.get('reevaluations', 0)}")
-            print(f"  ダウングレード数: {consistency_stats.get('downgrades', 0)}")
-            print(f"  総チェック数: {consistency_stats.get('total_consistency_checks', 0)}")
+            print(f"\n[Consistency Check Statistics]")
+            print(f"  Reevaluations: {consistency_stats.get('reevaluations', 0)}")
+            print(f"  Downgrades: {consistency_stats.get('downgrades', 0)}")
+            print(f"  Total checks: {consistency_stats.get('total_consistency_checks', 0)}")
 
-        print(f"\n[taint_analyzer] 解析完了:")
-        print(f"  所要時間: {format_time_duration(analysis_time)}")
-        print(f"  検出脆弱性: {len(vulnerabilities)} 件")
-        print(f"  インラインFindings: {len(inline_findings)} 件")
-        print(f"  解析モード: {'LLM-only' if args.no_diting_rules else 'Hybrid (DITING + CodeQL rules)'}")
-        print(f"  LLM呼び出し回数: {analyzer_stats.get('total_llm_calls', 0)}")
+        # 最終統計の表示
+        print(f"\n[Analysis Complete]")
+        print(f"  Duration: {format_time_duration(analysis_time)}")
+        print(f"  Vulnerabilities found: {len(vulnerabilities)}")
+        print(f"  Inline findings: {len(inline_findings)}")
+        print(f"  Analysis mode: {get_mode_description(mode, use_rag)}")
+        print(f"  LLM calls: {analyzer_stats.get('total_llm_calls', 0)}")
         
         if not args.no_cache:
-            print(f"  キャッシュ再利用: {analyzer_stats.get('cache_reuse_count', 0)} 回")
+            print(f"  Cache reuse: {analyzer_stats.get('cache_reuse_count', 0)} times")
             if "cache_stats" in analyzer_stats:
                 cache_stats = analyzer_stats["cache_stats"]
-                print(f"  キャッシュヒット率: {cache_stats['hit_rate']}")
+                print(f"  Cache hit rate: {cache_stats['hit_rate']}")
         
         if token_usage:
-            print(f"  使用トークン数: {token_usage['total_tokens']:,}")
+            print(f"  Total tokens used: {token_usage['total_tokens']:,}")
             
             # 削減効果の推定
             if not args.no_cache and analyzer_stats.get("cache_reuse_count", 0) > 0:
                 # キャッシュによる削減推定（1関数あたり約1000トークンと仮定）
                 estimated_saved_tokens = analyzer_stats["cache_reuse_count"] * 1000
-                print(f"  推定削減トークン数: ~{estimated_saved_tokens:,}")
+                print(f"  Estimated tokens saved: ~{estimated_saved_tokens:,}")
         
-        print(f"  結果: {out_path}")
-        print(f"  ログ: {log_file}")
+        print(f"  Output file: {out_path}")
+        print(f"  Log file: {log_file}")
         
         # サマリー生成
         if args.generate_summary:
-            generate_summary_report(out_dir, statistics, vulnerabilities, inline_findings)
+            try:
+                generate_summary_report(out_dir, statistics, vulnerabilities, inline_findings)
+            except Exception as e:
+                print(f"[WARN] Failed to generate summary report: {e}")
+                # サマリー生成の失敗は致命的ではないので続行
+
+
+def setup_system_prompt_wrapper(mode: str, use_rag: bool) -> Tuple[str, Dict]:
+    """
+    システムプロンプトのセットアップ（prompts.pyに完全委譲）
+    
+    Returns:
+        (system_prompt, metadata) のタプル
+    """
+    rules_path = Path(__file__).parent.parent.parent / "rules" / "codeql_rules.json"
+    
+    print(f"[INFO] Requesting system prompt: mode='{mode}', rag={use_rag}")
+    
+    try:
+        # prompts.pyのsetup_system_prompt関数を呼び出し
+        # この関数はエラー時にsys.exit(1)を呼ぶので、正常に戻ってきたら成功
+        system_prompt, metadata = setup_system_prompt(mode, use_rag, rules_path)
+        
+        print(f"[INFO] System prompt generated successfully")
+        print(f"[INFO] Prompt length: {len(system_prompt)} characters")
+        
+        return system_prompt, metadata
+        
+    except SystemExit:
+        # prompts.pyがsys.exit()を呼んだ場合
+        raise
+    except Exception as e:
+        # 予期しないエラー
+        print(f"[FATAL] Unexpected error in prompt setup: {e}")
+        sys.exit(1)
+
+
+def log_prompt_metadata(logger: StructuredLogger, metadata: Dict, system_prompt: str):
+    """
+    プロンプトのメタデータをログに記録
+    """
+    mode_str = metadata.get("mode", "unknown")
+    if mode_str == "hybrid":
+        if metadata.get("rag_enabled"):
+            full_mode = "Hybrid (with DITING + CodeQL Rules + RAG)"
+        else:
+            full_mode = "Hybrid (with DITING + CodeQL Rules)"
+    else:
+        if metadata.get("rag_enabled"):
+            full_mode = "LLM-only (with RAG enhancement)"
+        else:
+            full_mode = "LLM-only (without DITING Rules)"
+    
+    logger.write(f"### System Prompt Mode: {full_mode}\n")
+    
+    if metadata.get("diting_rules_count"):
+        logger.write(f"### DITING Rules Loaded: {metadata['diting_rules_count']} detection rules\n")
+    
+    if metadata.get("rule_ids"):
+        logger.write(f"### CodeQL Rule IDs: {', '.join(metadata['rule_ids'])}\n")
+    
+    logger.write(f"### RAG Status: {'Enabled' if metadata.get('rag_enabled') else 'Disabled'}\n")
+    
+    if metadata.get("rag_available") is not None:
+        logger.write(f"### RAG Available: {'Yes' if metadata['rag_available'] else 'No'}\n")
+    
+    logger.write(f"### Cache Status: Enabled (Optimization Mode)\n")
+    
+    if metadata.get("rule_hints"):
+        logger.write(f"### Rule Hints Block:\n{metadata['rule_hints']}\n")
+    
+    if metadata.get("prompt_dir"):
+        logger.write(f"### Prompt Directory: {metadata['prompt_dir']}\n")
+    
+    logger.write(f"### Prompt Length: {len(system_prompt)} characters\n")
+    logger.write("\n")
+    logger.write(system_prompt + "\n\n")
+    logger.writeln("[INFO] System prompt logged successfully")
+
+
+def get_mode_description(mode: str, use_rag: bool) -> str:
+    """解析モードの説明文を生成"""
+    if mode == "llm_only":
+        if use_rag:
+            return "LLM-only with RAG"
+        else:
+            return "LLM-only"
+    else:
+        if use_rag:
+            return "Hybrid (DITING + CodeQL + RAG)"
+        else:
+            return "Hybrid (DITING + CodeQL)"
 
 
 def format_time_duration(seconds: float) -> str:
     """秒数を人間が読みやすい形式にフォーマット"""
+    if not isinstance(seconds, (int, float)):
+        # 文字列が渡された場合の処理
+        if isinstance(seconds, str):
+            try:
+                seconds = float(seconds)
+            except:
+                return str(seconds)
+        else:
+            return str(seconds)
+    
     if seconds < 60:
-        return f"{seconds:.1f}秒"
+        return f"{seconds:.1f}s"
     elif seconds < 3600:
-        return f"{seconds/60:.1f}分"
+        return f"{seconds/60:.1f}m"
     else:
-        return f"{seconds/3600:.1f}時間"
-
-
-def setup_diting_rules_enhanced(logger: StructuredLogger, use_rag: bool) -> Optional[str]:
-    """
-    拡張版DITINGルールのセットアップ（Hybridモード用）
-    CodeQLルールの統合とヒントブロックの生成を含む
-    """
-    from analyze_vulnerabilities.prompts import _prompt_manager
-    
-    _prompt_manager.set_mode("hybrid", use_rag)
-    
-    try:
-        # PromptManagerからsystem.txtを取得
-        diting_template = _prompt_manager.load_prompt("system.txt")
-    except FileNotFoundError as e:
-        print(f"[WARN] System prompt file not found: {e}")
-        return None
-    
-    rules_dir = Path(__file__).parent.parent.parent / "rules"
-    json_path = rules_dir / "codeql_rules.json"
-    
-    try:
-        diting_rules = load_diting_rules_json(json_path)
-        diting_rules_json = json.dumps(diting_rules, ensure_ascii=False, separators=(',', ':'))
-        
-        # prompts.pyにDITINGルールJSONを設定
-        set_diting_rules(diting_rules_json)
-        
-        # ルールヒントブロックを生成
-        rule_hints = build_rule_hints_block_from_codeql(json_path)
-        set_rule_hints(rule_hints)
-        system_prompt = _prompt_manager.get_system_prompt()
-        
-        logger.write(f"### System Prompt Mode: Hybrid (with DITING + CodeQL Rules)\n")
-        logger.write(f"### DITING Rules Loaded: {len(diting_rules.get('detection_rules', []))} detection rules\n")
-        logger.write(f"### CodeQL Rule IDs: {', '.join([r.get('rule_id', '') for r in diting_rules.get('detection_rules', [])])}\n")
-        logger.write(f"### RAG Status: {'Enabled' if use_rag and is_rag_available() else 'Disabled'}\n")
-        logger.write(f"### Cache Status: Enabled (Optimization Mode)\n")
-        logger.write(f"### Rule Hints Block:\n{rule_hints}\n")
-        logger.write(system_prompt + "\n\n")
-        
-        return system_prompt
-        
-    except Exception as e:
-        print(f"[ERROR] Failed to setup DITING rules: {e}")
-        return None
-
-
-def build_system_prompt_enhanced(template: str, diting_rules_json: str, rule_hints: str) -> str:
-    """
-    拡張版システムプロンプト構築
-    {diting_rules_json}と{RULE_HINTS_BLOCK}の両方を埋め込む
-    """
-    # まず{diting_rules_json}を置換
-    if "{diting_rules_json}" in template:
-        template = template.replace("{diting_rules_json}", diting_rules_json)
-    
-    # 次に{RULE_HINTS_BLOCK}を置換
-    if "{RULE_HINTS_BLOCK}" in template:
-        template = template.replace("{RULE_HINTS_BLOCK}", rule_hints)
-    
-    return template
-
-
-def setup_standard_system_prompt(logger: StructuredLogger, use_rag: bool) -> Optional[str]:
-    """標準システムプロンプトのセットアップ（LLM-onlyモード用）"""
-    # プロンプトマネージャーから直接取得
-    from prompts import _prompt_manager
-    
-    try:
-        # LLM-onlyモードでもCodeQLヒントは追加（軽量版）
-        json_path = Path(__file__).parent.parent.parent / "rules" / "codeql_rules.json"
-        if json_path.exists():
-            rule_hints = build_rule_hints_block_from_codeql(json_path)
-            set_rule_hints(rule_hints)
-            print(f"[INFO] Added CodeQL rule hints to LLM-only mode")
-        
-        system_prompt = _prompt_manager.get_system_prompt()
-        print(f"[INFO] Loaded LLM-only system prompt from {_prompt_manager.prompts_dir}")
-    except Exception as e:
-        print(f"[WARN] Failed to load system prompt: {e}")
-        # フォールバックプロンプト
-        system_prompt = """You are a security expert analyzing code for vulnerabilities in Trusted Applications (TAs) running in ARM TrustZone TEE environments.
-
-Your task is to perform taint analysis to identify security vulnerabilities by tracking data flow from untrusted sources to dangerous sinks.
-
-Focus on identifying common vulnerability patterns such as:
-- Buffer overflows (CWE-787)
-- Integer overflows (CWE-190)
-- Use after free (CWE-416)
-- Information disclosure (CWE-200)
-- Path traversal (CWE-22)
-- Command injection (CWE-78)
-- Format string vulnerabilities (CWE-134)
-
-Rule categories from CodeQL analysis:
-- unencrypted_output: Data output without encryption
-- weak_input_validation: Missing or insufficient input validation
-- shared_memory_overwrite: Unsafe shared memory operations
-
-Analyze the code systematically and provide detailed explanations of any vulnerabilities found."""
-    
-    logger.write(f"### System Prompt Mode: LLM-only (without full DITING Rules)\n")
-    logger.write(f"### CodeQL hints: Included (lightweight)\n")
-    logger.write(f"### RAG Status: {'Enabled' if use_rag and is_rag_available() else 'Disabled'}\n")
-    logger.write(f"### Cache Status: Enabled (Optimization Mode)\n")
-    logger.write(f"### Analysis Type: Pure LLM-based vulnerability detection with rule hints\n")
-    logger.write(system_prompt + "\n\n")
-    
-    return system_prompt
+        return f"{seconds/3600:.1f}h"
 
 
 def generate_summary_report(out_dir: Path, statistics: dict, vulnerabilities: list, inline_findings: list):
@@ -429,15 +414,27 @@ def generate_summary_report(out_dir: Path, statistics: dict, vulnerabilities: li
     
     # 基本サマリー
     generator.generate_summary(summary_path, statistics, vulnerabilities)
+    print(f"  [INFO] Vulnerability summary: {summary_path}")
     
     # Findingsサマリーも追加
     if inline_findings:
         findings_summary_path = out_dir / "findings_summary.md"
         generator.generate_findings_summary(findings_summary_path, statistics, inline_findings)
-        print(f"  Findingsサマリー: {findings_summary_path}")
-    
-    print(f"  脆弱性サマリー: {summary_path}")
+        print(f"  [INFO] Findings summary: {findings_summary_path}")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit as e:
+        # 正常な終了またはエラーによる終了
+        sys.exit(e.code)
+    except KeyboardInterrupt:
+        print("\n[INFO] Analysis interrupted by user")
+        sys.exit(130)  # 130 = 128 + SIGINT
+    except Exception as e:
+        # 予期しないエラー
+        print(f"\n[FATAL] Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)

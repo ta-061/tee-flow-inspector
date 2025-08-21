@@ -288,11 +288,7 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool,
         phase_start = time.time()
         flows_py = Path(__file__).parent / "identify_flows" / "generate_candidate_flows.py"
         
-        # マクロを含める場合と含めない場合で出力ファイル名を変更
-        if include_debug_macros:
-            candidate_flows = res_dir / f"{ta_dir.name}_candidate_flows_with_macros.json"
-        else:
-            candidate_flows = res_dir / f"{ta_dir.name}_candidate_flows.json"
+        candidate_flows = res_dir / f"{ta_dir.name}_candidate_flows.json"
         
         # 統合版のコマンドライン引数
         flow_cmd = [

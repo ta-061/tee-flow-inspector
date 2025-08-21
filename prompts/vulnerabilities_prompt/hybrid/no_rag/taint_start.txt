@@ -1,18 +1,29 @@
 Function to analyze: {source_function}
 Tainted parameters: {param_name}
 
-You MUST respond first with a one-line JSON (no code fences):
-{"function":"{source_function}","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":{"rule_id":[],"others":[]}}
+=== EXAMPLE OUTPUT ===
+For entry point with tainted params calling another function:
+```c
+TEE_Result TA_InvokeCommandEntryPoint(void *sess_ctx, uint32_t cmd_id, 
+                                      uint32_t param_types, TEE_Param params[4]) {
+    return process_data(param_types, params);
+}
+```
+Correct output:
+{"function":"TA_InvokeCommandEntryPoint","propagation":["param_types <- REE @ file:100","params <- REE @ file:100","process_data(param_types, params) <- param_types, params @ file:102"],"sanitizers":[],"sinks":["function_call: process_data(param_types, params) @ file:102"],"evidence":[],"rule_matches":{"rule_id":[],"others":[]},"tainted_vars":["param_types","params"]}
+FINDINGS={"items":[]}
 
-Tasks (HYBRID context):
-1) From {code} and {upstream_context}, identify initial taint sources (e.g., REE-provided memref in TEE_Param, session inputs). Initialize TAINTED accordingly.
-2) Append propagation as "LHS <- RHS @ <file>:<line>" to "propagation".
-3) Append validations (param_types equality, bounds checks, TEE_CheckMemoryAccessRights) with evidence lines to "sanitizers".
-4) Append concrete dangerous sinks to "sinks" with evidence lines. (Exclude alloc/free; random bytes are non-sensitive.)
-5) Append notable facts (e.g., param_types misuse enabling reads/writes contrary to declaration) to "evidence".
-6) Classify rule matches into "rule_matches":{"rule_id":[...],"others":[...]} using the host-provided IDs when applicable.
+Note: "tainted_vars" lists ALL tainted variables that flow to next function.
+===
 
-Then, on the next line, output:
+OUTPUT FORMAT (EXACTLY TWO LINES):
+Line 1: Taint analysis JSON with "tainted_vars" field
+Line 2: FINDINGS JSON
+
+Line 1 must be a single JSON object with this structure:
+{"function":"<name>","propagation":[...],"sanitizers":[...],"sinks":[...],"evidence":[...],"rule_matches":{"rule_id":[...],"others":[]},"tainted_vars":[...]}
+
+Line 2 must be:
 FINDINGS={"items":[
   {
     "file":"<path|'unknown'>",
@@ -28,3 +39,43 @@ FINDINGS={"items":[
   // optional more items
 ]}
 If nothing qualifies: FINDINGS={"items":[]}
+
+=== ANALYSIS TASKS ===
+From the code below:
+{code}
+
+1) IDENTIFY taint sources:
+   - REE-provided parameters (param_types, params)
+   - External inputs from Normal World
+   
+2) TRACK propagation:
+   - Variable assignments: "var <- source @ file:line"
+   - Function calls: "func(args) <- tainted_args @ file:line"
+   
+3) RECORD sanitizers:
+   - Type checks (param_types validation)
+   - Bounds checks
+   - Access control checks
+   
+4) IDENTIFY sinks:
+   - Memory operations (TEE_MemMove, memcpy)
+   - Output operations
+   - Function calls with tainted data
+   Note: TEE_Malloc/Free are NOT sinks
+   
+5) DETECT evidence:
+   - Type confusion (accessing undeclared parameters)
+   - Missing bounds checks
+   - Security violations
+
+6) CLASSIFY findings:
+   Use rule_id: ["unencrypted_output", "weak_input_validation", "shared_memory_overwrite"]
+
+7) LIST tainted variables:
+   In "tainted_vars" field, include ALL variables containing tainted data
+
+=== CRITICAL RULES ===
+- If params[N] is accessed but param_types declares it as NONE → TYPE CONFUSION
+- If a function is called with tainted params → record in BOTH propagation AND sinks
+- Check actual vs declared parameter usage
+- Always populate "tainted_vars" with all tainted variables

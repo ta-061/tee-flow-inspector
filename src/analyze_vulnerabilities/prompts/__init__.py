@@ -10,7 +10,6 @@ from .prompts import (
     PromptManager,
     get_start_prompt,
     get_middle_prompt,
-    get_middle_prompt_multi_params,
     get_end_prompt,
     set_analysis_mode,
     set_rag_enabled,
@@ -21,14 +20,14 @@ from .prompts import (
     get_current_config,
     reload_prompts,
     build_rule_hints_block_from_codeql,
+    setup_system_prompt,
     _prompt_manager
 )
-
 __all__ = [
     'PromptManager',
     'get_start_prompt',
     'get_middle_prompt',
-    'get_middle_prompt_multi_params',
+    'get_middle_prompt_multi_params',  # DEPRECATED
     'get_end_prompt',
     'set_analysis_mode',
     'set_rag_enabled',
@@ -39,7 +38,8 @@ __all__ = [
     'get_current_config',
     'reload_prompts',
     'build_rule_hints_block_from_codeql',
-    '_prompt_manager'
+    'setup_system_prompt',
+    '_prompt_manager',
 ]
 
-__version__ = '1.0.0'
+__version__ = '2.0.0'  # バージョンアップ（APIの改善）

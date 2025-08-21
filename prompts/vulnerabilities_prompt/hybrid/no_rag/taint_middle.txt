@@ -1,23 +1,56 @@
 Continue the taint analysis for the next step in the call chain.
 
-You will receive:
-- Code to analyze: 
+=== ANALYSIS CONTEXT ===
+{upstream_context}
+
+=== CODE TO ANALYZE ===
 {code}
-- (Optional) Upstream context: {upstream_context}   # tainted symbol(s), call hop, param mapping
+
+=== TARGET INFORMATION ===
+- Current function: {source_function}
+- Target sink (if final): {sink_function}
+- Vulnerable parameters: {target_params}
+
+=== EXAMPLE OUTPUT ===
+For a function called through:
+```
+// Call site:
+97: test(params[0].memref.buffer, buf, &params[0].memref.size);
+98: test(params[2].memref.buffer, buf, &params[2].memref.size);
+
+// Function: test
+64: void test(uint32_t *tmp, uint32_t *src, uint32_t *size){
+65:     TEE_MemMove(tmp, src, *size);
+66: }
+```
+
+Correct output:
+{"function":"test","propagation":["tmp <- params[0].memref.buffer @ line:97","src <- buf @ line:97","size <- &params[0].memref.size @ line:97","TEE_MemMove(tmp, src, *size) <- tainted @ line:65"],"sanitizers":[],"sinks":["TEE_MemMove @ line:65"],"evidence":["Line 98: params[2] used but not validated"],"rule_matches":{"rule_id":["weak_input_validation"],"others":[]},"tainted_vars":["tmp","src","size","params[0].memref.buffer","params[2].memref.buffer"]}
+FINDINGS={"items":[{"file":"/workspace/benchmark/random/ta/random_example_ta.c","line":98,"rule":"weak_input_validation","why":"params[2] accessed without validation (expected params[0] only)","function":"test","phase":"middle","sink_function":"TEE_MemMove","rule_matches":{"rule_id":["weak_input_validation"],"others":[]},"code_excerpt":"test(params[2].memref.buffer, buf, &params[2].memref.size)"}]}
+
+=== ANALYSIS GUIDELINES ===
 
 FALSE-POSITIVE GUARDRAILS:
-- TEE_GenerateRandom output is NON-sensitive by default (do NOT flag as unencrypted_output when copied out).
-- Alloc/Free (TEE_Malloc/TEE_Free) are NOT sinks.
-- Emit a finding ONLY if BOTH hold: (1) concrete dangerous sink reached, (2) attacker influence is plausible from code.
+- TEE_GenerateRandom output is NON-sensitive (do NOT flag as unencrypted_output)
+- TEE_Malloc/TEE_Free are NOT sinks (memory management only)
+- Only flag ACTUAL vulnerabilities with concrete evidence
 
-WHAT TO INFER:
-- Infer the current function name from the signature; else "unknown".
-- Initialize TAINTED from {upstream_context}; otherwise infer taint only when code clearly ingests untrusted input.
-- Track explicit dataflow only (assignments, param passing, reads/writes). For control dependence, annotate as "implicit:<var>".
+TAINT TRACKING:
+1. Identify tainted data from call site (parameters passed to current function)
+2. Track data flow through the function body
+3. Note any data that reaches dangerous sinks
+4. Check for unexpected parameter usage (e.g., params[2] when only params[0] expected)
+
+VULNERABILITY DETECTION:
+- Buffer overflow: size not validated before memcpy/memmove
+- Input validation: unexpected parameters accessed (params[2] when params[0] expected)
+- Information disclosure: sensitive data copied to untrusted memory
+- Integer overflow: arithmetic on sizes without checks
 
 OUTPUT CONTRACT (EXACTLY TWO LINES):
-Line 1:
-{"function":"<auto-inferred or 'unknown'>","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":{"rule_id":[],"others":[]}}
+
+Line 1: Analysis JSON
+{"function":"<name>","propagation":[<flows>],"sanitizers":[<checks>],"sinks":[<dangerous_calls>],"evidence":[<issues>],"rule_matches":{"rule_id":[<matches>],"others":[]},"tainted_vars":[<all_tainted>]}
 
 Line 2:
 FINDINGS={"items":[

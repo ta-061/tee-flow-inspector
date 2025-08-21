@@ -135,7 +135,7 @@ class CodeExtractor:
         return code_lines
     
     def _extract_function_call_context(self, vd: dict) -> str:
-        """外部関数の呼び出しコンテキストを抽出"""
+        """外部関数の呼び出しコンテキストを抽出（複数行対応）"""
         file_path = Path(vd["file"])
         if not file_path.is_absolute():
             file_path = self.project_root / file_path
@@ -144,21 +144,47 @@ class CodeExtractor:
             return f"// Call to {vd['sink']} at line {vd['line']}"
         
         lines = file_path.read_text(encoding="utf-8").splitlines()
-        call_line = vd["line"] - 1  # 0-indexed
         
-        # 呼び出し文を抽出
-        call_statement = self._extract_complete_statement(lines, call_line)
-        
-        # コンテキストを含めて返す（前後5行）
-        context_start = max(0, call_line - 5)
-        context_end = min(len(lines), call_line + 6)
-        
-        context_lines = []
-        for i in range(context_start, context_end):
-            prefix = ">>> " if i == call_line else "    "
-            context_lines.append(f"{i + 1}: {prefix}{lines[i]}")
-        
-        return f"// Call at line {vd['line']}:\n" + "\n".join(context_lines)
+        # vd["line"]が配列の場合の処理
+        if isinstance(vd.get("line"), list):
+            # 複数行の呼び出し
+            line_numbers = vd["line"]
+            context_lines = []
+            
+            # 最小と最大の行番号を取得
+            min_line = min(line_numbers)
+            max_line = max(line_numbers)
+            
+            # コンテキストを含めて返す（前後5行）
+            context_start = max(0, min_line - 6)
+            context_end = min(len(lines), max_line + 5)
+            
+            for i in range(context_start, context_end):
+                # 呼び出し行は >>> でマーク
+                if (i + 1) in line_numbers:
+                    prefix = ">>> "
+                else:
+                    prefix = "    "
+                context_lines.append(f"{i + 1}: {prefix}{lines[i]}")
+            
+            return f"// Call at lines {line_numbers}:\n" + "\n".join(context_lines)
+        else:
+            # 単一行の呼び出し（既存のロジック）
+            call_line = vd["line"] - 1  # 0-indexed
+            
+            # 呼び出し文を抽出
+            call_statement = self._extract_complete_statement(lines, call_line)
+            
+            # コンテキストを含めて返す（前後5行）
+            context_start = max(0, call_line - 5)
+            context_end = min(len(lines), call_line + 6)
+            
+            context_lines = []
+            for i in range(context_start, context_end):
+                prefix = ">>> " if i == call_line else "    "
+                context_lines.append(f"{i + 1}: {prefix}{lines[i]}")
+            
+            return f"// Call at line {vd['line']}:\n" + "\n".join(context_lines)
     
     def _extract_complete_statement(self, lines: List[str], start_line: int) -> str:
         """完全な文を抽出（セミコロンまで）"""

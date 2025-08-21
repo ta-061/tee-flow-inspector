@@ -95,7 +95,22 @@ class FindingsMerger:
     def _calculate_group_key(self, finding: dict) -> tuple:
         """findingのグループ化キーを計算"""
         rule_ids = tuple(sorted(finding.get("rule_matches", {}).get("rule_id", []))) or tuple()
-        line_bucket = finding.get("line", 0) // 2
+        
+        # 行番号の処理（リスト対応）
+        line = finding.get("line", 0)
+        if isinstance(line, list):
+            # リストの場合は最初の行番号を使用
+            line_value = line[0] if line else 0
+        else:
+            line_value = line if line else 0
+        
+        # 整数に変換（念のため）
+        try:
+            line_value = int(line_value)
+        except (ValueError, TypeError):
+            line_value = 0
+        
+        line_bucket = line_value // 2
         sink_key = finding.get("sink_function") or "unknown"
         
         return (

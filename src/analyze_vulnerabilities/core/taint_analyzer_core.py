@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-テイント解析のコアロジック（リファクタリング版）
-分離されたモジュールを統合して解析を実行
+テイント解析のコアロジック（新JSONフォーマット対応版）
+ChainTree削除、source_params追跡削除による簡略化
 """
 
 import sys
@@ -14,7 +14,6 @@ import time
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # 分離されたモジュールをインポート
-from analyze_vulnerabilities.optimization import ChainTree
 from analyze_vulnerabilities.optimization import PrefixCache
 from .function_analyzer import FunctionAnalyzer
 from .vulnerability_analyzer import VulnerabilityAnalyzer
@@ -25,7 +24,7 @@ from .findings_merger import FindingsMerger
 
 class TaintAnalyzer:
     """
-    テイント解析のコアロジックを実装するクラス（リファクタリング版）
+    テイント解析のコアロジックを実装するクラス（新JSONフォーマット対応版）
     各機能を専用モジュールに委譲してオーケストレーションを行う
     """
     
@@ -66,7 +65,6 @@ class TaintAnalyzer:
         
         # 分離されたモジュールのインスタンスを作成
         self.prefix_cache = PrefixCache()
-        self.chain_tree = ChainTree()
         
         # LLMハンドラー
         self.llm_handler = LLMHandler(
@@ -107,136 +105,144 @@ class TaintAnalyzer:
         # Findingsマージャー
         self.findings_merger = FindingsMerger()
         
-        # より詳細な統計情報
+        # 統計情報（簡略化）
         self.stats = {
-            "total_chains_analyzed": 0,      # 解析されたチェイン総数
-            "unique_chains_analyzed": 0,     # 一意なチェイン数
-            "vulnerabilities_found": 0,      # 発見された脆弱性数
+            "total_flows_analyzed": 0,
+            "flows_with_vulnerabilities": 0,
             "total_time": 0,
-            "unique_prefixes_analyzed": 0,
-            "cache_reuse_count": 0,
-            "total_flows": 0,                # 入力フロー総数
+            "cache_hits": 0,
+            "cache_misses": 0,
         }
     
     def analyze_all_flows(self, flows_data: List[dict]) -> Tuple[List[dict], List[dict]]:
         """
-        すべてのフローを解析（最適化版）
+        すべてのフローを解析（新JSONフォーマット対応版）
         
         Args:
-            flows_data: 解析対象のフローデータ
+            flows_data: 解析対象のフローデータ（新フォーマット）
             
         Returns:
             (vulnerabilities, inline_findings)
         """
-        print(f"[taint_analyzer] 最適化モードで解析を開始...")
-        print(f"[taint_analyzer] LLMエラー処理: 有効")
+        print(f"[INFO] Starting analysis with new JSON format...")
+        print(f"[INFO] Total flows to analyze: {len(flows_data)}")
         
-        # Step 1: チェインをツリー構造に変換
-        self._build_chain_tree(flows_data)
+        # 統計情報を初期化
+        self.stats["total_flows_analyzed"] = len(flows_data)
         
-        # Step 2: 統計情報を出力
-        self._print_initial_stats(flows_data)
-        
-        # Step 3: 最適化された解析を実行
+        # 解析開始
         start_time = time.time()
-        vulnerabilities, inline_findings = self._analyze_with_cache()
-        self.stats["total_time"] = time.time() - start_time
-        
-        # Step 4: 各種統計を出力
-        self._print_final_stats()
-        
-        return vulnerabilities, inline_findings
-    
-    def _build_chain_tree(self, flows_data: List[dict]):
-        """フローデータからチェインツリーを構築"""
-        for flow_idx, flow in enumerate(flows_data):
-            vd = flow["vd"]
-            chains = flow.get("chains", [])
-            
-            for chain_idx, chain in enumerate(chains):
-                self.chain_tree.add_chain(chain, flow_idx, chain_idx, vd)
-    
-    def _analyze_with_cache(self) -> Tuple[List[dict], List[dict]]:
-        """キャッシュを活用した最適化解析"""
         vulnerabilities = []
         all_inline_findings = []
         
-        # 脆弱性の重複を防ぐためのセット
-        seen_vulnerabilities = set()
-        
-        # すべての一意なチェインを処理
-        total_unique = self.chain_tree.get_chain_count()
-        self.stats["unique_chains_analyzed"] = total_unique
-        
-        for idx, (chain_tuple, flow_infos) in enumerate(self.chain_tree.chain_to_flows.items(), 1):
-            chain = list(chain_tuple)
+        # 各フローを順次処理
+        for idx, flow in enumerate(flows_data, 1):
+            print(f"\n[{idx}/{len(flows_data)}] Analyzing flow...")
             
-            # 最初のflow_infoからvdと関連情報を取得
-            _, _, vd = flow_infos[0]
+            # フローの情報を表示
+            vd = flow["vd"]
+            function_chain = flow["chains"]["function_chain"]
             
-            print(f"  [{idx}/{total_unique}] 解析中: {' -> '.join(chain)}")
+            print(f"  Chain: {' -> '.join(function_chain)}")
+            print(f"  Sink: {vd.get('sink')} at line {vd.get('line')}")
             
-            # チェインを解析（キャッシュを活用）
-            result = self._analyze_chain_with_cache(chain, vd)
+            # 単一フローを解析
+            result = self._analyze_single_flow(flow, idx)
             
-            # すべての関連するフローに結果を適用
-            for flow_idx, chain_idx, specific_vd in flow_infos:
-                result_copy = self._apply_result_to_flow(
-                    result, chain, specific_vd, flow_idx, chain_idx,
-                    seen_vulnerabilities, vulnerabilities, all_inline_findings
-                )
+            # 結果を収集
+            if result.get("is_vulnerable"):
+                vulnerabilities.append(result)
+                self.stats["flows_with_vulnerabilities"] += 1
+            
+            if result.get("inline_findings"):
+                all_inline_findings.extend(result["inline_findings"])
         
-        # 統計を更新
-        self.stats["vulnerabilities_found"] = len(vulnerabilities)
-        self.findings_merger.stats["total_collected"] = len(all_inline_findings)
+        # 解析時間を記録
+        self.stats["total_time"] = time.time() - start_time
         
-        # inline_findingsのend優先マージ
-        inline_findings = self.findings_merger.merge_with_end_priority(all_inline_findings)
+        # Findingsをマージ（end優先）
+        final_findings = self.findings_merger.merge_with_end_priority(all_inline_findings)
         
-        return vulnerabilities, inline_findings
+        # 統計を表示
+        self._print_final_stats()
+        
+        return vulnerabilities, final_findings
     
-    def _analyze_chain_with_cache(self, chain: List[str], vd: dict) -> dict:
-        """キャッシュを活用した単一チェインの解析"""
-        results = self._initialize_results(chain, vd)
+    def _analyze_single_flow(self, flow: dict, flow_idx: int) -> dict:
+        """
+        単一フローの解析（新フォーマット対応）
+        
+        Args:
+            flow: フローデータ
+            flow_idx: フローのインデックス
+            
+        Returns:
+            解析結果
+        """
+        vd = flow["vd"]
+        chains = flow["chains"]
+        function_chain = chains["function_chain"]
+        function_call_lines = chains["function_call_line"]
+        
+        # 結果を初期化
+        results = self._initialize_results(function_chain, vd)
         
         # 会話を開始
         self.conversation_manager.start_new_chain()
         
-        # パラメータインデックスの処理
-        param_indices = self._extract_param_indices(vd)
-        
         # ログに解析開始を記録
-        self.logger.log_chain_analysis_start(chain, vd, self._format_param_info(param_indices))
+        self.logger.log_chain_analysis_start(
+            function_chain, 
+            vd, 
+            f"Analyzing flow {flow_idx}"
+        )
         
         # キャッシュから使える最長の接頭辞を探す
-        cached_prefix_len, cached_state = self._find_cached_prefix(chain, results)
+        cached_prefix_len, cached_state = self._find_cached_prefix(function_chain, results)
         
         # キャッシュされた状態を復元
         if cached_state:
-            self._restore_cached_state(cached_state, results, chain, cached_prefix_len)
+            self._restore_cached_state(cached_state, results, function_chain, cached_prefix_len)
+            self.stats["cache_hits"] += 1
+        else:
+            self.stats["cache_misses"] += 1
         
         # 残りの関数を解析
-        for i in range(cached_prefix_len, len(chain)):
-            func_name = chain[i]
-            is_final = (i == len(chain) - 1)
+        for i in range(cached_prefix_len, len(function_chain)):
+            func_name = function_chain[i]
+            is_final = (i == len(function_chain) - 1)
             
-            self.function_analyzer.analyze_function(
+            # 呼び出し行情報を取得
+            if i == 0:
+                # エントリーポイント
+                call_line_info = None
+            else:
+                # function_call_lineの要素数を確認
+                call_line_idx = i - 1
+                if call_line_idx < len(function_call_lines):
+                    call_line_info = function_call_lines[call_line_idx]
+                else:
+                    call_line_info = None
+            
+            # 関数を解析（新方式: call_line_info使用）
+            self.function_analyzer.analyze_function_with_context(
                 func_name=func_name,
                 position=i,
-                chain=chain,
+                chain=function_chain,
                 vd=vd,
-                param_indices=param_indices,
-                source_params=None,
+                call_line_info=call_line_info,
                 results=results,
                 is_final=is_final
             )
             
             # 新しい接頭辞をキャッシュに保存（最後の関数以外）
-            if i < len(chain) - 1:
-                self._cache_prefix_if_needed(chain, i, results)
+            if i < len(function_chain) - 1:
+                self._cache_prefix_if_needed(function_chain, i, results)
         
         # 最終的な脆弱性判定
-        vuln_result = self.vulnerability_analyzer.perform_vulnerability_analysis(results, chain, vd)
+        vuln_result = self.vulnerability_analyzer.perform_vulnerability_analysis(
+            results, function_chain, vd
+        )
         results.update(vuln_result)
         
         return results
@@ -261,6 +267,10 @@ class TaintAnalyzer:
         cached_prefix_len = 0
         cached_state = None
         
+        # prefix_cacheがNoneの場合（--no-cacheオプション）
+        if self.prefix_cache is None:
+            return cached_prefix_len, cached_state
+        
         for i in range(len(chain) - 1, 0, -1):  # 最後の関数以外をチェック
             prefix = tuple(chain[:i])
             state = self.prefix_cache.get(prefix)
@@ -268,8 +278,7 @@ class TaintAnalyzer:
                 cached_prefix_len = i
                 cached_state = state
                 results["cache_used"] = True
-                self.stats["cache_reuse_count"] += 1
-                print(f"    [キャッシュヒット] 接頭辞 {' -> '.join(chain[:i])} を再利用")
+                print(f"    [Cache hit] Reusing prefix: {' -> '.join(chain[:i])}")
                 break
         
         return cached_prefix_len, cached_state
@@ -285,6 +294,10 @@ class TaintAnalyzer:
     
     def _cache_prefix_if_needed(self, chain: List[str], index: int, results: dict):
         """必要に応じて接頭辞をキャッシュ"""
+        # prefix_cacheがNoneの場合（--no-cacheオプション）
+        if self.prefix_cache is None:
+            return
+            
         prefix = tuple(chain[:index+1])
         if not self.prefix_cache.has(prefix):
             state_to_cache = {
@@ -294,135 +307,48 @@ class TaintAnalyzer:
                 "inline_findings": results["inline_findings"].copy()
             }
             self.prefix_cache.set(prefix, state_to_cache)
-            self.stats["unique_prefixes_analyzed"] += 1
-    
-    def _apply_result_to_flow(
-        self,
-        result: dict,
-        chain: List[str],
-        specific_vd: dict,
-        flow_idx: int,
-        chain_idx: int,
-        seen_vulnerabilities: set,
-        vulnerabilities: List[dict],
-        all_inline_findings: List[dict]
-    ) -> dict:
-        """解析結果を特定のフローに適用"""
-        # VDが異なる場合は個別の情報を保持
-        result_copy = result.copy()
-        result_copy["vd"] = specific_vd
-        result_copy["flow_idx"] = flow_idx
-        result_copy["chain_idx"] = chain_idx
-        
-        # 脆弱性の一意キーを生成
-        vuln_key = (
-            tuple(chain),
-            specific_vd.get("sink"),
-            specific_vd.get("file"),
-            specific_vd.get("line")
-        )
-        
-        # 解析されたチェインをカウント（脆弱性の有無に関わらず）
-        self.stats["total_chains_analyzed"] += 1
-        
-        # 重複チェックして脆弱性を追加
-        if result_copy.get("is_vulnerable") and vuln_key not in seen_vulnerabilities:
-            seen_vulnerabilities.add(vuln_key)
-            vulnerabilities.append(result_copy)
-        
-        # inline_findingsを収集
-        if result_copy.get("inline_findings"):
-            all_inline_findings.extend(result_copy["inline_findings"])
-        
-        return result_copy
-    
-    def _extract_param_indices(self, vd: dict) -> List[int]:
-        """VDからパラメータインデックスを抽出"""
-        if "param_indices" in vd:
-            return vd["param_indices"]
-        elif "param_index" in vd:
-            return [vd["param_index"]]
-        else:
-            print(f"Warning: No param_index or param_indices found in vd: {vd}")
-            return []
-    
-    def _format_param_info(self, param_indices: List[int]) -> str:
-        """パラメータ情報をフォーマット"""
-        if len(param_indices) == 1:
-            return f"param {param_indices[0]}"
-        else:
-            return f"params {param_indices}"
-    
-    def _print_initial_stats(self, flows_data: List[dict]):
-        """初期統計情報を出力"""
-        unique_chains = self.chain_tree.get_chain_count()
-        total_chains = sum(len(flow.get("chains", [])) for flow in flows_data)
-        self.stats["total_flows"] = len(flows_data)
-        
-        print(f"  入力フロー数: {len(flows_data)}")
-        print(f"  総チェイン数: {total_chains}")
-        print(f"  一意なチェイン数: {unique_chains}")
-        print(f"  削減率: {(1 - unique_chains/total_chains)*100:.1f}%")
     
     def _print_final_stats(self):
         """最終統計情報を出力"""
-        # キャッシュ統計
-        cache_stats = self.prefix_cache.get_stats()
-        print(f"\n[キャッシュ統計]")
-        print(f"  ヒット数: {cache_stats['hits']}")
-        print(f"  ミス数: {cache_stats['misses']}")
-        print(f"  ヒット率: {cache_stats['hit_rate']}")
-        print(f"  キャッシュされた接頭辞数: {cache_stats['cached_prefixes']}")
+        print(f"\n[Analysis Statistics]")
+        print(f"  Total flows analyzed: {self.stats['total_flows_analyzed']}")
+        print(f"  Flows with vulnerabilities: {self.stats['flows_with_vulnerabilities']}")
+        print(f"  Analysis time: {self.stats['total_time']:.2f}s")
         
-        # 解析統計
-        print(f"\n[解析統計]")
-        print(f"  入力フロー数: {self.stats['total_flows']}")
-        print(f"  解析されたチェイン総数: {self.stats['total_chains_analyzed']}")
-        print(f"  一意なチェイン数: {self.stats['unique_chains_analyzed']}")
-        print(f"  発見された脆弱性: {self.stats['vulnerabilities_found']}")
+        # キャッシュ統計（prefix_cacheが存在する場合のみ）
+        if self.prefix_cache is not None:
+            cache_stats = self.prefix_cache.get_stats()
+            print(f"\n[Cache Statistics]")
+            print(f"  Hits: {cache_stats['hits']}")
+            print(f"  Misses: {cache_stats['misses']}")
+            print(f"  Hit rate: {cache_stats['hit_rate']}")
+            print(f"  Cached prefixes: {cache_stats['cached_prefixes']}")
         
         # LLMエラー統計
         llm_stats = self.llm_handler.get_stats()
-        print(f"\n[LLMエラー統計]")
-        print(f"  総LLM呼び出し数: {llm_stats['total_calls']}")
-        print(f"  エラー発生数: {llm_stats['total_errors']}")
-        print(f"  リトライ数: {llm_stats['total_retries']}")
-        print(f"  空レスポンス数: {llm_stats['empty_responses']}")
+        print(f"\n[LLM Statistics]")
+        print(f"  Total calls: {llm_stats['total_calls']}")
+        print(f"  Errors: {llm_stats['total_errors']}")
+        print(f"  Retries: {llm_stats['total_retries']}")
         
         # Findings統計
         findings_stats = self.findings_merger.get_stats()
-        print(f"\n[Findings統計]")
-        print(f"  収集された総数: {findings_stats['total_collected']}")
-        print(f"  Middle findings: {findings_stats['middle_findings']}")
-        print(f"  End findings: {findings_stats['end_findings']}")
-        print(f"  マージ後: {findings_stats['after_merge']}")
-        print(f"  削除された重複: {findings_stats['duplicates_removed']}")
+        print(f"\n[Findings Statistics]")
+        print(f"  Total collected: {findings_stats['total_collected']}")
+        print(f"  After merge: {findings_stats['after_merge']}")
+        print(f"  Duplicates removed: {findings_stats['duplicates_removed']}")
     
     def get_stats(self) -> dict:
         """統計情報を取得"""
         stats = self.stats.copy()
         
         # 各モジュールの統計を統合
-        stats["cache_stats"] = self.prefix_cache.get_stats()
-        stats["chain_tree_stats"] = self.chain_tree.get_stats()
+        if self.prefix_cache is not None:
+            stats["cache_stats"] = self.prefix_cache.get_stats()
         stats["llm_handler_stats"] = self.llm_handler.get_stats()
         stats["function_analyzer_stats"] = self.function_analyzer.get_stats()
         stats["vulnerability_analyzer_stats"] = self.vulnerability_analyzer.get_stats()
         stats["consistency_checker_stats"] = self.consistency_checker.get_stats()
         stats["findings_stats"] = self.findings_merger.get_stats()
-        
-        # 統合された統計
-        stats["total_functions_analyzed"] = stats["function_analyzer_stats"]["functions_analyzed"]
-        stats["total_llm_calls"] = stats["llm_handler_stats"]["total_calls"]
-        stats["total_llm_errors"] = stats["llm_handler_stats"]["total_errors"]
-        stats["total_llm_retries"] = stats["llm_handler_stats"]["total_retries"]
-        stats["total_empty_responses"] = stats["llm_handler_stats"]["empty_responses"]
-        
-        # 整合性チェック統計
-        stats["consistency_stats"] = {
-            "reevaluations": stats["vulnerability_analyzer_stats"]["consistency_reevaluations"],
-            "downgrades": stats["vulnerability_analyzer_stats"]["consistency_downgrades"],
-            "total_consistency_checks": stats["total_chains_analyzed"]
-        }
         
         return stats
