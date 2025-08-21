@@ -11,11 +11,14 @@ python3 ./src/main.py \
   -p benchmark/hotp \
   -p benchmark/random \
   -p benchmark/secure_storage \
+  --verbose 2>&1 | tee log1.txt
+
+python3 ./src/main.py \
   -p benchmark/secvideo_demo \
   -p benchmark/optee-fiovb \
   -p benchmark/optee-sdp \
   -p benchmark/Lenet5_in_OPTEE \
-  --verbose 2>&1 | tee log.txt
+  --verbose 2>&1 | tee log2.txt
 
 
 python3 ./src/main.py \
