@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-HTMLテンプレートモジュール（シンプル版）
-外部ファイルからCSS/JSを読み込んで組み込む
+HTMLテンプレートモジュール（改良版）
+新しいセクションのプレースホルダーを追加
 """
 
 from pathlib import Path
 
 def get_html_template() -> str:
-    """HTMLテンプレートを返す（CSS/JS埋め込み版）"""
+    """HTMLテンプレートを返す（改良版）"""
     
     # テンプレートディレクトリのパス
     template_dir = Path(__file__).parent / "templates"
@@ -22,11 +22,10 @@ def get_html_template() -> str:
     
     # CSSファイルが存在する場合は読み込む
     if css_file.exists():
-        # CSSの中の{}を{{}}にエスケープ
         css_content = css_file.read_text(encoding="utf-8")
         css_content = css_content.replace('{', '{{').replace('}', '}}')
     else:
-        # フォールバック用の最小CSS（エスケープ済み）
+        # フォールバック用の最小CSS
         css_content = """
         body {{ font-family: sans-serif; margin: 20px; }}
         .container {{ max-width: 1200px; margin: 0 auto; }}
@@ -34,17 +33,15 @@ def get_html_template() -> str:
     
     # JSファイルが存在する場合は読み込む
     if js_file.exists():
-        # JSの中の{}を{{}}にエスケープ
         js_content = js_file.read_text(encoding="utf-8")
         js_content = js_content.replace('{', '{{').replace('}', '}}')
     else:
-        # フォールバック用の最小JS（エスケープ済み）
+        # フォールバック用の最小JS
         js_content = """
         console.log('Report loaded');
         """
     
-    # HTMLテンプレート（プレースホルダー付き）
-    # 注意: プレースホルダーは単一の{}、CSS/JSは{{}}でエスケープ
+    # HTMLテンプレート（改良版）
     html_template = f"""<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -110,14 +107,20 @@ def get_html_template() -> str:
             </p>
         </section>
         
-        <!-- 実行時間タイムライン（存在する場合） -->
+        <!-- 実行タイムライン -->
         {{timeline_html}}
         
         <!-- トークン使用量 -->
         {{token_usage_html}}
         
-        <!-- 脆弱性詳細（存在する場合） -->
+        <!-- シンク特定結果 -->
+        {{sinks_summary_html}}
+        
+        <!-- 脆弱性詳細 -->
         {{vulnerabilities_html}}
+        
+        <!-- Inline Findings -->
+        {{inline_findings_html}}
         
         <!-- 解析チェーンと対話履歴 -->
         <section class="analysis-chains">
@@ -138,29 +141,18 @@ def get_html_template() -> str:
 </html>"""
     
     # テンプレート文字列のプレースホルダーを単一の{}に戻す
-    html_template = html_template.replace('{{project_name}}', '{project_name}')
-    html_template = html_template.replace('{{timestamp}}', '{timestamp}')
-    html_template = html_template.replace('{{analysis_mode}}', '{analysis_mode}')
-    html_template = html_template.replace('{{llm_provider}}', '{llm_provider}')
-    html_template = html_template.replace('{{total_chains}}', '{total_chains}')
-    html_template = html_template.replace('{{unique_chains}}', '{unique_chains}')
-    html_template = html_template.replace('{{vuln_count}}', '{vuln_count}')
-    html_template = html_template.replace('{{inline_findings_count}}', '{inline_findings_count}')
-    html_template = html_template.replace('{{func_count}}', '{func_count}')
-    html_template = html_template.replace('{{llm_calls}}', '{llm_calls}')
-    html_template = html_template.replace('{{cache_hit_rate}}', '{cache_hit_rate}')
-    html_template = html_template.replace('{{cache_reuse_count}}', '{cache_reuse_count}')
-    html_template = html_template.replace('{{total_time}}', '{total_time}')
-    html_template = html_template.replace('{{analysis_date}}', '{analysis_date}')
-    html_template = html_template.replace('{{timeline_html}}', '{timeline_html}')
-    html_template = html_template.replace('{{token_usage_html}}', '{token_usage_html}')
-    html_template = html_template.replace('{{vulnerabilities_html}}', '{vulnerabilities_html}')
-    html_template = html_template.replace('{{chains_html}}', '{chains_html}')
-    html_template = html_template.replace('{{sink_analysis_time}}', '{sink_analysis_time}')
-    html_template = html_template.replace('{{taint_analysis_time}}', '{taint_analysis_time}')
-    html_template = html_template.replace('{{sink_seconds}}', '{sink_seconds}')
-    html_template = html_template.replace('{{taint_seconds}}', '{taint_seconds}')
-    html_template = html_template.replace('{{total_seconds}}', '{total_seconds}')
+    replacements = [
+        'project_name', 'timestamp', 'analysis_mode', 'llm_provider',
+        'total_chains', 'unique_chains', 'vuln_count', 'inline_findings_count',
+        'func_count', 'llm_calls', 'cache_hit_rate', 'cache_reuse_count',
+        'total_time', 'analysis_date', 'timeline_html', 'token_usage_html',
+        'vulnerabilities_html', 'chains_html', 'sink_analysis_time',
+        'taint_analysis_time', 'sink_seconds', 'taint_seconds', 'total_seconds',
+        'sinks_summary_html', 'inline_findings_html'
+    ]
+    
+    for placeholder in replacements:
+        html_template = html_template.replace(f'{{{{{placeholder}}}}}', f'{{{placeholder}}}')
     
     return html_template
 

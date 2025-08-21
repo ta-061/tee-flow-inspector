@@ -20,9 +20,56 @@ from log_parser import parse_taint_log
 from html_formatter import (
     generate_chain_html,
     generate_token_usage_html,
-    generate_vulnerability_details_html
+    generate_vulnerability_details_html,
+    generate_inline_findings_html,
+    generate_sinks_summary_html,
+    generate_execution_timeline_html
 )
 from html_template import get_html_template
+
+def calculate_statistics(vuln_data: Dict, conversations: Dict, sinks_data: Optional[Dict]) -> Dict:
+    """統計情報を正確に計算"""
+    statistics = vuln_data.get("statistics", {})
+    vulnerabilities = vuln_data.get("vulnerabilities", [])
+    
+    # 解析されたチェーン数を正確に計算
+    total_chains = len(conversations) if conversations else len(vulnerabilities)
+    
+    # ユニークなチェーンを計算
+    unique_chains = set()
+    for vuln in vulnerabilities:
+        chain = vuln.get("chain", [])
+        if chain:
+            unique_chains.add(" -> ".join(chain))
+    
+    # 対話履歴からも追加
+    for chain_name in conversations.keys():
+        unique_chains.add(chain_name)
+    
+    # 関数解析数を推定（各チェーンの平均関数数から計算）
+    func_count = 0
+    for chain_name in conversations.keys():
+        # チェーン名から関数数をカウント
+        func_count += len(chain_name.split(" -> "))
+    
+    # LLM呼び出し数を正確に取得
+    llm_calls = statistics.get("llm_calls", 0)
+    if llm_calls == 0:
+        # トークン使用量から推定
+        token_usage = statistics.get("token_usage", {})
+        llm_calls = token_usage.get("api_calls", 0)
+        
+        # シンク特定からも追加
+        if sinks_data and sinks_data.get("token_usage"):
+            llm_calls += sinks_data["token_usage"].get("api_calls", 0)
+    
+    return {
+        "total_chains": total_chains,
+        "unique_chains": len(unique_chains),
+        "func_count": func_count,
+        "llm_calls": llm_calls,
+        "functions_analyzed": statistics.get("functions_analyzed", func_count)
+    }
 
 def generate_report(vuln_path: Path, phase12_path: Path, 
                    project_name: str, sinks_path: Optional[Path] = None) -> str:
@@ -53,6 +100,9 @@ def generate_report(vuln_path: Path, phase12_path: Path,
     statistics = vuln_data.get("statistics", {})
     vulnerabilities = vuln_data.get("vulnerabilities", [])
     inline_findings = vuln_data.get("inline_findings", [])
+    
+    # 統計情報を正確に計算
+    calc_stats = calculate_statistics(vuln_data, conversations, sinks_data)
     
     # チェーンごとの脆弱性情報をマッピング
     vuln_by_chain = {}
@@ -94,15 +144,16 @@ def generate_report(vuln_path: Path, phase12_path: Path,
     if not chains_html:
         chains_html = '<p style="text-align: center; color: #7f8c8d; padding: 2rem;">解析チェーンが見つかりませんでした</p>'
     
-    # 脆弱性詳細のHTML生成
-    vulnerabilities_html = ""
-    if vulnerabilities:
-        vulnerabilities_html = generate_vulnerability_details_html(vulnerabilities)
+    # 新しいセクションのHTML生成
+    vulnerabilities_html = generate_vulnerability_details_html(vulnerabilities) if vulnerabilities else ""
+    inline_findings_html = generate_inline_findings_html(inline_findings) if inline_findings else ""
+    sinks_summary_html = generate_sinks_summary_html(sinks_data) if sinks_data else ""
+    timeline_html = generate_execution_timeline_html(sinks_data, statistics)
     
     # キャッシュ統計
     cache_stats = statistics.get("cache_stats", {})
     cache_hit_rate = cache_stats.get("hit_rate", "0%")
-    cache_reuse_count = cache_stats.get("reuse_count", 0)
+    cache_reuse_count = statistics.get("cache_reuse_count", cache_stats.get("reuse_count", 0))
     
     # 解析時間の計算
     # テイント解析時間
@@ -174,25 +225,27 @@ def generate_report(vuln_path: Path, phase12_path: Path,
         "timestamp": datetime.now().strftime("%Y年%m月%d日 %H:%M:%S"),
         "analysis_mode": analysis_mode_display,
         "llm_provider": statistics.get("llm_provider", "unknown"),
-        "total_chains": statistics.get("total_chains_analyzed", chain_count),
-        "unique_chains": statistics.get("unique_prefixes_analyzed", 0),
+        "total_chains": calc_stats["total_chains"],
+        "unique_chains": calc_stats["unique_chains"],
         "vuln_count": len(vulnerabilities),
         "cache_hit_rate": cache_hit_rate,
-        "func_count": statistics.get("functions_analyzed", 0),
-        "llm_calls": statistics.get("llm_calls", 0),
+        "func_count": calc_stats["func_count"],
+        "llm_calls": calc_stats["llm_calls"],
         "total_time": total_analysis_time or taint_analysis_time or "計測中",
-        "timeline_html": "",  # time.txt関連機能を削除
+        "timeline_html": timeline_html,
         "token_usage_html": generate_token_usage_html(statistics, sinks_data),
         "chains_html": chains_html,
         "vulnerabilities_html": vulnerabilities_html,
+        "inline_findings_html": inline_findings_html,
+        "sinks_summary_html": sinks_summary_html,
         "inline_findings_count": len(inline_findings),
         "cache_reuse_count": cache_reuse_count,
         "analysis_date": analysis_date,
-        "sink_analysis_time": sink_analysis_time or "N/A",  # シンク特定時間
-        "taint_analysis_time": taint_analysis_time or "N/A",  # テイント解析時間
-        "sink_seconds": sink_seconds_display,  # シンク特定時間（秒）
-        "taint_seconds": taint_seconds_display,  # テイント解析時間（秒）
-        "total_seconds": total_seconds_display,  # 合計時間（秒）
+        "sink_analysis_time": sink_analysis_time or "N/A",
+        "taint_analysis_time": taint_analysis_time or "N/A",
+        "sink_seconds": sink_seconds_display,
+        "taint_seconds": taint_seconds_display,
+        "total_seconds": total_seconds_display,
     }
     
     # format_mapを使用してより安全にテンプレートを処理
