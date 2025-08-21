@@ -25,7 +25,7 @@ def run(cmd: list[str], cwd: Path, verbose: bool, phase_name: str = ""):
         print(f"[INFO] $ {' '.join(cmd)}  (cwd={cwd})")
     
     try:
-        res = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=600)
+        res = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
         
         # エラーが発生した場合
         if res.returncode != 0:
@@ -150,7 +150,6 @@ def clean_project_dependencies(proj_path: Path, verbose: bool = False):
                     ["make", "clean"],
                     cwd=makefile_dir,
                     capture_output=True,
-                    timeout=10,
                     text=True
                 )
                 if verbose and result.returncode == 0:
@@ -355,11 +354,7 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool,
         phase_start = time.time()
         report_py = Path(__file__).parent / "report" / "generate_report.py"
         
-        # マクロを含める場合と含めない場合で出力ファイル名を変更
-        if include_debug_macros:
-            report_html = res_dir / f"{ta_dir.name}_vulnerability_report_with_macros.html"
-        else:
-            report_html = res_dir / f"{ta_dir.name}_vulnerability_report.html"
+        report_html = res_dir / f"{ta_dir.name}_vulnerability_report.html"
         
         report_cmd = [sys.executable, str(report_py),
              "--vulnerabilities", str(vulnerabilities),

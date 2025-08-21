@@ -11,6 +11,7 @@ import json
 import argparse
 from pathlib import Path
 import time
+from datetime import datetime
 from typing import Dict, Tuple
 
 # スクリプトの親ディレクトリ（src/）をパスに追加
@@ -26,6 +27,7 @@ from analyze_vulnerabilities import CodeExtractor
 from analyze_vulnerabilities import VulnerabilityParser
 from analyze_vulnerabilities import TaintAnalyzer
 from analyze_vulnerabilities import setup_system_prompt
+from analyze_vulnerabilities import ReportGenerator
 
 
 def main():
@@ -41,9 +43,11 @@ def main():
     parser.add_argument("--batch-size", type=int, default=100, help="ログのバッチサイズ")
     parser.add_argument("--track-tokens", action="store_true", help="トークン使用量を追跡")
     parser.add_argument("--no-cache", action="store_true", help="接頭辞キャッシュを無効化（デバッグ用）")
+    parser.add_argument("--json-retry", choices=["none", "smart", "aggressive"], default="smart", help="JSON解析失敗時のリトライ戦略 (default: smart)")
+    parser.add_argument("--max-json-retries", type=int, default=2, help="JSON解析失敗時の最大リトライ回数 (default: 2)")
 
     args = parser.parse_args()
-    
+
     # RAGの設定
     use_rag = not args.no_rag
     
@@ -129,7 +133,9 @@ def main():
             conversation_manager=conversation_manager,
             use_diting_rules=not args.no_diting_rules,
             use_enhanced_prompts=not args.no_enhanced_prompts,
-            use_rag=use_rag
+            use_rag=use_rag,
+            json_retry_strategy=args.json_retry, 
+            max_json_retries=args.max_json_retries 
         )
         
         # キャッシュを無効化する場合の処理
@@ -289,13 +295,35 @@ def main():
         print(f"  Output file: {out_path}")
         print(f"  Log file: {log_file}")
         
-        # サマリー生成
+        # サマリー生成（report_generator.pyを使用）
         if args.generate_summary:
             try:
-                generate_summary_report(out_dir, statistics, vulnerabilities, inline_findings)
+                # ReportGeneratorクラスを使用
+                generator = ReportGenerator()
+                
+                # 脆弱性サマリーレポートを生成
+                summary_path = Path(str(out_path).replace('.json', '_summary.md'))
+                generator.generate_summary(
+                    output_path=summary_path,
+                    statistics=statistics,
+                    vulnerabilities=vulnerabilities
+                )
+                print(f"[INFO] Vulnerability summary saved to: {summary_path}")
+                
+                # インラインファインディングのサマリーも生成
+                if inline_findings:
+                    findings_summary_path = Path(str(out_path).replace('.json', '_findings_summary.md'))
+                    generator.generate_findings_summary(
+                        output_path=findings_summary_path,
+                        statistics=statistics,
+                        findings=inline_findings
+                    )
+                    print(f"[INFO] Findings summary saved to: {findings_summary_path}")
+                    
             except Exception as e:
                 print(f"[WARN] Failed to generate summary report: {e}")
-                # サマリー生成の失敗は致命的ではないので続行
+                import traceback
+                traceback.print_exc()
 
 
 def setup_system_prompt_wrapper(mode: str, use_rag: bool) -> Tuple[str, Dict]:
@@ -403,24 +431,6 @@ def format_time_duration(seconds: float) -> str:
         return f"{seconds/60:.1f}m"
     else:
         return f"{seconds/3600:.1f}h"
-
-
-def generate_summary_report(out_dir: Path, statistics: dict, vulnerabilities: list, inline_findings: list):
-    """サマリーレポートを生成（拡張版）"""
-    from analyze_vulnerabilities.io_handlers import ReportGenerator
-    
-    generator = ReportGenerator()
-    summary_path = out_dir / "vulnerability_summary.md"
-    
-    # 基本サマリー
-    generator.generate_summary(summary_path, statistics, vulnerabilities)
-    print(f"  [INFO] Vulnerability summary: {summary_path}")
-    
-    # Findingsサマリーも追加
-    if inline_findings:
-        findings_summary_path = out_dir / "findings_summary.md"
-        generator.generate_findings_summary(findings_summary_path, statistics, inline_findings)
-        print(f"  [INFO] Findings summary: {findings_summary_path}")
 
 
 if __name__ == "__main__":

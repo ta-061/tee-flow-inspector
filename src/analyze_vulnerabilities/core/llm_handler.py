@@ -122,6 +122,36 @@ class LLMHandler:
         # すべてのリトライが失敗
         self._handle_fatal_error(context, errors_encountered, full_context)
     
+    def ask_for_json_correction(self, 
+                               original_response: str,
+                               context: Dict,
+                               conversation_manager,
+                               attempt: int = 1) -> str:
+        """
+        JSON形式の修正を明示的に要求
+        """
+        correction_prompts = [
+            # 1回目: 丁寧に説明
+            """I need your response in JSON format. 
+            Please reformat your analysis as valid JSON with these fields:
+            function, propagation, sanitizers, sinks, evidence, rule_matches""",
+            
+            # 2回目: より具体的に
+            """Return ONLY a JSON object starting with {
+            No explanations, just JSON.
+            Example: {"function":"test","propagation":[],...}""",
+            
+            # 3回目: 最小限の要求
+            """{"function":"","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":{"rule_id":[],"others":[]}}
+            Fill in the above template with your analysis."""
+        ]
+        
+        prompt = correction_prompts[min(attempt - 1, 2)]
+        conversation_manager.add_message("user", prompt)
+        
+        # 通常のリトライ処理を使用
+        return self.ask_with_handler(context, conversation_manager)
+    
     def _build_full_context(self, context: Dict) -> Dict:
         """完全なコンテキストを構築"""
         full_context = {

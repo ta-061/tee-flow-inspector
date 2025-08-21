@@ -3,6 +3,7 @@
 """
 テイント解析のコアロジック（新JSONフォーマット対応版）
 ChainTree削除、source_params追跡削除による簡略化
+JSONリトライ機能追加
 """
 
 import sys
@@ -39,7 +40,9 @@ class TaintAnalyzer:
         use_enhanced_prompts: bool = True,
         use_rag: bool = False,
         llm_retry_handler=None,
-        llm_error_logger=None
+        llm_error_logger=None,
+        json_retry_strategy: str = "smart",  # JSONリトライ戦略を追加
+        max_json_retries: int = 2  # 最大リトライ回数を追加
     ):
         """
         Args:
@@ -53,6 +56,8 @@ class TaintAnalyzer:
             use_rag: RAG使用フラグ
             llm_retry_handler: LLMリトライハンドラー
             llm_error_logger: LLMエラーロガー
+            json_retry_strategy: JSON解析失敗時のリトライ戦略 ('none', 'smart', 'aggressive')
+            max_json_retries: JSON解析失敗時の最大リトライ回数
         """
         self.client = client
         self.code_extractor = code_extractor
@@ -62,6 +67,8 @@ class TaintAnalyzer:
         self.use_diting_rules = use_diting_rules
         self.use_enhanced_prompts = use_enhanced_prompts
         self.use_rag = use_rag
+        self.json_retry_strategy = json_retry_strategy
+        self.max_json_retries = max_json_retries
         
         # 分離されたモジュールのインスタンスを作成
         self.prefix_cache = PrefixCache()
@@ -88,11 +95,13 @@ class TaintAnalyzer:
             vuln_parser=vuln_parser,
             logger=logger,
             conversation_manager=conversation_manager,
-            llm_handler=self.llm_handler
+            llm_handler=self.llm_handler,
+            json_retry_strategy=json_retry_strategy,  # パラメータを渡す
+            max_json_retries=max_json_retries  # パラメータを渡す
         )
         self.function_analyzer.use_rag = use_rag
         
-        # 脆弱性解析器
+        # 脆弱性解析器（JSONリトライ設定は渡さない）
         self.vulnerability_analyzer = VulnerabilityAnalyzer(
             code_extractor=code_extractor,
             vuln_parser=vuln_parser,
@@ -100,6 +109,7 @@ class TaintAnalyzer:
             conversation_manager=conversation_manager,
             llm_handler=self.llm_handler,
             consistency_checker=self.consistency_checker
+            # json_retry_strategy と max_json_retries は渡さない
         )
         
         # Findingsマージャー
@@ -112,7 +122,13 @@ class TaintAnalyzer:
             "total_time": 0,
             "cache_hits": 0,
             "cache_misses": 0,
+            "json_retry_attempts": 0,  # JSONリトライ統計を追加
+            "json_retry_successes": 0,  # JSONリトライ成功数を追加
         }
+        
+        # 設定をログに記録
+        self.logger.writeln(f"[CONFIG] JSON Retry Strategy: {json_retry_strategy}")
+        self.logger.writeln(f"[CONFIG] Max JSON Retries: {max_json_retries}")
     
     def analyze_all_flows(self, flows_data: List[dict]) -> Tuple[List[dict], List[dict]]:
         """
@@ -125,6 +141,7 @@ class TaintAnalyzer:
             (vulnerabilities, inline_findings)
         """
         print(f"[INFO] Starting analysis with new JSON format...")
+        print(f"[INFO] JSON retry strategy: {self.json_retry_strategy}")
         print(f"[INFO] Total flows to analyze: {len(flows_data)}")
         
         # 統計情報を初期化
@@ -245,6 +262,16 @@ class TaintAnalyzer:
         )
         results.update(vuln_result)
         
+        # JSONリトライ統計を収集
+        if hasattr(self.function_analyzer, 'stats'):
+            func_stats = self.function_analyzer.stats
+            if 'json_retries' in func_stats:
+                self.stats["json_retry_attempts"] += func_stats.get('json_retries', 0)
+            if 'json_failures' in func_stats:
+                # 成功数 = リトライ数 - 失敗数
+                successes = func_stats.get('json_retries', 0) - func_stats.get('json_failures', 0)
+                self.stats["json_retry_successes"] += max(0, successes)
+        
         return results
     
     def _initialize_results(self, chain: List[str], vd: dict) -> dict:
@@ -259,7 +286,8 @@ class TaintAnalyzer:
             "reasoning_trace": [],
             "rag_used": self.use_rag,
             "is_vulnerable": False,
-            "cache_used": False
+            "cache_used": False,
+            "json_retry_strategy": self.json_retry_strategy  # 戦略を記録
         }
     
     def _find_cached_prefix(self, chain: List[str], results: dict) -> Tuple[int, Optional[dict]]:
@@ -315,6 +343,16 @@ class TaintAnalyzer:
         print(f"  Flows with vulnerabilities: {self.stats['flows_with_vulnerabilities']}")
         print(f"  Analysis time: {self.stats['total_time']:.2f}s")
         
+        # JSONリトライ統計
+        if self.json_retry_strategy != "none":
+            print(f"\n[JSON Retry Statistics]")
+            print(f"  Strategy: {self.json_retry_strategy}")
+            print(f"  Retry attempts: {self.stats['json_retry_attempts']}")
+            print(f"  Successful recoveries: {self.stats['json_retry_successes']}")
+            if self.stats['json_retry_attempts'] > 0:
+                success_rate = (self.stats['json_retry_successes'] / self.stats['json_retry_attempts']) * 100
+                print(f"  Success rate: {success_rate:.1f}%")
+        
         # キャッシュ統計（prefix_cacheが存在する場合のみ）
         if self.prefix_cache is not None:
             cache_stats = self.prefix_cache.get_stats()
@@ -330,6 +368,12 @@ class TaintAnalyzer:
         print(f"  Total calls: {llm_stats['total_calls']}")
         print(f"  Errors: {llm_stats['total_errors']}")
         print(f"  Retries: {llm_stats['total_retries']}")
+        
+        # 関数解析統計
+        if hasattr(self.function_analyzer, 'stats'):
+            func_stats = self.function_analyzer.get_stats()
+            if 'json_failures' in func_stats and func_stats['json_failures'] > 0:
+                print(f"  JSON parse failures (final): {func_stats['json_failures']}")
         
         # Findings統計
         findings_stats = self.findings_merger.get_stats()
@@ -350,5 +394,7 @@ class TaintAnalyzer:
         stats["vulnerability_analyzer_stats"] = self.vulnerability_analyzer.get_stats()
         stats["consistency_checker_stats"] = self.consistency_checker.get_stats()
         stats["findings_stats"] = self.findings_merger.get_stats()
+        stats["json_retry_strategy"] = self.json_retry_strategy
+        stats["max_json_retries"] = self.max_json_retries
         
         return stats
