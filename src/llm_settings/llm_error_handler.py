@@ -167,23 +167,42 @@ class ResponseDiagnostics:
                 "AZURE_OPENAI_API_KEY": bool(os.getenv("AZURE_OPENAI_API_KEY")),
                 "GROQ_API_KEY": bool(os.getenv("GROQ_API_KEY"))
             },
+            "config_api_keys_present": {},
+            "current_provider_has_key": False,  # デフォルト値を設定
             "environment_variables": {
                 "TA_DEV_KIT_DIR": os.getenv("TA_DEV_KIT_DIR", "Not set"),
                 "PYTHONPATH": bool(os.getenv("PYTHONPATH")),
                 "VIRTUAL_ENV": bool(os.getenv("VIRTUAL_ENV"))
             }
         }
+
         
         # クライアント情報の取得
-        if hasattr(client, 'get_current_provider'):
+        if hasattr(client, 'config_manager'):
+            # UnifiedLLMClientの場合
+            try:
+                for provider in ["openai", "claude", "deepseek", "groq"]:
+                    config = client.config_manager.get_provider_config(provider)
+                    api_key = config.get("api_key", "")
+                    env_info["config_api_keys_present"][provider] = bool(api_key)
+                
+                # 現在のプロバイダーの設定も取得
+                current_provider = client.get_current_provider()
+                current_config = client.config_manager.get_provider_config()
+                env_info["provider"] = current_provider
+                env_info["model"] = current_config.get("model", "Unknown")
+                env_info["current_provider_has_key"] = bool(current_config.get("api_key"))
+            except Exception as e:
+                # エラーが発生した場合はスキップ
+                pass
+        elif hasattr(client, 'get_current_provider'):
             env_info["provider"] = client.get_current_provider()
         
         if hasattr(client, 'get_model'):
             env_info["model"] = client.get_model()
         elif hasattr(client, 'model'):
             env_info["model"] = client.model
-        
-        # メモリ使用状況
+
         try:
             import psutil
             process = psutil.Process()
@@ -273,14 +292,18 @@ class ResponseDiagnostics:
         
         # 環境ベースの原因分析
         env = diagnosis["environment_analysis"]
-        if not any(env["api_keys_present"].values()):
-            causes.append("No API keys found in environment")
-            recommendations.append("Set appropriate API key environment variables")
-        
-        if env["provider"] == "Unknown":
-            causes.append("LLM provider not properly configured")
-            recommendations.append("Check LLM client configuration")
-        
+        config_keys = env.get("config_api_keys_present", {})
+        current_has_key = env.get("current_provider_has_key", False)
+        if not current_has_key:
+            # 現在のプロバイダーにAPIキーがない場合のみエラー
+            provider = env.get("provider", "Unknown")
+            causes.append(f"No API key found for current provider: {provider}")
+            recommendations.append(f"Set API key for {provider} using: python -m llm_settings.llm_cli configure {provider}")
+        elif not any(env["api_keys_present"].values()) and not any(config_keys.values()):
+            # 環境変数にも設定ファイルにもAPIキーがない場合
+            causes.append("No API keys found in environment or config file")
+            recommendations.append("Set API key using CLI or environment variables")
+    
         # APIテスト結果の分析
         test = diagnosis["api_test_result"]
         if test["status"] == "FAILED":

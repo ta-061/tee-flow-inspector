@@ -555,18 +555,21 @@ FINDINGS={"items":[]}"""
         results: dict,
         is_final: bool
     ):
-        """
-        LLMレスポンスを処理（統一版）
-        """
+        """LLMレスポンスを処理（統一版）"""
         try:
             # JSONを抽出
             parsed = self.vuln_parser.extract_json_from_response(response)
             
             if not parsed:
-                # JSON抽出失敗時は生のレスポンスを保存
                 self.logger.writeln(f"[WARN] No JSON found in response for {func_name}")
                 parsed = {"raw_response": response}
                 self.stats["parse_errors"] += 1
+
+            # func_codeを取得
+            if is_final and func_name == vd.get("sink"):
+                func_code = self.code_extractor.extract_function_code(func_name, vd)
+            else:
+                func_code = self.code_extractor.extract_function_code(func_name)
             
             # テイント解析結果を追加
             taint_info = {
@@ -588,10 +591,10 @@ FINDINGS={"items":[]}"""
             results["reasoning_trace"].append(reasoning_step)
             
             # Inline findingsを抽出
-            findings = self._extract_findings(parsed, func_name, chain, vd, position)
+            findings = self._extract_findings(parsed, func_name, chain, vd, position, func_code)
             if findings:
                 results["inline_findings"].extend(findings)
-            
+
             # シンク到達の判定（位置に関わらず）
             if "sink_reached" in parsed and parsed["sink_reached"]:
                 results["is_vulnerable"] = True
@@ -653,7 +656,8 @@ FINDINGS={"items":[]}"""
         func_name: str,
         chain: List[str],
         vd: dict,
-        position: int
+        position: int,
+        func_code: str
     ) -> List[dict]:
         """Findingsを抽出"""
         findings = []
@@ -688,18 +692,37 @@ FINDINGS={"items":[]}"""
         
         # バリデーション不足
         elif position > 0 and not parsed.get("validation"):
-            finding = {
-                "type": "NO_VALIDATION",
-                "function": func_name,
-                "position": position,
-                "severity": "medium",
-                "details": "No validation or sanitization found",
-                "phase": "middle"
-            }
-            findings.append(finding)
+            # コードを解析して実際に検証があるか確認
+            has_validation = self._check_for_validation_code(func_code)
+            if not has_validation:
+                finding = {
+                    "type": "NO_VALIDATION",
+                    "function": func_name,
+                    "position": position,
+                    "severity": "medium",
+                    "details": "No validation or sanitization found",
+                    "phase": "middle"
+                }
+                findings.append(finding)
         
         return findings
-    
+
+    def _check_for_validation_code(self, code: str) -> bool:
+        """コードに検証処理があるかチェック"""
+        validation_patterns = [
+            r'if\s*\(.*param_types.*!=.*exp_param_types',
+            r'TEE_CheckMemoryAccessRights',
+            r'if\s*\(.*size.*[<>]=',
+            r'if\s*\(!.*\)',  # NULLチェック
+            r'return\s+TEE_ERROR_'  # エラーリターン
+        ]
+        
+        for pattern in validation_patterns:
+            if re.search(pattern, code):
+                return True
+        return False
+
     def get_stats(self) -> dict:
         """統計情報を取得"""
         return self.stats.copy()
+    
