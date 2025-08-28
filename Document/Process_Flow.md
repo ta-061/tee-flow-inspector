@@ -87,7 +87,7 @@ graph TB
     
     GenerateDummy[ダミーDB生成]
     GenerateDummy --> CollectCFiles[*.c ファイル収集]
-    CollectCFiles --> CreateEntries[コンパイルエントリ作成<br/>-I{ta_dir}<br/>-I{ta_dir}/include<br/>-I{devkit}/include]
+    CollectCFiles --> CreateEntries[コンパイルエントリ作成<br/>-I&#123;ta_dir&#125;<br/>-I&#123;ta_dir&#125;/include<br/>-I&#123;devkit&#125;/include]
     CreateEntries --> SaveDB
     
     SaveDB --> End([終了])
@@ -270,7 +270,7 @@ graph TB
     MoreFuncs -->|Yes| AnalyzeLoop
     MoreFuncs -->|No| Dedup
     
-    Dedup[重複排除<br/>(name, param_index)で<br/>ユニーク化]
+    Dedup[重複排除<br/>&#40;name, param_index&#41;で<br/>ユニーク化]
     
     Dedup --> CollectStats[統計情報収集]
     
@@ -993,7 +993,7 @@ graph TB
     
     CheckIndex{既存インデックス<br/>存在?}
     CheckIndex -->|Yes| LoadIndex[インデックス読み込み<br/>・メタデータ復元<br/>・統計情報復元]
-    CheckIndex -->|No| WaitBuild[build_index()<br/>実行待機]
+    CheckIndex -->|No| WaitBuild[build_index&#40;&#41;<br/>実行待機]
     
     LoadIndex --> Ready([準備完了])
     WaitBuild --> Ready
@@ -1256,20 +1256,20 @@ graph TB
     
     %% OpenAI系処理
     OpenAIFlow --> OpenAIClient[OpenAI Client使用]
-    OpenAIClient --> CreateCompletion[chat.completions.create()]
+    OpenAIClient --> CreateCompletion[chat.completions.create&#40;&#41;]
     CreateCompletion --> OpenAIParams[パラメータ設定<br/>・model<br/>・temperature: 0.0<br/>・max_tokens: 4096<br/>・timeout: 60]
     
     %% Claude処理
     ClaudeFlow --> ClaudeClient[Anthropic Client使用]
     ClaudeClient --> ConvertMessages[メッセージ変換<br/>・systemをuserに統合]
-    ConvertMessages --> CreateMessage[messages.create()]
+    ConvertMessages --> CreateMessage[messages.create&#40;&#41;]
     CreateMessage --> ClaudeParams[パラメータ設定<br/>・model<br/>・temperature: 0.0<br/>・max_tokens: 4096]
     
     %% Gemini処理
     GeminiFlow --> GeminiClient[GenerativeModel使用]
-    GeminiClient --> StartChat[start_chat()初期化]
+    GeminiClient --> StartChat[start_chat&#40;&#41;初期化]
     StartChat --> MergeSystem[システムメッセージ統合<br/>・最初のuserに結合]
-    MergeSystem --> SendMessage[send_message()]
+    MergeSystem --> SendMessage[send_message&#40;&#41;]
     SendMessage --> GeminiParams[パラメータ設定<br/>・temperature: 0.0<br/>・max_output_tokens: 8192<br/>・safety_settings]
     
     %% ローカル処理
@@ -1384,7 +1384,7 @@ graph TB
     
     FatalLog --> DisplaySummary[サマリー表示<br/>・エラー履歴<br/>・診断ファイル一覧]
     
-    DisplaySummary --> SystemExit[sys.exit(1)]
+    DisplaySummary --> SystemExit[sys.exit&#40;1&#41;]
     RecoverSuccess --> Continue[処理継続]
     
     style ErrorOccur fill:#ffcdd2
