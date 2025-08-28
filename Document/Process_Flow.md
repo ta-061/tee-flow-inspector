@@ -25,12 +25,12 @@ graph TB
 
 ```mermaid
 graph TB
-    Start([開始]) --> CheckStale{古い依存関係<br/>ファイル存在?}
+    Start([開始]) --> CheckStale{古い依存関係ファイル<br/>存在?}
     
-    CheckStale -->|Yes| ScanDeps[/*.d ファイルをスキャン]
+    CheckStale -->|Yes| ScanDeps[「*.d」ファイルをスキャン]
     CheckStale -->|No| TryBuild
     
-    ScanDeps --> CheckPath{"/mnt/disk/toolschain"<br/>を含む?}
+    ScanDeps --> CheckPath{「/mnt/disk/toolschain」<br/>を含む?}
     CheckPath -->|Yes| DeleteFile[ファイル削除]
     CheckPath -->|No| NextFile[次のファイル]
     
@@ -709,7 +709,7 @@ graph LR
 
 ```mermaid
 graph TB
-    Start([開始]) --> LoadInputs[入力ファイル読込<br/>・vulnerabilities.json<br/>・phase12.json<br/>・sinks.json（任意）]
+    Start([開始]) --> LoadInputs[入力ファイル読込<br/>・vulnerabilities.json<br/>・phase12.json<br/>・sinks.json 任意]
     
     LoadInputs --> CheckLogFile{ログファイル<br/>存在?}
     
