@@ -134,6 +134,14 @@ class CodeExtractor:
         
         return code_lines
     
+    def _strip_comments(self, line: str) -> str:
+        """ソースコードからコメントを削除"""
+        # // コメントを削除
+        line = re.sub(r"//.*", "", line)
+        # /* ... */ コメント（単行のみ）を削除
+        line = re.sub(r"/\*.*?\*/", "", line)
+        return line.rstrip()
+
     def _extract_function_call_context(self, vd: dict) -> str:
         """外部関数の呼び出しコンテキストを抽出（複数行対応）"""
         file_path = Path(vd["file"])
@@ -147,43 +155,34 @@ class CodeExtractor:
         
         # vd["line"]が配列の場合の処理
         if isinstance(vd.get("line"), list):
-            # 複数行の呼び出し
             line_numbers = vd["line"]
             context_lines = []
-            
-            # 最小と最大の行番号を取得
             min_line = min(line_numbers)
             max_line = max(line_numbers)
-            
-            # コンテキストを含めて返す（前後5行）
+
             context_start = max(0, min_line - 6)
             context_end = min(len(lines), max_line + 5)
-            
+
             for i in range(context_start, context_end):
-                # 呼び出し行は >>> でマーク
-                if (i + 1) in line_numbers:
-                    prefix = ">>> "
-                else:
-                    prefix = "    "
-                context_lines.append(f"{i + 1}: {prefix}{lines[i]}")
-            
+                raw_line = lines[i]
+                clean_line = self._strip_comments(raw_line)
+                prefix = ">>> " if (i + 1) in line_numbers else "    "
+                context_lines.append(f"{i + 1}: {prefix}{clean_line}")
+
             return f"// Call at lines {line_numbers}:\n" + "\n".join(context_lines)
+
         else:
-            # 単一行の呼び出し（既存のロジック）
-            call_line = vd["line"] - 1  # 0-indexed
-            
-            # 呼び出し文を抽出
-            call_statement = self._extract_complete_statement(lines, call_line)
-            
-            # コンテキストを含めて返す（前後5行）
+            call_line = vd["line"] - 1
             context_start = max(0, call_line - 5)
             context_end = min(len(lines), call_line + 6)
-            
+
             context_lines = []
             for i in range(context_start, context_end):
+                raw_line = lines[i]
+                clean_line = self._strip_comments(raw_line)
                 prefix = ">>> " if i == call_line else "    "
-                context_lines.append(f"{i + 1}: {prefix}{lines[i]}")
-            
+                context_lines.append(f"{i + 1}: {prefix}{clean_line}")
+
             return f"// Call at line {vd['line']}:\n" + "\n".join(context_lines)
     
     def _extract_complete_statement(self, lines: List[str], start_line: int) -> str:
