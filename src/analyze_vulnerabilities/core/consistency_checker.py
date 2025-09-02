@@ -33,18 +33,16 @@ class ConsistencyChecker:
     def __init__(self, vuln_parser=None, logger=None, debug: bool = False, mode: str = "lenient"):
         """
         初期化
-        
+
         Args:
-            vuln_parser: VulnerabilityParserインスタンス（後方互換性のため）
-            logger: ロガーインスタンス（後方互換性のため）
+            vuln_parser: VulnerabilityParserインスタンス（任意）
+            logger: ロガーインスタンス（任意）
             debug: デバッグモード
-            mode: チェックモード
-                - "lenient": 緩和モード（デフォルト）- suspectedに降格
-                - "strict": 厳格モード - noに降格（旧挙動）
+            mode: "lenient"（既定） or "strict"
         """
         self.vuln_parser = vuln_parser
         self.logger = logger
-        self.debug = debug or (logger is not None)  # loggerがあればdebugも有効
+        self.debug = debug or (logger is not None)
         self.mode = mode
         self.stats = {
             "consistency_checks": 0,
@@ -56,9 +54,9 @@ class ConsistencyChecker:
             "inconsistencies_found": 0,
             "false_positive_detections": 0
         }
-        
-        # loggerが提供されている場合、デバッグ出力をloggerにも送る
-        self._original_print = print  # これを追加
+
+        # LLMログも拾うオプション
+        self._original_print = print
         if self.logger and self.debug:
             def print_with_logger(*args, **kwargs):
                 self._original_print(*args, **kwargs)
@@ -67,8 +65,23 @@ class ConsistencyChecker:
         elif self.debug:
             self.print = self._original_print
         else:
-            # debugがFalseの場合は何も出力しない
             self.print = lambda *args, **kwargs: None
+
+        # === Policy sets ===
+        # Crypto API は UO のシンクから除外し、Crypto API のみ到達では yes にしない
+        self.crypto_sinks = {
+            "TEE_AsymmetricEncrypt", "TEE_AsymmetricDecrypt",
+            "TEE_AEInit", "TEE_AEUpdate", "TEE_AEUpdateAAD",
+            "TEE_AEEncryptFinal", "TEE_AEDecryptFinal",
+            "TEE_CipherInit", "TEE_CipherUpdate", "TEE_CipherDoFinal"
+        }
+        # “危険シンク”（コピー/出力）— これらが後段に無ければ Crypto だけでは脆弱性にしない
+        self.dangerous_sinks = {
+            "TEE_MemMove", "memcpy", "memmove",
+            "snprintf", "vsnprintf", "sprintf",
+            "strcpy", "strncpy", "TEE_MemFill"
+        }
+
     
     def _salvage_findings(self, response: str) -> Optional[List[Dict]]:
         """
@@ -150,63 +163,49 @@ class ConsistencyChecker:
         metadata: Optional[Dict] = None
     ) -> Tuple[bool, List[Dict], str]:
         """
-        脆弱性判定とfindingsの一貫性をチェック（改善版）
-        
-        Args:
-            vuln_found: 脆弱性が見つかったかどうか
-            findings: 発見された脆弱性のリスト
-            response: LLMの生の応答（救済抽出用）
-            metadata: 追加のメタデータ
-            
-        Returns:
-            (調整後のvuln_found, 調整後のfindings, 調整理由)
-            ※suspectedの場合はFalseを返し、findings内のsuspectedフラグで識別
+        脆弱性判定とfindingsの一貫性をチェック（改善版＋Crypto到達ガード）
         """
         self.stats["consistency_checks"] += 1
         reason = ""
-        
-        # 基本的な一貫性チェック
+
+        # ❶ Crypto API のみ到達なら降格（危険シンク無し）
+        sink_name = (metadata or {}).get("sink")
+        if vuln_found and self._is_crypto_sink_name(sink_name):
+            if not self._has_dangerous_output_sink(findings, response):
+                reason = "crypto_sink_exclusion: crypto-only sink with no dangerous post-crypto copy/output"
+                self.stats["downgrades_to_no"] += 1
+                if self.debug:
+                    self.print(f"[DEBUG] {reason} (sink={sink_name})")
+                return False, [], reason
+
+        # 以下、既存ロジック（救済抽出・suspectedなど）
+        # --- vulnerability_found=yes だが findings が空 ---
         if vuln_found and not findings:
-            # vulnerability_found=yes だが findings が空の場合
             self.stats["inconsistencies_found"] += 1
-            
-            # まず救済抽出を試みる
             if response:
                 salvaged_findings = self._salvage_findings(response)
                 if isinstance(salvaged_findings, list) and len(salvaged_findings) > 0:
-                    # 救済成功
                     reason = "Salvaged findings from response"
                     self.stats["upgrades_to_yes"] += 1
                     if self.debug:
                         self.print(f"[DEBUG] Salvaged {len(salvaged_findings)} findings, keeping vulnerability_found=yes")
                     return True, salvaged_findings, reason
-                elif isinstance(salvaged_findings, list) and len(salvaged_findings) == 0:  # 明示的に空のFINDINGS構造があった
-                    # 空のFINDINGS構造は脆弱性なしを意味する
+                elif isinstance(salvaged_findings, list) and len(salvaged_findings) == 0:
                     reason = "Empty FINDINGS structure found, downgrading to no"
-                    if self.mode == "strict":
-                        self.stats["downgrades_to_no"] += 1
-                        return False, [], reason
-                    else:
-                        # lenient モードでも、明示的な空構造は尊重
-                        self.stats["downgrades_to_no"] += 1
-                        return False, [], reason
-            
-            # 救済失敗または応答なし
+                    self.stats["downgrades_to_no"] += 1
+                    return False, [], reason
+
             if self.mode == "strict":
-                # 厳格モード: no に降格
                 reason = "No findings despite vulnerability_found=yes (strict mode)"
                 self.stats["downgrades_to_no"] += 1
                 if self.debug:
                     self.print(f"[DEBUG] Downgrading to no_vulnerability (strict mode)")
                 return False, [], reason
             else:
-                # 緩和モード: suspected として扱う（戻り値はFalseだがfindingsにフラグ付き）
                 reason = "No findings despite vulnerability_found=yes (suspected)"
                 self.stats["downgrades_to_suspected"] += 1
                 if self.debug:
                     self.print(f"[DEBUG] Marking as suspected vulnerability (lenient mode)")
-                
-                # メタデータに suspected フラグを追加
                 suspected_finding = {
                     "suspected": True,
                     "reason": "Inconsistent response - no findings provided",
@@ -214,71 +213,55 @@ class ConsistencyChecker:
                     "metadata": metadata or {}
                 }
                 return False, [suspected_finding], reason
-        
+
+        # --- vulnerability_found=no だが findings がある ---
         elif not vuln_found and findings:
-            # vulnerability_found=no だが findings がある場合
             self.stats["inconsistencies_found"] += 1
-            
-            # findings の内容を検証
             valid_findings = []
             for finding in findings:
-                # 誤検知の可能性をチェック
                 if self._is_likely_false_positive(finding):
                     self.stats["false_positive_detections"] += 1
                     if self.debug:
                         self.print(f"[DEBUG] Detected likely false positive: {finding}")
                 else:
                     valid_findings.append(finding)
-            
             if valid_findings:
-                # 有効な findings がある場合は yes にアップグレード
                 reason = "Valid findings found despite vulnerability_found=no"
                 self.stats["upgrades_to_yes"] += 1
                 if self.debug:
                     self.print(f"[DEBUG] Upgrading to vulnerability_found=yes due to {len(valid_findings)} valid findings")
                 return True, valid_findings, reason
             else:
-                # すべて誤検知の場合
                 reason = "All findings appear to be false positives"
                 return False, [], reason
-        
-        # 一貫性がある場合
+
+        # 一貫性あり
         return vuln_found, findings, "Consistent"
     
     def _is_likely_false_positive(self, finding: Dict) -> bool:
         """
         findingが誤検知の可能性が高いかチェック
-        
-        Args:
-            finding: チェック対象のfinding
-            
-        Returns:
-            誤検知の可能性が高い場合True
         """
-        # 誤検知のパターン
+        # Crypto API を最終シンクにした UO/WIV は FP 寄りと扱う
+        sink_func = finding.get("sink_function") or finding.get("sink")
+        category = finding.get("category")
+        if isinstance(sink_func, str) and self._is_crypto_sink_name(sink_func):
+            if category in ("unencrypted_output", "weak_input_validation", None):
+                return True
+
         false_positive_indicators = [
-            # 情報不足
             finding.get("line") == 0 or finding.get("line") is None,
             finding.get("function") in ["unknown", None, ""],
             finding.get("file") in ["unknown", None, "", "<unknown>"],
-            
-            # プレースホルダー
             str(finding.get("file", "")).startswith("<") and str(finding.get("file", "")).endswith(">"),
-            
-            # 無効なルール
             finding.get("rule_matches", {}).get("rule_id", []) == [] and 
             finding.get("rule_matches", {}).get("others", []) == [],
-            
-            # 疑わしいメッセージ
             finding.get("message", "").lower() in ["", "none", "n/a", "unknown"],
-            
-            # suspected フラグ
             finding.get("suspected", False)
         ]
-        
-        # 2つ以上の指標が該当する場合は誤検知の可能性が高い
         indicator_count = sum(1 for indicator in false_positive_indicators if indicator)
         return indicator_count >= 2
+
     
     def validate_chain_analysis(
         self,
@@ -460,22 +443,21 @@ class ConsistencyChecker:
     
     def validate_taint_flow(self, results: Dict, chain: List[str], vd: Dict) -> bool:
         """
-        テイントフローの妥当性を検証
-        
-        ヒューリスティクス:
-          1) taint_analysis のどこかで sink 到達 or vulnerability=true が示唆されている
-          2) inline_findings に end 相当 or VULNERABILITY があり、vd.sink と一致
-          
-        Args:
-            results: 解析結果
-            chain: 関数チェーン
-            vd: 脆弱性記述
-            
-        Returns:
-            有効なテイントフローが存在する場合True
+        テイントフローの妥当性を検証（Crypto到達ガード付き）
+
+        1) どこかで sink 到達 or vulnerability=true
+        2) inline_findings の end 相当 or VULNERABILITY があり、vd.sink と一致
+        +) 追加: sink が Crypto API かつ危険シンクが後続に無ければ False
         """
         try:
-            # 1) taint_analysis 由来
+            sink_name = vd.get("sink")
+            if self._is_crypto_sink_name(sink_name):
+                if not self._has_dangerous_output_sink(results.get("inline_findings", []),
+                                                    results.get("vulnerability")):
+                    # Crypto API のみ到達は有効な「危険シンク到達」とみなさない
+                    return False
+
+            # 既存ロジック
             for step in results.get("taint_analysis", []):
                 analysis = step.get("analysis", {})
                 if isinstance(analysis, dict):
@@ -484,7 +466,6 @@ class ConsistencyChecker:
                     if analysis.get("vulnerability") is True:
                         return True
 
-            # 2) inline_findings 由来
             sink_name = vd.get("sink")
             for f in results.get("inline_findings", []):
                 phase = str(f.get("phase", "")).lower()
@@ -494,6 +475,22 @@ class ConsistencyChecker:
             return False
         except Exception:
             return False
+
+        
+    def _is_crypto_sink_name(self, name: Optional[str]) -> bool:
+        return isinstance(name, str) and name in self.crypto_sinks
+
+    def _has_dangerous_output_sink(self, findings: List[Dict], response: Optional[str]) -> bool:
+        # Findings 内の sink_function を確認
+        for f in findings or []:
+            sink = f.get("sink_function") or f.get("sink")
+            if isinstance(sink, str) and any(ds in sink for ds in self.dangerous_sinks):
+                return True
+        # 念のため LLM応答の生テキストも走査
+        if isinstance(response, str) and any(ds in response for ds in self.dangerous_sinks):
+            return True
+        return False
+
     
     def get_stats(self) -> Dict:
         """統計情報を取得"""

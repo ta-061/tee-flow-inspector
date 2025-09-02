@@ -5,10 +5,10 @@ HTML整形ユーティリティモジュール
 各種データをHTML形式に変換
 """
 
-import html
+import html as html_module
 import json
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 def format_message_content(msg: str) -> str:
     """メッセージ内容をHTMLフォーマット"""
@@ -16,8 +16,8 @@ def format_message_content(msg: str) -> str:
         return ""
     
     # HTMLエスケープ
-    msg = html.escape(msg)
-    
+    msg = html_module.escape(msg)
+
     # JSONブロックを検出して整形
     def format_json_block(match):
         json_str = match.group(0)
@@ -26,21 +26,21 @@ def format_message_content(msg: str) -> str:
             obj = json.loads(json_str)
             formatted = json.dumps(obj, indent=2, ensure_ascii=False)
             # JSON内の特定の要素をハイライト
-            formatted = html.escape(formatted)
+            formatted = html_module.escape(formatted)
             formatted = re.sub(r'"(\w+)":', r'<span class="json-key">"\1":</span>', formatted)
             formatted = re.sub(r':\s*"([^"]*)"', r': <span class="json-string">"\1"</span>', formatted)
             formatted = re.sub(r':\s*(\d+)', r': <span class="json-number">\1</span>', formatted)
             formatted = re.sub(r':\s*(true|false)', r': <span class="json-boolean">\1</span>', formatted)
             return f'<pre class="json-display">{formatted}</pre>'
         except:
-            return f'<pre>{html.escape(json_str)}</pre>'
+            return f'<pre>{html_module.escape(json_str)}</pre>'
     
     # JSON形式の文字列を検出（改善版）
     msg = re.sub(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', format_json_block, msg)
     
     # コードブロックを処理
     msg = re.sub(r'```(\w*)\n(.*?)```', 
-                 lambda m: f'<pre class="code-block">{html.escape(m.group(2))}</pre>', 
+                 lambda m: f'<pre class="code-block">{html_module.escape(m.group(2))}</pre>', 
                  msg, flags=re.DOTALL)
     
     # インラインコードを処理
@@ -69,7 +69,7 @@ def generate_chain_html(chain_name: str, conversation: List[Dict],
     chain_parts = chain_name.split(" -> ")
     flow_html = ""
     for i, part in enumerate(chain_parts):
-        flow_html += f'<span class="flow-item">{html.escape(part)}</span>'
+        flow_html += f'<span class="flow-item">{html_module.escape(part)}</span>'
         if i < len(chain_parts) - 1:
             flow_html += '<span class="flow-arrow">→</span>'
     
@@ -85,7 +85,7 @@ def generate_chain_html(chain_name: str, conversation: List[Dict],
                 <div class="message system-message">
                     <div class="message-header">
                         <span class="message-role system">システム</span>
-                        <span class="message-function">{html.escape(msg.get("function", ""))}</span>
+                        <span class="message-function">{html_module.escape(msg.get("function", ""))}</span>
                     </div>
                     <div class="message-content">
                         {format_message_content(msg.get("message", ""))}
@@ -98,7 +98,7 @@ def generate_chain_html(chain_name: str, conversation: List[Dict],
                 
                 function_info = ""
                 if msg.get("function"):
-                    function_info = f'<span class="message-function">({html.escape(msg["function"])})</span>'
+                    function_info = f'<span class="message-function">({html_module.escape(msg["function"])})</span>'
                 
                 # セクション情報を追加
                 section_info = ""
@@ -140,16 +140,16 @@ def generate_chain_html(chain_name: str, conversation: List[Dict],
             vuln_details_html = f"""
             <div class="vulnerability-info">
                 <h5>脆弱性情報</h5>
-                <p><strong>タイプ:</strong> {html.escape(vuln_type)}</p>
-                <p><strong>深刻度:</strong> {html.escape(severity)}</p>
-                <p><strong>説明:</strong> {html.escape(description)}</p>
+                <p><strong>タイプ:</strong> {html_module.escape(vuln_type)}</p>
+                <p><strong>深刻度:</strong> {html_module.escape(severity)}</p>
+                <p><strong>説明:</strong> {html_module.escape(description)}</p>
             </div>
             """
     
     return f"""
     <div class="chain-item">
         <div class="chain-header">
-            <div class="chain-title">{html.escape(chain_name)}</div>
+            <div class="chain-title">{html_module.escape(chain_name)}</div>
             <span class="chain-status {status_class}">{status_text}</span>
         </div>
         <div class="chain-flow">
@@ -262,97 +262,217 @@ def generate_token_usage_html(statistics: Dict, sinks_data: Optional[Dict] = Non
     </section>
     """
 
-def generate_vulnerability_details_html(vulnerabilities: List[Dict]) -> str:
-    """脆弱性詳細のHTML生成"""
+
+def _safe(s, default=""):
+    return default if s is None else str(s)
+
+def _to_lines(line_field):
+    if isinstance(line_field, list):
+        return ", ".join(str(x) for x in line_field)
+    if line_field is None:
+        return ""
+    return str(line_field)
+
+def _get_last_step_rule_ids(vuln: Dict[str, Any]) -> List[str]:
+    last = None
+    for step in (vuln.get("taint_analysis") or []):
+        if last is None or (step.get("position", -1) > last.get("position", -1)):
+            last = step
+    return (((last or {}).get("analysis") or {}).get("rule_matches") or {}).get("rule_id") or []
+
+def _extract_primary_vuln_json(vstr: str) -> Dict[str, Any]:
+    """vulnerability文字列に複数JSONが連結されていても、先頭JSONだけ拾う"""
+    try:
+        m = re.search(r"\{.*?\}", _safe(vstr), re.S)
+        return {} if not m else json.loads(m.group(0))
+    except Exception:
+        return {}
+
+def generate_vulnerability_details_html(vulnerabilities: List[Dict[str, Any]]) -> str:
+    """
+    脆弱性カード（上段）をテンプレート標準のスタイルで出力する。
+    - セクション: <section class="vulnerabilities-section">
+    - 各項目   : <div class="vulnerability-detail"> 配下に .severity バッジなど
+    - タイプ   : taint_analysis の最終ステップ rule_matches.rule_id[0]（あれば CWE を併記）
+    - 深刻度   : vulnerability JSON から取得（fallback=medium）
+    - 説明     : inline_findings.message（重複除去・最大3件）＋ decision/impact/preconditions
+    - 折り返し : overflow-wrap:anywhere; を要所に付与してはみ出し防止
+    """
+    import re, json
+    import html as html_module
+
     if not vulnerabilities:
         return ""
-    
-    vuln_html = ""
-    for idx, vuln in enumerate(vulnerabilities, 1):
-        chain = vuln.get("chain", [])
-        chain_str = " -> ".join(chain)
-        vd = vuln.get("vd", {})
-        
-        # 脆弱性の詳細情報
-        details = vuln.get("vulnerability_details", {}).get("details", {})
-        vuln_type = details.get("vulnerability_type", "Unknown")
-        severity = details.get("severity", "Unknown")
-        description = details.get("description", "")
-        
-        # 深刻度に応じたクラス
-        severity_class = severity.lower() if severity else "unknown"
-        
-        vuln_html += f"""
-        <div class="vulnerability-detail">
-            <div class="vuln-header">
-                <h3>脆弱性 #{idx}: {html.escape(vd.get("sink", "Unknown"))}</h3>
-                <span class="severity {severity_class}">{html.escape(severity.upper())}</span>
-            </div>
-            <div class="vuln-content">
-                <p><strong>チェーン:</strong> <code>{html.escape(chain_str)}</code></p>
-                <p><strong>場所:</strong> {html.escape(vd.get("file", "Unknown"))}:{vd.get("line", "?")}</p>
-                <p><strong>タイプ:</strong> {html.escape(vuln_type)}</p>
-                <p><strong>説明:</strong> {html.escape(description)}</p>
-            </div>
-        </div>
-        """
-    
-    return f"""
-    <section class="vulnerabilities-section">
-        <h2>🚨 検出された脆弱性</h2>
-        {vuln_html}
-    </section>
-    """
 
-def generate_inline_findings_html(inline_findings: List[Dict]) -> str:
-    """Inline Findingsの詳細HTML生成"""
-    import html as html_module  # 明示的にインポート
-    
+    def _safe(s, default=""):
+        return default if s is None else str(s)
+
+    def _to_lines(line_field):
+        if isinstance(line_field, list):
+            return ", ".join(str(x) for x in line_field)
+        if line_field is None:
+            return ""
+        return str(line_field)
+
+    def _get_last_step_rule_ids(vuln: Dict[str, Any]) -> List[str]:
+        last = None
+        for step in (vuln.get("taint_analysis") or []):
+            if last is None or (step.get("position", -1) > last.get("position", -1)):
+                last = step
+        return (((last or {}).get("analysis") or {}).get("rule_matches") or {}).get("rule_id") or []
+
+    def _extract_primary_vuln_json(vstr: str) -> Dict[str, Any]:
+        try:
+            m = re.search(r"\{.*?\}", _safe(vstr), re.S)
+            return {} if not m else json.loads(m.group(0))
+        except Exception:
+            return {}
+
+    out = [
+        '<section class="vulnerabilities-section">',
+        '<h2>🔍 検出された脆弱性</h2>'
+    ]
+
+    for i, v in enumerate(vulnerabilities, start=1):
+        vd = v.get("vd") or {}
+        sink = _safe(vd.get("sink"), "Unknown")
+        file_path = _safe(vd.get("file"), "Unknown")
+        lines = _to_lines(vd.get("line"))
+        chain = " -> ".join(v.get("chain") or [])
+
+        # タイプ（最後のステップの rule_id から）
+        rule_ids = _get_last_step_rule_ids(v)
+        vtype = rule_ids[0] if rule_ids else "Unknown"
+
+        # severity / CWE を vulnerability 文字列から
+        vjson = _extract_primary_vuln_json(_safe(v.get("vulnerability", "")))
+        severity = _safe((vjson.get("severity") or "medium")).lower()
+        if severity not in ("critical", "high", "medium", "low"):
+            severity = "unknown"
+        cwe = vjson.get("vulnerability_type")
+
+        # 説明の構築
+        msgs = []
+        for f in (v.get("inline_findings") or []):
+            m = (f or {}).get("message")
+            if m:
+                msgs.append(m.strip())
+        # 重複削除（順序維持）
+        seen, uniq = set(), []
+        for m in msgs:
+            if m not in seen:
+                seen.add(m)
+                uniq.append(m)
+        left = " / ".join(uniq[:3]) if uniq else ""
+
+        decision = vjson.get("decision_rationale")
+        impact = (vjson.get("exploitation_analysis") or {}).get("impact")
+        precond = (vjson.get("exploitation_analysis") or {}).get("preconditions")
+        tail = []
+        if decision:
+            tail.append(f"Rationale: {decision}")
+        if impact:
+            tail.append(f"Impact: {impact}")
+        if precond:
+            tail.append("Preconditions: " + (", ".join(precond) if isinstance(precond, list) else str(precond)))
+        right = " ".join(tail)
+
+        description = " / ".join([p for p in (left, right) if p]) or "—"
+        type_line = f"{vtype} / {cwe}" if cwe else vtype
+
+        # HTML（テンプレ既存クラスに合わせる）
+        out.append(
+            f"""
+<div class="vulnerability-detail">
+  <div class="vuln-header">
+    <h3>脆弱性 #{i}: {html_module.escape(sink)}</h3>
+    <span class="severity {html_module.escape(severity)}">{html_module.escape(severity.upper())}</span>
+  </div>
+  <div class="vuln-content" style="overflow-wrap:anywhere;">
+    <p><strong>チェーン:</strong> <span style="overflow-wrap:anywhere;">{html_module.escape(chain)}</span></p>
+    <p><strong>場所:</strong> <span style="overflow-wrap:anywhere;">{html_module.escape(file_path)}:{html_module.escape(lines)}</span></p>
+    <p><strong>タイプ:</strong> <span style="overflow-wrap:anywhere;">{html_module.escape(type_line)}</span></p>
+    <p><strong>説明:</strong> <span style="overflow-wrap:anywhere;">{html_module.escape(description)}</span></p>
+  </div>
+</div>
+""".strip()
+        )
+
+    out.append("</section>")
+    return "\n".join(out)
+
+
+def generate_inline_findings_html(inline_findings: List[Dict[str, Any]], rule_index: Dict = None) -> str:
+    """
+    Inline Findings（下段）
+    - rule_index から最終ステップ rule_id を補完（なければ inline の rule_matches）
+    - 折り返し強化ではみ出し防止
+    """
+    rule_index = rule_index or {}
     if not inline_findings:
         return ""
-    
-    html_content = '<section class="inline-findings-section">'
-    html_content += '<h2>📋 Inline Findings (詳細な検出情報)</h2>'
-    html_content += '<div class="findings-grid">'
-    
-    for finding in inline_findings:
-        # タイプによる分類
-        finding_type = finding.get("type", finding.get("category", "Unknown"))
-        severity = finding.get("severity", "medium").lower()
-        
-        # メッセージの生成
-        message = finding.get("message", finding.get("details", "No details"))
-        function = finding.get("function", "Unknown")
-        line = finding.get("line", 0)
-        file_path = finding.get("file", "Unknown")
-        phase = finding.get("phase", "unknown")
-        
-        # ルールマッチ情報
-        rule_matches = finding.get("rule_matches", {})
-        rule_ids = rule_matches.get("rule_id", [])
-        
-        html_content += f"""
-        <div class="inline-finding {severity}">
-            <div class="finding-header">
-                <span class="finding-type">{html_module.escape(finding_type)}</span>
-                <span class="finding-severity {severity}">{severity.upper()}</span>
-            </div>
-            <div class="finding-details">
-                <p><strong>関数:</strong> <code>{html_module.escape(function)}</code></p>
-                <p><strong>場所:</strong> {html_module.escape(file_path)}:{line}</p>
-                <p><strong>フェーズ:</strong> {html_module.escape(phase)}</p>
-                <p><strong>詳細:</strong> {html_module.escape(message)}</p>
-                {f'<p><strong>ルール:</strong> {", ".join(rule_ids)}</p>' if rule_ids else ''}
-            </div>
-        </div>
-        """
-    
-    html_content += '</div></section>'
-    return html_content
+
+    def esc(x): return html_module.escape("" if x is None else str(x))
+
+    out = [
+        '<section class="inline-findings-section">',
+        '<h2>📋 Inline Findings (詳細な検出情報)</h2>',
+        '<div class="findings-grid">'
+    ]
+
+    for f in inline_findings:
+        file_path = f.get("file")
+        sink_function = f.get("sink_function") or f.get("function")
+        line_val = f.get("line")
+        first_line = (line_val[0] if isinstance(line_val, list) and line_val else line_val)
+        chain_key = tuple(f.get("chain") or [])
+
+        rule_ids_from_ta = (
+            rule_index.get(("by_loc", file_path, first_line, sink_function))
+            or rule_index.get(("by_chain", chain_key))
+            or []
+        )
+        inline_rule_ids = ((f.get("rule_matches") or {}).get("rule_id")) or []
+        rule_ids = rule_ids_from_ta or inline_rule_ids
+        heading = (rule_ids[0] if rule_ids else (f.get("category") or f.get("type") or "Unknown"))
+
+        severity = (f.get("severity") or "medium").lower()
+        function = f.get("function") or "Unknown"
+        phase = f.get("phase") or "unknown"
+        message = f.get("message") or f.get("details") or "No details"
+        code_excerpt = f.get("code_excerpt")
+
+        if isinstance(line_val, list):
+            line_text = ", ".join(map(str, line_val)) if line_val else "?"
+        else:
+            line_text = ("?" if line_val is None else str(line_val))
+
+        rules_text = ", ".join(map(str, rule_ids)) if rule_ids else ""
+
+        out.append(
+            f"""
+<div class="inline-finding {esc(severity)}" style="overflow-wrap:anywhere;">
+  <div class="finding-header">
+    <span class="finding-type">{esc(heading)}</span>
+    <span class="finding-severity {esc(severity)}">{esc(severity.upper())}</span>
+  </div>
+  <div class="finding-details" style="overflow-wrap:anywhere;">
+    <p><strong>関数:</strong> <code>{esc(function)}</code></p>
+    <p><strong>場所:</strong> {esc(file_path)}:{esc(line_text)}</p>
+    <p><strong>フェーズ:</strong> {esc(phase)}</p>
+    <p><strong>詳細:</strong> {esc(message)}</p>
+    {f'<p><strong>ルール:</strong> {esc(rules_text)}</p>' if rules_text else ''}
+    {f'<pre><code style="white-space:pre-wrap;word-break:break-word">{esc(code_excerpt)}</code></pre>' if code_excerpt else ''}
+  </div>
+</div>
+""".strip()
+        )
+
+    out.append('</div></section>')
+    return "\n".join(out)
 
 def generate_sinks_summary_html(sinks_data: Dict) -> str:
     """シンク特定結果のHTML生成"""
-    import html as html_module  # 明示的にインポート
     
     if not sinks_data or not sinks_data.get("sinks"):
         return ""

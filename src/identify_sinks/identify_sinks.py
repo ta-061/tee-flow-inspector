@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 フェーズ3: フェーズ1-2の結果を読み込んで、呼び出されている外部 API だけをLLMに問い、シンク候補をJSON出力する
-LLMエラー処理モジュールを使用した改善版（解析時間計測機能追加）
+ルールエンジン（PatternMatcher）を廃止し、常に LLM（任意でRAG）による判定のみを実行する版
 """
 
 import sys
@@ -14,13 +14,9 @@ from pathlib import Path
 from typing import Optional, Dict, List
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# ルールエンジンをインポート
-from rule_engine.pattern_matcher import PatternMatcher
-
 # LLMエラー処理モジュールをインポート
 from llm_settings.llm_error_handler import (
     LLMRetryHandler,
-    LLMErrorLogger,
     create_retry_handler
 )
 
@@ -153,18 +149,7 @@ def analyze_external_function_as_sink(client, func_name: str, log_file: Path,
                                      use_rag: bool = True, project_name: str = "",
                                      retry_handler: LLMRetryHandler = None) -> tuple[list[dict], float]:
     """
-    外部関数をシンクとして分析
-    
-    Args:
-        client: LLMクライアント
-        func_name: 関数名
-        log_file: ログファイルパス
-        use_rag: RAG使用フラグ
-        project_name: プロジェクト名
-        retry_handler: リトライハンドラー
-    
-    Returns:
-        (シンクのリスト, 解析時間)のタプル
+    外部関数をシンクとして分析（LLM専用）
     """
     start_time = time.time()  # 解析開始時間
     
@@ -222,7 +207,7 @@ def analyze_external_function_as_sink(client, func_name: str, log_file: Path,
     if not resp:
         return [], time.time() - start_time
     
-    # パターンマッチングでシンク情報を抽出
+    # パターンマッチングでシンク情報を抽出（LLM出力の定形フォーマット）
     pattern = re.compile(
         r"\(\s*function:\s*([A-Za-z_][A-Za-z0-9_]*)\s*;\s*"
         r"param_index:\s*(\d+)\s*;\s*"
@@ -272,14 +257,13 @@ def format_time(seconds: float) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="フェーズ3: シンク特定 (RAG対応)")
+    parser = argparse.ArgumentParser(description="フェーズ3: シンク特定（LLM専用／RAG対応）")
     parser.add_argument("-i", "--input", required=True, help="フェーズ1-2 JSON 結果ファイル")
     parser.add_argument("-o", "--output", required=True, help="出力 ta_sinks.json パス")
     parser.add_argument("--provider", help="使用するLLMプロバイダー (openai, claude, deepseek, local)")
     parser.add_argument("--no-rag", action="store_true", help="RAGを使用しない")
     parser.add_argument("--no-track-tokens", action="store_true", help="トークン使用量追跡を無効化")
-    parser.add_argument("--llm-only", action="store_true", 
-                       help="LLMのみで判定（PatternMatcherを使用しない）")
+    parser.add_argument("--llm-only", action="store_true", help="（互換用オプション／常にLLMのため無視されます）")
     parser.add_argument("--max-retries", type=int, default=3, 
                        help="LLM呼び出しの最大リトライ回数（デフォルト: 3）")
     args = parser.parse_args()
@@ -289,9 +273,6 @@ def main():
     
     # トークン追跡はデフォルトで有効
     track_tokens = not args.no_track_tokens
-    
-    # ルールエンジン使用フラグ
-    use_rules = not args.llm_only
     
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -314,14 +295,6 @@ def main():
     retry_handler = create_retry_handler(max_retries=args.max_retries, log_dir=log_dir)
     print(f"[INFO] LLM retry handler initialized (max retries: {args.max_retries})")
     print(f"[INFO] LLM logs will be saved to: {log_dir}")
-
-    # PatternMatcherの初期化（参考情報として使用）
-    matcher = PatternMatcher() if use_rules else None
-    
-    if args.llm_only:
-        print("[INFO] LLM-only mode enabled. All sink detection will be done by LLM.")
-    elif matcher:
-        print("[INFO] Rule engine mode enabled. Using PatternMatcher for known functions.")
 
     # プロバイダーが指定されていれば切り替え
     if args.provider:
@@ -361,86 +334,22 @@ def main():
     
     print(f"外部 API 関数: {len(called_external_funcs)} 個")
     
-    # 解析
-    print("外部 API 関数をシンクとして解析中...")
+    # 解析（常にLLM）
+    print("外部 API 関数をシンクとして解析中（LLMのみ）...")
     all_sinks = []
     
     # 各関数の解析時間を記録
     function_times = {}
     llm_analysis_time = 0.0  # LLM解析の合計時間
     
-    # PatternMatcherのデバッグ情報（LLM-onlyモードでは表示しない）
-    if use_rules and matcher:
-        print("\n[DEBUG] PatternMatcher initialized")
-        print(f"[DEBUG] Loaded rules count: {len(matcher.spec.get('rules', []))}")
-        print(f"[DEBUG] Known functions in index: {len(matcher._index)}")
-
     for func_name in sorted(called_external_funcs):
-        func_start_time = time.time()
-        
-        # LLM-onlyモード: 常にLLMに聞く
-        if args.llm_only:
-            print(f"  Analyzing {func_name} with LLM...")
-            sinks, analysis_time = analyze_external_function_as_sink(
-                client, func_name, log_file, use_rag, project_name, retry_handler
-            )
-            
-            llm_analysis_time += analysis_time
-            function_times[func_name] = analysis_time
-            
-            for s in sinks:
-                s["by"] = "llm"
-            all_sinks.extend(sinks)
-            
-            # 参考情報として、PatternMatcherがどう判定していたかをログに記録（オプション）
-            if matcher and matcher.is_sink(func_name):
-                dangerous_params = matcher.dangerous_params(func_name)
-                print(f"    [INFO] PatternMatcher would have identified params {dangerous_params} as sinks")
-                with open(log_file, "a", encoding="utf-8") as lf:
-                    lf.write(f"# [Reference] PatternMatcher for {func_name}: params {dangerous_params}\n\n")
-        
-        # 通常モード: PatternMatcherとLLMを併用
-        else:
-            print(f"\n[DEBUG] Analyzing: {func_name}")
-            if matcher:
-                print(f"  - Is known: {matcher.is_known(func_name)}")
-                print(f"  - Is sink: {matcher.is_sink(func_name)}")
-                print(f"  - Dangerous params: {matcher.dangerous_params(func_name)}")
-                print(f"  - Rule IDs: {matcher.rules_for(func_name)}")
-                
-                if matcher.is_sink(func_name):
-                    # ルールエンジンで確定したパラメータ
-                    for idx in matcher.dangerous_params(func_name):
-                        all_sinks.append({
-                            "kind": "function",
-                            "name": func_name,
-                            "param_index": idx,
-                            "reason": "DITING-rule",
-                            "by": "rule_engine"
-                        })
-                    function_times[func_name] = time.time() - func_start_time
-                else:
-                    # 未知 API → LLM/RAG
-                    sinks, analysis_time = analyze_external_function_as_sink(
-                        client, func_name, log_file, use_rag, project_name, retry_handler
-                    )
-                    llm_analysis_time += analysis_time
-                    function_times[func_name] = analysis_time
-                    
-                    for s in sinks:
-                        s["by"] = "llm"
-                    all_sinks.extend(sinks)
-            else:
-                # matcherがない場合はLLMのみ
-                sinks, analysis_time = analyze_external_function_as_sink(
-                    client, func_name, log_file, use_rag, project_name, retry_handler
-                )
-                llm_analysis_time += analysis_time
-                function_times[func_name] = analysis_time
-                
-                for s in sinks:
-                    s["by"] = "llm"
-                all_sinks.extend(sinks)
+        print(f"  Analyzing {func_name} with LLM...")
+        sinks, analysis_time = analyze_external_function_as_sink(
+            client, func_name, log_file, use_rag, project_name, retry_handler
+        )
+        llm_analysis_time += analysis_time
+        function_times[func_name] = analysis_time
+        all_sinks.extend(sinks)
     
     # 全体の解析時間を計算
     total_analysis_time = time.time() - total_start_time
@@ -450,7 +359,7 @@ def main():
     if llm_analysis_time > 0:
         print(f"  - LLM解析時間: {format_time(llm_analysis_time)}")
     
-    # 重複排除 & JSON出力
+    # 重複排除 & JSON出力（LLM由来のみ）
     unique = []
     seen = set()
     for s in all_sinks:
@@ -480,11 +389,9 @@ def main():
                 }
                 for func, t in sorted(function_times.items(), key=lambda x: x[1], reverse=True)
             }
-        }
+        },
+        "analysis_mode": "llm_only"
     }
-    
-    # モード情報を追加
-    result["analysis_mode"] = "llm_only" if args.llm_only else "hybrid"
     
     # トークン統計情報を追加
     if token_stats:

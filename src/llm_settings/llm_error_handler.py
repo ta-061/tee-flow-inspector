@@ -160,56 +160,64 @@ class ResponseDiagnostics:
             "encoding": sys.getdefaultencoding(),
             "provider": "Unknown",
             "model": "Unknown",
-            "api_keys_present": {
-                "OPENAI_API_KEY": bool(os.getenv("OPENAI_API_KEY")),
-                "ANTHROPIC_API_KEY": bool(os.getenv("ANTHROPIC_API_KEY")),
-                "DEEPSEEK_API_KEY": bool(os.getenv("DEEPSEEK_API_KEY")),
-                "AZURE_OPENAI_API_KEY": bool(os.getenv("AZURE_OPENAI_API_KEY")),
-                "GROQ_API_KEY": bool(os.getenv("GROQ_API_KEY"))
-            },
             "config_api_keys_present": {},
-            "current_provider_has_key": False,  # デフォルト値を設定
-            "environment_variables": {
-                "TA_DEV_KIT_DIR": os.getenv("TA_DEV_KIT_DIR", "Not set"),
-                "PYTHONPATH": bool(os.getenv("PYTHONPATH")),
-                "VIRTUAL_ENV": bool(os.getenv("VIRTUAL_ENV"))
-            }
+            "current_provider_has_key": False,
         }
 
-        
-        # クライアント情報の取得
-        if hasattr(client, 'config_manager'):
-            # UnifiedLLMClientの場合
+        # 1) client.config_manager があればそれを優先
+        used = False
+        if hasattr(client, "config_manager"):
             try:
-                for provider in ["openai", "claude", "deepseek", "groq"]:
-                    config = client.config_manager.get_provider_config(provider)
-                    api_key = config.get("api_key", "")
-                    env_info["config_api_keys_present"][provider] = bool(api_key)
-                
-                # 現在のプロバイダーの設定も取得
-                current_provider = client.get_current_provider()
-                current_config = client.config_manager.get_provider_config()
-                env_info["provider"] = current_provider
-                env_info["model"] = current_config.get("model", "Unknown")
-                env_info["current_provider_has_key"] = bool(current_config.get("api_key"))
-            except Exception as e:
-                # エラーが発生した場合はスキップ
-                pass
-        elif hasattr(client, 'get_current_provider'):
-            env_info["provider"] = client.get_current_provider()
-        
-        if hasattr(client, 'get_model'):
-            env_info["model"] = client.get_model()
-        elif hasattr(client, 'model'):
-            env_info["model"] = client.model
+                current_provider = None
+                if hasattr(client, "get_current_provider"):
+                    current_provider = client.get_current_provider()
 
-        try:
-            import psutil
-            process = psutil.Process()
-            env_info["memory_usage_mb"] = process.memory_info().rss / 1024 / 1024
-        except ImportError:
-            env_info["memory_usage_mb"] = "N/A"
-        
+                # current_provider が取得できた場合はそれで、できなければデフォルト取得にフォールバック
+                if current_provider:
+                    current_cfg = client.config_manager.get_provider_config(current_provider)
+                else:
+                    current_cfg = client.config_manager.get_provider_config()
+
+                # provider 名の確定
+                env_info["provider"] = current_provider or env_info["provider"]
+                if env_info["provider"] == "Unknown" and hasattr(client, "get_current_provider"):
+                    # 念のためもう一度
+                    try:
+                        env_info["provider"] = client.get_current_provider() or "Unknown"
+                    except Exception:
+                        pass
+
+                # モデル・鍵の有無
+                if isinstance(current_cfg, dict):
+                    env_info["model"] = current_cfg.get("model", "Unknown")
+                    api_key = current_cfg.get("api_key", "")
+                    p = env_info["provider"] if env_info["provider"] != "Unknown" else "active"
+                    env_info["config_api_keys_present"][p] = bool(api_key)
+                    env_info["current_provider_has_key"] = bool(api_key)
+                    used = True
+            except Exception:
+                used = False
+
+        # 2) フォールバック: 同一フォルダの llm_config.json を直接読む
+        if not used:
+            try:
+                cfg_path = Path(__file__).parent / "llm_config.json"
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+
+                active = cfg.get("active_provider")
+                providers = cfg.get("providers", {})
+                current_cfg = providers.get(active, {})
+
+                env_info["provider"] = active or "Unknown"
+                env_info["model"] = current_cfg.get("model", "Unknown")
+
+                api_key = current_cfg.get("api_key", "")
+                env_info["config_api_keys_present"][env_info["provider"]] = bool(api_key)
+                env_info["current_provider_has_key"] = bool(api_key)
+            except Exception:
+                # 読めない場合はそのまま（診断情報として Unknown が返る）
+                pass
         return env_info
     
     @staticmethod
@@ -292,19 +300,12 @@ class ResponseDiagnostics:
         
         # 環境ベースの原因分析
         env = diagnosis["environment_analysis"]
-        config_keys = env.get("config_api_keys_present", {})
-        current_has_key = env.get("current_provider_has_key", False)
-        if not current_has_key:
-            # 現在のプロバイダーにAPIキーがない場合のみエラー
+        if not env.get("current_provider_has_key", False):
             provider = env.get("provider", "Unknown")
-            causes.append(f"No API key found for current provider: {provider}")
-            recommendations.append(f"Set API key for {provider} using: python -m llm_settings.llm_cli configure {provider}")
-        elif not any(env["api_keys_present"].values()) and not any(config_keys.values()):
-            # 環境変数にも設定ファイルにもAPIキーがない場合
-            causes.append("No API keys found in environment or config file")
-            recommendations.append("Set API key using CLI or environment variables")
-    
-        # APIテスト結果の分析
+            causes.append(f"No API key found in config for provider: {provider}")
+            recommendations.append(f"Edit llm_config.json and set providers.{provider}.api_key")
+
+        # APIテスト結果
         test = diagnosis["api_test_result"]
         if test["status"] == "FAILED":
             causes.append(f"API connection test failed: {test.get('error', 'Unknown error')}")
@@ -315,7 +316,7 @@ class ResponseDiagnostics:
         elif test["status"] == "SUCCESS" and test["duration_ms"] > 10000:
             causes.append(f"API responding slowly ({test['duration_ms']}ms)")
             recommendations.append("Consider increasing timeout or checking network connection")
-        
+
         return causes, recommendations
 
 
