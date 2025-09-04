@@ -18,15 +18,33 @@ OP‑TEEの**Trusted Application (TA)** を対象に、LLM・RAG・ルール（D
 
 ```mermaid
 flowchart LR
-  A["Phase0 事前処理/DB生成\nsrc/build.py"] --> B["Phase1–2 抽出/分類\nsrc/classify/classifier.py"]
-  B --> C1["Phase3.1 シンク同定\nidentify_sinks.py"]
-  C1 --> C2["Phase3.2 シンク呼出抽出\nfind_sink_calls.py"]
-  C2 --> C3["Phase3.3 呼出グラフ生成\ngenerate_call_graph.py"]
-  C3 --> C4["Phase3.4–3.6 関数列チェーン生成\nfunction_call_chains.py"]
-  C4 --> C5["Phase3.7 VDとチェーンを結合\nextract_sink_calls.py"]
-  C5 --> D["Phase4 候補フロー (CDF) 生成\nidentify_flows/generate_candidate_flows.py"]
-  D --> E["Phase5 LLMテイント解析/判定\nanalyze_vulnerabilities/taint_analyzer.py"]
-  E --> F["Phase6 HTMLレポート生成\nreport/generate_report.py"]
+    A["開始"] --> B["プロジェクト検証<br/>ta/ディレクトリ確認"]
+    B --> C["依存関係クリーンアップ<br/>clean_project_dependencies<br/>.d, .oファイル削除"]
+    
+    C --> D["Phase 0: DB構築<br/>ensure_ta_db<br/>build.py"]
+    
+    D --> E["Phase 1-2: 関数分類<br/>classify_functions<br/>classify/classifier.py<br/>→phase12.json"]
+    
+    E --> F["Phase 3: シンク特定<br/>identify_sinks.py<br/>--llm-only オプション<br/>→sinks.json"]
+    
+    F --> G["Phase 4: 統合版候補フロー生成<br/>generate_candidate_flows.py<br/>旧Phase3.1～3.4を統合<br/>→candidate_flows.json"]
+    
+    G --> H["Phase 5: テイント解析<br/>taint_analyzer.py<br/>脆弱性検査<br/>→vulnerabilities.json"]
+    
+    H --> I["Phase 6: レポート生成<br/>generate_report.py<br/>→vulnerability_report.html"]
+    
+    I --> J["実行時間記録<br/>time.txt生成"]
+    
+    J --> K["完了"]
+
+    style A fill:#e1f5e1
+    style K fill:#e1f5e1
+    style D fill:#fff3cd
+    style E fill:#fff3cd
+    style F fill:#fff3cd
+    style G fill:#fff3cd
+    style H fill:#fff3cd
+    style I fill:#fff3cd
 ```
 
 ### 主な出力
@@ -171,8 +189,8 @@ python3 ./src/main.py \
 
 * `src/build.py` … 事前処理（TA限定 `compile_commands.json` 生成）
 * `src/classify/` … Phase1–2（関数/マクロ抽出・分類）
-* `src/identify_sinks/` … Phase3（シンク同定→呼出抽出→グラフ→チェーン→VD結合）
-* `src/identify_flows/` … Phase4（ソース起点の候補フロー最小化）
+* `src/identify_sinks/` … Phase3（シンク同定）
+* `src/identify_flows/` … Phase4（呼出抽出→グラフ→チェーン→VD結合→ソース起点の候補フロー最小化）
 * `src/analyze_vulnerabilities/` … Phase5（LLMテイント解析・判定）
 * `src/report/` … Phase6（HTMLレポート）
 * `src/rag/` … RAG（ドキュメント→チャンク→ベクトル化→検索）
