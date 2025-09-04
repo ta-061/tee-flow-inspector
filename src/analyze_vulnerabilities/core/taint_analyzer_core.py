@@ -177,8 +177,8 @@ class TaintAnalyzer:
         # 解析時間を記録
         self.stats["total_time"] = time.time() - start_time
         
-        # Findingsをマージ（end優先）
-        final_findings = self.findings_merger.merge_with_end_priority(all_inline_findings)
+        # Findingsをマージ
+        final_findings = self.findings_merger.merge_all_findings(all_inline_findings)
         
         # 統計を表示
         self._print_final_stats()

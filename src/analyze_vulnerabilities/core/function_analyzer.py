@@ -595,6 +595,18 @@ FINDINGS={"items":[]}"""
             if findings:
                 results["inline_findings"].extend(findings)
 
+
+            llm_findings = self.vuln_parser.extract_all_findings(
+                response,
+                func_name,
+                chain,
+                vd,
+                self.code_extractor.project_root
+            )
+            if llm_findings:
+                results["inline_findings"].extend(llm_findings)
+                self.logger.writeln(f"[INFO] Extracted {len(llm_findings)} FINDINGS from {func_name}")
+                
             # シンク到達の判定（位置に関わらず）
             if "sink_reached" in parsed and parsed["sink_reached"]:
                 results["is_vulnerable"] = True

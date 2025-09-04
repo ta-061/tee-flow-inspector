@@ -90,7 +90,21 @@ class ReportGenerator:
             
             categories = {}
             for finding in findings:
-                cat = finding.get('category', 'unknown')
+                # categoryがNoneの場合、ruleやtypeから推測
+                cat = finding.get('category')
+                if not cat:
+                    # rule_matchesやtypeから適切なカテゴリを決定
+                    if 'rule_matches' in finding:
+                        rules = finding.get('rule_matches', {}).get('rule_id', [])
+                        if 'weak_input_validation' in rules:
+                            cat = 'Input Validation'
+                        elif 'shared_memory_overwrite' in rules:
+                            cat = 'Memory Safety'
+                        else:
+                            cat = 'unknown'
+                    else:
+                        cat = 'unknown'
+                
                 if cat not in categories:
                     categories[cat] = []
                 categories[cat].append(finding)
