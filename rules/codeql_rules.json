@@ -17,10 +17,22 @@
     "db_name": "tee_example",
     "query_dir": "../../query",
     "out_dir": "./out",
-    "line_threshold_unenc": 195,
-    "line_threshold_input": 195,
+    "line_threshold_unenc": 100000,
+    "line_threshold_input": 100000,
     "crypto_markers": ["aes", "enc"],
-    "sink_markers": ["snprintf", "TEE_MemMove", "="],
+    "crypto_api_whitelist": [
+      "TEE_AsymmetricEncrypt",
+      "TEE_AsymmetricDecrypt",
+      "TEE_AEInit",
+      "TEE_AEUpdate",
+      "TEE_AEUpdateAAD",
+      "TEE_AEEncryptFinal",
+      "TEE_AEDecryptFinal",
+      "TEE_CipherInit",
+      "TEE_CipherUpdate",
+      "TEE_CipherDoFinal"
+    ],
+    "sink_markers": ["snprintf", "TEE_MemMove"],
     "shared_param_values": [12, 13, 14, 15],
     "exclude_shared_tokens": ["TEE_MemMove", "TEE_CheckMemoryAccessRights"],
     "exclude_symbols_shared": [">", "<", "+", "?", "-"]
@@ -45,9 +57,17 @@
       "source": "memory.ql",
       "aggregation": "concat consecutive rows with same key",
       "positive_if": {
-        "any_contains": {"field": "row_text", "tokens": ["snprintf", "TEE_MemMove", "="]},
-        "and_not_contains_in_buffer": {"buffer": "key_concat_text", "tokens": ["aes", "enc"]},
-        "and_line_lt": {"field": "pos_line", "value": 195}
+        "any_contains": {"field": "row_text", "tokens": ["snprintf", "TEE_MemMove"]},
+        "and_not_contains_in_buffer": {
+          "buffer": "key_concat_text",
+          "tokens": [
+            "aes", "enc",
+            "TEE_AsymmetricEncrypt", "TEE_AsymmetricDecrypt",
+            "TEE_AEInit", "TEE_AEUpdate", "TEE_AEUpdateAAD",
+            "TEE_AEEncryptFinal", "TEE_AEDecryptFinal",
+            "TEE_CipherInit", "TEE_CipherUpdate", "TEE_CipherDoFinal"
+          ]
+        }
       },
       "output": ["pos"]
     },
@@ -60,16 +80,14 @@
         {
           "all": [
             {"contains_any": {"field": "item_text", "tokens": ["accesstoarray", "Malloc"]}},
-            {"not_contains": {"buffer": "check_buffer", "token": "if"}},
-            {"line_gt": {"field": "pos_line", "value": 195}}
+            {"not_contains": {"buffer": "check_buffer", "token": "if"}}
           ]
         },
         {
           "all": [
             {"contains": {"field": "item_text", "token": "MemMove"}},
             {"not_contains": {"buffer": "check_buffer", "token": "Malloc"}},
-            {"not_contains": {"buffer": "check_buffer", "token": "if"}},
-            {"line_gt": {"field": "pos_line", "value": 195}}
+            {"not_contains": {"buffer": "check_buffer", "token": "if"}}
           ]
         }
       ],
@@ -78,11 +96,18 @@
     },
     {
       "rule_id": "shared_memory_overwrite",
-      "source": "params_shared",
       "positive_if": {
-        "not_contains_any": {"field": "item_text", "tokens": ["TEE_MemMove", "TEE_CheckMemoryAccessRights", ">", "<", "+", "?", "-"]}
+        "any_contains": {"field":"item_text",
+          "tokens":["TEE_MemMove","memcpy","snprintf","strncpy","memset","="]
+        }
       },
-      "deduplicate": true,
+      "allow_if": [
+        {"neighbor_has_tokens":{"within_lines":[-6,1],
+          "tokens":["TEE_CheckMemoryAccessRights(","offset +","MIN(","outsz","size <=","len <="]}}
+      ],
+      "exclude_if": [
+        {"callee_in":{"any_of":["trace_printf","TRACE_*"]}}
+      ],
       "output": ["pos"]
     }
   ],
@@ -96,8 +121,8 @@
     ]
   },
   "assumptions_and_limits": [
-    "The line cutoff 195 is a heuristic and should be configurable.",
-    "The presence of 'if' is checked by string accumulation, not structural control-flow.",
-    "Crypto detection relies on tokens ['aes','enc']; prefer CodeQL-side crypto API flags to reduce false positives."
+    "Line-based cutoffs are disabled here to avoid skew; rely on semantic cues instead.",
+    "The presence of 'if' is approximated by string accumulation (non-structural).",
+    "Crypto sinks are policy-excluded by explicit TEE crypto API whitelist to reduce false positives."
   ]
 }
