@@ -150,6 +150,7 @@ def analyze_external_function_as_sink(client, func_name: str, log_file: Path,
                                      retry_handler: LLMRetryHandler = None) -> tuple[list[dict], float]:
     """
     外部関数をシンクとして分析（LLM専用）
+    SINKS_JSON形式を優先し、なければPAREN_LIST形式にフォールバック
     """
     start_time = time.time()  # 解析開始時間
     
@@ -165,15 +166,14 @@ def analyze_external_function_as_sink(client, func_name: str, log_file: Path,
     # プロンプトを読み込み
     if use_rag and rag_context and "[ERROR]" not in rag_context:
         prompt_template = _prompt_manager.load_prompt("sink_identification_with_rag.txt")
-        prompt = prompt_template.format(
-            func_name=func_name,
-            rag_context=rag_context
-        )
+        # 波括弧のエスケープ問題を回避
+        prompt = prompt_template.replace("{func_name}", func_name)
+        if "{rag_context}" in prompt:
+            prompt = prompt.replace("{rag_context}", rag_context)
     else:
         prompt_template = _prompt_manager.load_prompt("sink_identification.txt")
-        prompt = prompt_template.format(
-            func_name=func_name,
-        )
+        # 波括弧のエスケープ問題を回避
+        prompt = prompt_template.replace("{func_name}", func_name)
     
     with open(log_file, "a", encoding="utf-8") as lf:
         lf.write(f"# External Function: {func_name}\n")
@@ -198,31 +198,97 @@ def analyze_external_function_as_sink(client, func_name: str, log_file: Path,
         else:
             resp = client.chat_completion(messages)
     
-    # レスポンスをクリーニング
-    clean = re.sub(r"^```(?:json)?\s*|\s*```$", "", resp.strip(), flags=re.MULTILINE)
-    
     with open(log_file, "a", encoding="utf-8") as lf:
         lf.write(f"## Response:\n{resp}\n\n")
     
     if not resp:
         return [], time.time() - start_time
     
-    # パターンマッチングでシンク情報を抽出（LLM出力の定形フォーマット）
+    sinks = []
+    confidence = "medium"  # デフォルト値
+    
+    # まずSINKS_JSON形式を試す
+    json_match = re.search(r'SINKS_JSON\s*=\s*({.*?})\s*(?:Block 2|PAREN_LIST|$)', resp, re.DOTALL)
+    if json_match:
+        try:
+            # JSON文字列を取得してクリーンアップ
+            json_str = json_match.group(1)
+            # コメントや余分な改行を削除
+            json_str = re.sub(r'//.*$', '', json_str, flags=re.MULTILINE)
+            json_str = re.sub(r'/\*.*?\*/', '', json_str, flags=re.DOTALL)
+            
+            json_data = json.loads(json_str)
+            
+            # confidence を取得
+            confidence = json_data.get("confidence", "medium")
+            
+            # sinks配列から情報を取得
+            if "sinks" in json_data and isinstance(json_data["sinks"], list):
+                for sink in json_data["sinks"]:
+                    # rule_idの処理（配列の場合は最初の要素、文字列の場合はそのまま）
+                    rule_id = sink.get("rule_id", "other")
+                    if isinstance(rule_id, list) and rule_id:
+                        rule_id = rule_id[0]
+                    
+                    # rule_idの正規化（UO|WIV|SMO|other形式をフルネームに変換）
+                    rule_id_map = {
+                        "UO": "unencrypted_output",
+                        "WIV": "weak_input_validation",
+                        "SMO": "shared_memory_overwrite",
+                        "other": "other"
+                    }
+                    rule_id = rule_id_map.get(rule_id, rule_id)
+                    
+                    sinks.append({
+                        "kind": "function",
+                        "name": sink.get("name", func_name),
+                        "param_index": sink.get("param_index", 0),
+                        "rule_id": rule_id,
+                        "reason": sink.get("reason", ""),
+                        "confidence": confidence
+                    })
+                
+                # JSON解析成功
+                print(f"  → JSON format parsed: {len(sinks)} sinks found (confidence: {confidence})")
+                elapsed_time = time.time() - start_time
+                return sinks, elapsed_time
+                
+        except (json.JSONDecodeError, KeyError) as e:
+            print(f"[WARN] Failed to parse SINKS_JSON for {func_name}: {e}")
+            print(f"[INFO] Falling back to PAREN_LIST format...")
+    
+    # JSONが失敗または存在しない場合、PAREN_LIST形式を試す
+    if "PAREN_LIST=none" in resp:
+        print(f"  → No sinks identified (PAREN_LIST=none)")
+        elapsed_time = time.time() - start_time
+        return [], elapsed_time
+    
+    # レスポンスをクリーニング
+    clean = re.sub(r"^```(?:json)?\s*|\s*```$", "", resp.strip(), flags=re.MULTILINE)
+    
+    # パターンマッチングでシンク情報を抽出（PAREN_LIST形式）
     pattern = re.compile(
         r"\(\s*function:\s*([A-Za-z_][A-Za-z0-9_]*)\s*;\s*"
         r"param_index:\s*(\d+)\s*;\s*"
         r"reason:\s*([^)]*?)\s*\)"
     )
     
-    sinks = []
-    for fn, idx, reason in pattern.findall(clean):
+    matches = pattern.findall(clean)
+    for fn, idx, reason in matches:
         if fn == func_name:
             sinks.append({
                 "kind": "function",
                 "name": fn,
                 "param_index": int(idx),
-                "reason": reason
+                "rule_id": "other",  # PAREN_LIST形式にはrule_idがないのでデフォルト値
+                "reason": reason,
+                "confidence": "low"  # PAREN_LIST形式の場合は信頼度を低めに設定
             })
+    
+    if sinks:
+        print(f"  → PAREN_LIST format parsed: {len(sinks)} sinks found")
+    else:
+        print(f"  → No sinks found in response")
     
     elapsed_time = time.time() - start_time
     return sinks, elapsed_time
