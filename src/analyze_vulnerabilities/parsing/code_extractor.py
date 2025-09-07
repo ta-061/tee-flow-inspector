@@ -39,10 +39,16 @@ class CodeExtractor:
         Args:
             func_name: 関数名
             vd: 脆弱性の宛先情報（外部関数の場合に使用）
+        
+        Returns:
+            str: "file: ファイルパス\n\nソースコード" の形式で返される
         """
         # ユーザ定義関数から探す
         if func_name in self.user_functions:
             func = self.user_functions[func_name]
+            # ファイルパスを取得
+            file_path = func["file"]
+            
             # 辞書をタプルに変換してキャッシュ可能にする
             func_tuple = (
                 func["name"],
@@ -50,13 +56,18 @@ class CodeExtractor:
                 func["line"],
                 func.get("end_line", -1)
             )
-            return self._extract_and_clean_code(func_tuple)
+            code = self._extract_and_clean_code(func_tuple)
+            
+            # 指定されたフォーマットで返す
+            return f"file: {file_path}\n\n{code}"
         
         # 外部関数の場合
         if vd and func_name == vd["sink"]:
-            return self._extract_function_call_context(vd)
+            file_path = vd["file"]
+            code = self._extract_function_call_context(vd)
+            return f"file: {file_path}\n\n{code}"
         
-        return f"// External function: {func_name}"
+        return f"file: unknown\n\n// External function: {func_name}"
     
     @lru_cache(maxsize=128)
     def _extract_and_clean_code(self, func_tuple: tuple) -> str:
