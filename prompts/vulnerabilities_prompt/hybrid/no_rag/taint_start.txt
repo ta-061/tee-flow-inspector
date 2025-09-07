@@ -1,81 +1,43 @@
-Function to analyze: {source_function}
-Tainted parameters: {param_name}
+You are an expert in static taint analysis for TA (Trusted Application) code running in a TEE (Trusted Execution Environment).
 
-=== EXAMPLE OUTPUT ===
-For entry point with tainted params calling another function:
-```c
-TEE_Result TA_InvokeCommandEntryPoint(void *sess_ctx, uint32_t cmd_id, 
-                                      uint32_t param_types, TEE_Param params[4]) {
-    return process_data(param_types, params);
-}
-```
-Correct output:
-{"function":"TA_InvokeCommandEntryPoint","propagation":["param_types <- REE @ file:100","params <- REE @ file:100","process_data(param_types, params) <- param_types, params @ file:102"],"sanitizers":[],"sinks":["function_call: process_data(param_types, params) @ file:102"],"evidence":[],"rule_matches":{"rule_id":[],"others":[]},"tainted_vars":["param_types","params"]}
-FINDINGS={"items":[]}
+We are specifically interested in identifying if the external API function "{source_function}" can be a sink or if structure-driven risks exist, based on these vulnerability patterns:
+① Unencrypted output to Normal World
+② Missing input validation
+③ Shared memory overwrite / direct usage
 
-Note: "tainted_vars" lists ALL tainted variables that flow to next function.
-===
+ANALYSIS TASKS (start hop)
+- From the code below, treat REE-provided values (TEE_Param and fields) as tainted sources.
+- Track propagation as "LHS <- RHS @ file:line"; list ALL tainted variables in "tainted_vars".
+- Record sanitizers (bounds/type/access checks) with evidence lines.
+- Identify dangerous sinks (memcpy/memmove/TEE_MemMove, output ops, writes to REE memrefs). TEE_Malloc/Free are NOT sinks; random is NON-sensitive.
+- ALSO consider structure-driven risks even if no sink call occurs yet: loop bounds on tainted values, index/offset arithmetic, size arithmetic (strlen/sizeof), sequential per-byte copies, pointer arithmetic, or param_types vs actual access mismatch. If any such risk exists, emit a FINDINGS item with exact file:line and a short code excerpt.
+
+CLASSIFICATION
+- Use rule_matches.rule_id only from the whitelist: ["unencrypted_output","weak_input_validation","shared_memory_overwrite","other"].
+- Place any free-form notes in rule_matches.others (e.g., "tainted loop bound", "pointer arithmetic").
+
+FALSE-POSITIVE GUARDRAILS (policy; concise)
+- Random bytes are non-sensitive. Alloc/free are not sinks. Crypto APIs are excluded for UO unless followed by unencrypted copy to REE.
 
 OUTPUT FORMAT (EXACTLY TWO LINES):
-Line 1: Taint analysis JSON with "tainted_vars" field
-Line 2: FINDINGS JSON
+Line 1: Taint analysis JSON (must include "tainted_vars")
+{"function":"{source_function}","propagation":[...],"sanitizers":[...],"sinks":[...],"evidence":[...],"rule_matches":{"rule_id":[...],"others":[]},"tainted_vars":[...]}
 
-Line 1 must be a single JSON object with this structure:
-{"function":"<name>","propagation":[...],"sanitizers":[...],"sinks":[...],"evidence":[...],"rule_matches":{"rule_id":[...],"others":[]},"tainted_vars":[...]}
-
-Line 2 must be:
+Line 2: One item per structurally weak line; leave as "unknown" if necessary.
 FINDINGS={"items":[
   {
     "file":"<path|'unknown'>",
     "line":<int>,
-    "rule":"<short_category>",
-    "why":"<short_reason>",
+    "rule":"unencrypted_output|weak_input_validation|shared_memory_overwrite",
+    "why":"<short reason>",
     "function":"{source_function}",
     "phase":"start",
     "sink_function":"<SINK_OR_EXTERNAL_FN|'unknown'>",
     "rule_matches":{"rule_id":["<RULE_ID1>", ...],"others":["<freeform>", ...]},
     "code_excerpt":"<short>"
   }
-  // optional more items
 ]}
 If nothing qualifies: FINDINGS={"items":[]}
 
-=== ANALYSIS TASKS ===
-From the code below:
+CODE UNDER ANALYSIS:
 {code}
-
-1) IDENTIFY taint sources:
-   - REE-provided parameters (param_types, params)
-   - External inputs from Normal World
-   
-2) TRACK propagation:
-   - Variable assignments: "var <- source @ file:line"
-   - Function calls: "func(args) <- tainted_args @ file:line"
-   
-3) RECORD sanitizers:
-   - Type checks (param_types validation)
-   - Bounds checks
-   - Access control checks
-   
-4) IDENTIFY sinks:
-   - Memory operations (TEE_MemMove, memcpy)
-   - Output operations
-   - Function calls with tainted data
-   Note: TEE_Malloc/Free are NOT sinks
-   
-5) DETECT evidence:
-   - Type confusion (accessing undeclared parameters)
-   - Missing bounds checks
-   - Security violations
-
-6) CLASSIFY findings:
-   Use rule_id: ["unencrypted_output", "weak_input_validation", "shared_memory_overwrite"]
-
-7) LIST tainted variables:
-   In "tainted_vars" field, include ALL variables containing tainted data
-
-=== CRITICAL RULES ===
-- If params[N] is accessed but param_types declares it as NONE → TYPE CONFUSION
-- If a function is called with tainted params → record in BOTH propagation AND sinks
-- Check actual vs declared parameter usage
-- Always populate "tainted_vars" with all tainted variables

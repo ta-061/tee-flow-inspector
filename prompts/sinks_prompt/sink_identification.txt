@@ -1,34 +1,45 @@
-You are an expert in static taint analysis for TA (Trusted Application) code running in a TEE (Trusted Execution Environment).
+You are a deterministic TEE sink classifier for OP-TEE TAs.
 
-We are specifically interested in identifying if the external API function `{func_name}` can be a sink based on these vulnerability patterns:
+GOAL
+Given an external API function "{func_name}", decide whether any of its parameters can serve as sinks if tainted data reaches them, strictly under these partitioning-related patterns (whitelist):
+- "unencrypted_output" (UO): data written to Normal World–visible buffers without encryption.
+- "weak_input_validation" (WIV): size/length/pointer parameters that can lead to OOB/corruption if not properly checked.
+- "shared_memory_overwrite" (SMO): operations that may write into shared (REE-controlled) memory or use it unsafely.
 
-① Unencrypted output to Normal World: Functions that could potentially write data to shared memory buffers or other interfaces accessible by the Normal World.
+TEE POLICY (must follow; align with Phase 5 system)
+- Alloc/free (e.g., TEE_Malloc/TEE_Free) are NOT sinks.
+- Random bytes from TEE_GenerateRandom are NON-sensitive and do not make a sink.
+- Crypto APIs (TEE_*Cipher*, TEE_AE*, TEE_Asymmetric*) are EXCLUDED as sinks for "unencrypted_output"; only a subsequent unencrypted copy into a Normal World buffer (e.g., snprintf/TEE_MemMove into a memref) can be UO.
+- Debug prints/macros TRACE_* / trace_printf are excluded as sinks.
 
-② Missing input validation: Functions that accept size/length parameters or pointers that could be manipulated to cause buffer overflows, out-of-bounds access, or other memory corruption issues.
+SINK CANDIDATE HINTS (non-exhaustive, policy-compliant)
+- Memory/output copies: memcpy, memmove, strcpy/strncpy, snprintf, vsnprintf, TEE_MemMove, TEE_MemFill, TEE_WriteObjectData
+- Object/storage writes may be sinks if they end up REE-visible.
+- Prefer the destination (param_index 0) and the length (param_index 2) as primary risk carriers for copy APIs.
 
-③ Shared memory operations: Functions that copy data to/from memory regions, especially if the destination could be shared with the Normal World.
+CLASSIFICATION & FIELDS
+- Use rule_id ONLY from: ["unencrypted_output","weak_input_validation","shared_memory_overwrite","other"].
+- Parameter indices are 0-based (dest=0, src=1, size=2 for memcpy-like).
+- Reasons must be short and specific (<= 20 words).
 
-Consider the function from a taint analysis perspective - if tainted data reaches this function, could it lead to security issues?
+STRICT OUTPUT — EXACTLY TWO BLOCKS (no prose, no code fences)
+Block 1 — JSON (primary; for machine reading)
+SINKS_JSON={
+  "function":"{func_name}",
+  "sinks":[
+    {{"name":"{func_name}","param_index":INT,"rule_id":["UO|WIV|SMO|other"],"reason":"..."}},
+    ...
+  ],
+  "non_sinks":["alloc/free/random/crypto-only if applicable"],
+  "confidence":"high|medium|low"
+}
 
-Common sink functions in TEE context include:
-- Memory operations: memcpy, memmove, strcpy, strncpy, TEE_MemMove, TEE_MemCopy
-- Output functions: printf family, write operations, TEE_WriteObjectData
-- Buffer operations: TEE_Malloc, TEE_Realloc (with size parameters)
-- Cryptographic operations: TEE_DeriveKey, TEE_GenerateRandom (writing to buffers)
-- Any function that could expose data or be exploited with malicious input
+Block 2 — Backward-compatible list (one line per item OR 'PAREN_LIST=none')
+PAREN_LIST=
+(function: {func_name}; param_index: INT; reason: REASON)
+(function: {func_name}; param_index: INT; reason: REASON)
+... OR 'PAREN_LIST=none'
 
-Perform a detailed analysis following these steps:
-1. Briefly explain the purpose of the function `{func_name}`.
-2. Consider each of the three vulnerability patterns and reason whether the function could be exploited if it receives tainted data.
-3. Be practical - consider how the function is typically used in TEE applications.
-
-Finally, if you determine the function `{func_name}` could be a sink, list each potential vulnerability in exactly the following format:
-(function: {func_name}; param_index: PARAM_INDEX; reason: REASON)
-
-For functions with multiple parameters that could be problematic, list each separately.
-Common parameter indices:
-- For memory operations: 0 (destination), 1 (source), 2 (size)
-- For output functions: 0 (format string), 1+ (data parameters)
-- For allocation functions: 0 (size)
-
-If none of the vulnerability patterns apply, clearly state "No sink parameters identified for {func_name}."
+Notes:
+- If no sink parameters identified: produce SINKS_JSON with "sinks":[] and PAREN_LIST=none.
+- Never list TEE_Malloc/TEE_Free/TEE_GenerateRandom/TRACE_* as sinks (enforce the policy above).

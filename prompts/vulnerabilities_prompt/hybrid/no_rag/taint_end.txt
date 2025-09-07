@@ -1,16 +1,16 @@
-Based on the complete taint analysis above, output the FINAL decision for THIS chain only.
+Based on the complete taint analysis above, we output a final determination of whether the final function in this chain is vulnerable..
 
-DECISION RULES (short)
+DECISION RULES (short; unchanged)
 - Vulnerable ONLY if untrusted REE data actually reaches a dangerous sink AND sanitization/bounds checks are insufficient.
-- Non-sinks: memory alloc/free (e.g., TEE_Malloc/TEE_Free) are NOT sinks. Random bytes from TEE_GenerateRandom are NOT sensitive unless misused.
+- Non-sinks: memory alloc/free (e.g., TEE_Malloc/TEE_Free) are NOT sinks. Random bytes from TEE_GenerateRandom are NOT sensitive.
+- Crypto APIs (TEE_AsymmetricEncrypt/Decrypt, TEE_AE*, TEE_Cipher*) are POLICY-EXCLUDED as sinks for "unencrypted_output". If they are the last call, return "no" unless there is a subsequent unencrypted copy to REE (e.g., snprintf/TEE_MemMove into a REE memref).
 - Prefer concrete code evidence (file:line). Use "unknown" when unavailable.
 
 STRICT OUTPUT CONTRACT — EXACT LINES (no prose, no code fences)
-
-Line 1 (REQUIRED): EXACT JSON object with the decision flag
+Line 1 (REQUIRED):
 {"vulnerability_found":"yes"|"no"}
 
-Line 2 (REQUIRED): EXACT JSON object with details (no label)
+Line 2 (REQUIRED): details JSON
 If "yes", use:
 {
   "vulnerability_type": "CWE-XXX",
@@ -35,7 +35,8 @@ If "yes", use:
     "negative_indicators": ["..."],
     "confidence_level": "high|medium|low"
   },
-  "decision_rationale": "<why this IS a vulnerability>"
+  "decision_rationale": "<why this IS a vulnerability>",
+  "line_evidence": [ /* OPTIONAL */ ]
 }
 
 If "no", use:
@@ -55,10 +56,10 @@ If "no", use:
     "negative_indicators": ["<what might reduce confidence>"],
     "confidence_level": "high|medium|low"
   },
-  "decision_rationale": "<why this ISN'T a vulnerability>"
+  "decision_rationale": "<why this ISN'T a vulnerability (include crypto-API exclusion when applicable)>"
 }
 
-Line 3 (REQUIRED): EXACT END_FINDINGS block (do NOT use FINDINGS here)
+Line 3 (REQUIRED): EXACT END_FINDINGS block (DO NOT use FINDINGS here). ONLY include structure-driven issues that **did not** reach a final dangerous sink.
 END_FINDINGS={"items":[
   {
     "file":"<path>|unknown",
@@ -69,11 +70,4 @@ END_FINDINGS={"items":[
     "why":"<one-line reason>",
     "code_excerpt":"<short optional snippet>"
   }
-  /* zero or more items */
 ]}
-
-Formatting constraints:
-- Three lines only (Line1 JSON, Line2 JSON, Line3 END_FINDINGS=...).
-- No extra lines, no code fences, no markdown, no explanations.
-- Use double quotes for all JSON keys/strings. Integers for "line". Use "unknown" when needed.
-- NEVER print "FINDINGS" on Line 3; ALWAYS "END_FINDINGS=".

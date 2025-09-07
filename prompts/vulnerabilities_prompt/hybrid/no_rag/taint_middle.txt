@@ -1,65 +1,39 @@
 Continue the taint analysis for the next step in the call chain.
 
-=== ANALYSIS CONTEXT ===
+=== TARGET INFORMATION ===
+- Current function: {source_function}
+- Target sink (if final): {sink_function}
+- Vulnerable parameters: {target_params}
+- The line of interest is marked with >>>
+
+=== ANALYSIS CONTEXT (if any) ===
 {upstream_context}
 
 === CODE TO ANALYZE ===
 {code}
 
-=== TARGET INFORMATION ===
-- Current function: {source_function}
-- Target sink (if final): {sink_function}
-- Vulnerable parameters: {target_params}
+GUIDANCE
+- Propagate taint precisely: record "LHS <- RHS @ file:line" and list ALL tainted variables in "tainted_vars".
+- Record sanitizers (bounds/type/access checks) with their lines.
+- Identify dangerous sinks (e.g., TEE_MemMove/memcpy/output ops to REE). Exclude alloc/free and random; exclude crypto APIs as "unencrypted_output" unless followed by unencrypted copy to REE.
+- ALSO surface structure-driven risks even without an immediate sink: tainted loop bounds, index/offset or pointer arithmetic, size arithmetic, sequential per-byte copies, or param_types vs actual access mismatch. Emit a FINDINGS item per affected line with exact file:line and short excerpt.
 
-=== EXAMPLE OUTPUT ===
-For a function called through:
-```
-// Call site:
-97: test(params[0].memref.buffer, buf, &params[0].memref.size);
-98: test(params[2].memref.buffer, buf, &params[2].memref.size);
-
-// Function: test
-64: void test(uint32_t *tmp, uint32_t *src, uint32_t *size){
-65:     TEE_MemMove(tmp, src, *size);
-66: }
-```
-
-Correct output:
-{"function":"test","propagation":["tmp <- params[0].memref.buffer @ line:97","src <- buf @ line:97","size <- &params[0].memref.size @ line:97","TEE_MemMove(tmp, src, *size) <- tainted @ line:65"],"sanitizers":[],"sinks":["TEE_MemMove @ line:65"],"evidence":["Line 98: params[2] used but not validated"],"rule_matches":{"rule_id":["weak_input_validation"],"others":[]},"tainted_vars":["tmp","src","size","params[0].memref.buffer","params[2].memref.buffer"]}
-FINDINGS={"items":[{"file":"/workspace/benchmark/random/ta/random_example_ta.c","line":98,"rule":"weak_input_validation","why":"params[2] accessed without validation (expected params[0] only)","function":"test","phase":"middle","sink_function":"TEE_MemMove","rule_matches":{"rule_id":["weak_input_validation"],"others":[]},"code_excerpt":"test(params[2].memref.buffer, buf, &params[2].memref.size)"}]}
-
-=== ANALYSIS GUIDELINES ===
-
-FALSE-POSITIVE GUARDRAILS:
-- TEE_GenerateRandom output is NON-sensitive (do NOT flag as unencrypted_output)
-- TEE_Malloc/TEE_Free are NOT sinks (memory management only)
-- Only flag ACTUAL vulnerabilities with concrete evidence
-
-TAINT TRACKING:
-1. Identify tainted data from call site (parameters passed to current function)
-2. Track data flow through the function body
-3. Note any data that reaches dangerous sinks
-4. Check for unexpected parameter usage (e.g., params[2] when only params[0] expected)
-
-VULNERABILITY DETECTION:
-- Buffer overflow: size not validated before memcpy/memmove
-- Input validation: unexpected parameters accessed (params[2] when params[0] expected)
-- Information disclosure: sensitive data copied to untrusted memory
-- Integer overflow: arithmetic on sizes without checks
+CLASSIFICATION
+- Use whitelist rule_ids: ["unencrypted_output","weak_input_validation","shared_memory_overwrite","other"].
+- Deterministic ordering; put additional notes in rule_matches.others.
 
 OUTPUT CONTRACT (EXACTLY TWO LINES):
+Line 1: Analysis JSON for the Current Function
+{"function":"{source_function}","propagation":[<flows>],"sanitizers":[<checks>],"sinks":[<dangerous_calls>],"evidence":[<issues>],"rule_matches":{"rule_id":[<matches>],"others":[]},"tainted_vars":[<all_tainted>]}
 
-Line 1: Analysis JSON
-{"function":"<name>","propagation":[<flows>],"sanitizers":[<checks>],"sinks":[<dangerous_calls>],"evidence":[<issues>],"rule_matches":{"rule_id":[<matches>],"others":[]},"tainted_vars":[<all_tainted>]}
-
-Line 2:
+Line 2:One item per structurally weak line; leave as "unknown" if necessary.
 FINDINGS={"items":[
   {
     "rule":"unencrypted_output|weak_input_validation|shared_memory_overwrite",
     "file":"<path|'unknown'>",
     "line":<int>,
     "why":"<one sentence>",
-    "function":"<CURRENT_FUNCTION>",
+    "function":"{source_function}",
     "phase":"middle",
     "sink_function":"<SINK_OR_EXTERNAL_FN|'unknown'>",
     "rule_matches":{"rule_id":["<RULE_ID1>", ...],"others":["<freeform>", ...]},
@@ -67,9 +41,3 @@ FINDINGS={"items":[
   }
 ]}
 If nothing qualifies: FINDINGS={"items":[]}
-
-Analysis steps:
-1) Record "LHS <- RHS @ <file>:<line>" for each explicit flow in "propagation".
-2) Record validators in "sanitizers" (bounds/type/access checks) with evidence lines.
-3) Record dangerous sinks in "sinks" with evidence lines (exclude alloc/free).
-4) If param_types declaration conflicts with actual access, put it in "evidence"; map to a rule_id ONLY if it meaningfully enables attacker influence to reach a sink.
