@@ -5,7 +5,7 @@
 
 LLMプロンプトの生成、管理、およびRAG統合機能を提供
 """
-
+from .code_extractor import CodeExtractor
 from .prompts import (
     PromptManager,
     get_start_prompt,
@@ -40,6 +40,7 @@ __all__ = [
     'build_rule_hints_block_from_codeql',
     'setup_system_prompt',
     '_prompt_manager',
+    'CodeExtractor',
 ]
 
 __version__ = '2.0.0'  # バージョンアップ（APIの改善）
