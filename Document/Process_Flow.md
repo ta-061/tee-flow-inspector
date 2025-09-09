@@ -386,7 +386,7 @@ graph TB
 ```
 
 ## Phase 5: テイント解析と脆弱性検査
-## 1. システム全体フロー
+### 1. システム全体フロー
 
 ```mermaid
 graph TB
@@ -434,7 +434,7 @@ graph TB
     SaveOutput --> End[終了]
 ```
 
-## 2. プロンプト設定フロー
+### 2. プロンプト設定フロー
 
 ```mermaid
 graph TB
@@ -471,7 +471,7 @@ graph TB
     ValidatePrompt --> ReturnPrompt[プロンプトとメタデータ返却]
 ```
 
-## 3. 関数解析フロー
+### 3. 関数解析フロー
 
 ```mermaid
 graph TB
@@ -511,7 +511,7 @@ graph TB
     ProcessResult --> FuncEnd[終了]
 ```
 
-## 4. 統合パーサー処理フロー
+### 4. 統合パーサー処理フロー
 
 ```mermaid
 graph TB
@@ -555,7 +555,7 @@ graph TB
     ExtractFields --> ReturnResult
 ```
 
-## 5. 脆弱性判定フロー
+### 5. 脆弱性判定フロー
 
 ```mermaid
 graph TB
@@ -592,7 +592,7 @@ graph TB
     BuildResult --> VulnEnd[終了]
 ```
 
-## 6. LLM通信とエラー処理フロー
+### 6. LLM通信とエラー処理フロー
 
 ```mermaid
 graph TB
@@ -625,7 +625,7 @@ graph TB
     SaveErrorLog --> ExitProgram[プログラム終了]
 ```
 
-## 7. キャッシュとFindings統合フロー
+### 7. キャッシュとFindings統合フロー
 
 ```mermaid
 graph TB
