@@ -15,41 +15,88 @@ def format_message_content(msg: str) -> str:
     if not msg:
         return ""
     
-    # HTMLエスケープ
-    msg = html_module.escape(msg)
-
-    # JSONブロックを検出して整形
-    def format_json_block(match):
+    # JSONブロックを事前に抽出して保護
+    json_blocks = []
+    json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+    
+    def extract_json(match):
         json_str = match.group(0)
+        placeholder = f"__JSON_BLOCK_{len(json_blocks)}__"
+        json_blocks.append(json_str)
+        return placeholder
+    
+    # JSONブロックを一時的にプレースホルダーに置換
+    msg = re.sub(json_pattern, extract_json, msg)
+    
+    # HTMLエスケープ（JSONブロック以外）
+    msg = html_module.escape(msg)
+    
+    # JSONブロックを整形して戻す
+    def format_json_block(json_str):
         try:
             # JSONをパースして整形
             obj = json.loads(json_str)
             formatted = json.dumps(obj, indent=2, ensure_ascii=False)
-            # JSON内の特定の要素をハイライト
+            
+            # JSON内の要素をハイライト（エスケープ済みの文字列に対して）
             formatted = html_module.escape(formatted)
-            formatted = re.sub(r'"(\w+)":', r'<span class="json-key">"\1":</span>', formatted)
+            
+            # キーのハイライト
+            formatted = re.sub(r'"([^"]+)":', r'<span class="json-key">"\1":</span>', formatted)
+            # 文字列値のハイライト
             formatted = re.sub(r':\s*"([^"]*)"', r': <span class="json-string">"\1"</span>', formatted)
-            formatted = re.sub(r':\s*(\d+)', r': <span class="json-number">\1</span>', formatted)
-            formatted = re.sub(r':\s*(true|false)', r': <span class="json-boolean">\1</span>', formatted)
+            # 数値のハイライト
+            formatted = re.sub(r':\s*(\d+(?:\.\d+)?)', r': <span class="json-number">\1</span>', formatted)
+            # ブール値のハイライト
+            formatted = re.sub(r':\s*(true|false|null)', r': <span class="json-boolean">\1</span>', formatted)
+            
             return f'<pre class="json-display">{formatted}</pre>'
-        except:
-            return f'<pre>{html_module.escape(json_str)}</pre>'
+        except json.JSONDecodeError:
+            # JSONとして解析できない場合は、そのままエスケープして表示
+            return f'<pre class="json-display">{html_module.escape(json_str)}</pre>'
     
-    # JSON形式の文字列を検出（改善版）
-    msg = re.sub(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', format_json_block, msg)
+    # プレースホルダーをJSON表示に置換
+    for i, json_str in enumerate(json_blocks):
+        placeholder = f"__JSON_BLOCK_{i}__"
+        formatted_json = format_json_block(json_str)
+        msg = msg.replace(placeholder, formatted_json)
     
-    # コードブロックを処理
-    msg = re.sub(r'```(\w*)\n(.*?)```', 
-                 lambda m: f'<pre class="code-block">{html_module.escape(m.group(2))}</pre>', 
-                 msg, flags=re.DOTALL)
+    # コードブロックを処理（```で囲まれた部分）
+    def format_code_block(match):
+        lang = match.group(1) or ''
+        code = match.group(2)
+        lang_class = f' lang-{lang}' if lang else ''
+        return f'<pre class="code-block{lang_class}">{html_module.escape(code)}</pre>'
     
-    # インラインコードを処理
+    msg = re.sub(r'```(\w*)\n(.*?)```', format_code_block, msg, flags=re.DOTALL)
+    
+    # インラインコードを処理（`で囲まれた部分）
     msg = re.sub(r'`([^`]+)`', r'<code>\1</code>', msg)
     
-    # 改行を処理
-    msg = msg.replace('\n', '<br>')
+    # 特殊なマーカーの処理
+    msg = re.sub(r'\[CONSISTENCY\]', '<span class="consistency-marker">[CONSISTENCY]</span>', msg)
+    msg = re.sub(r'\[INCONSISTENCY\]', '<span class="inconsistency-marker">[INCONSISTENCY]</span>', msg)
+    msg = re.sub(r'END_FINDINGS=', '<span class="end-findings-marker">END_FINDINGS=</span>', msg)
     
-    return msg
+    # 改行を<br>に変換（preタグ内は除く）
+    lines = msg.split('\n')
+    result_lines = []
+    in_pre = False
+    
+    for line in lines:
+        if '<pre' in line:
+            in_pre = True
+        if '</pre>' in line:
+            in_pre = False
+            result_lines.append(line)
+            continue
+            
+        if not in_pre and line and not line.startswith('<pre') and not line.endswith('</pre>'):
+            result_lines.append(line + '<br>')
+        else:
+            result_lines.append(line)
+    
+    return '\n'.join(result_lines)
 
 def generate_chain_html(chain_name: str, conversation: List[Dict], 
                        vuln_info: Optional[Dict] = None) -> str:
@@ -170,6 +217,7 @@ def generate_chain_html(chain_name: str, conversation: List[Dict],
     </div>
     """
 
+# 以下の関数は変更なし（既存のコードをそのまま含める）
 def generate_token_usage_html(statistics: Dict, sinks_data: Optional[Dict] = None) -> str:
     """トークン使用量のHTML生成"""
     
@@ -262,7 +310,6 @@ def generate_token_usage_html(statistics: Dict, sinks_data: Optional[Dict] = Non
     </section>
     """
 
-
 def _safe(s, default=""):
     return default if s is None else str(s)
 
@@ -291,42 +338,12 @@ def _extract_primary_vuln_json(vstr: str) -> Dict[str, Any]:
 def generate_vulnerability_details_html(vulnerabilities: List[Dict[str, Any]]) -> str:
     """
     脆弱性カード（上段）をテンプレート標準のスタイルで出力する。
-    - セクション: <section class="vulnerabilities-section">
-    - 各項目   : <div class="vulnerability-detail"> 配下に .severity バッジなど
-    - タイプ   : taint_analysis の最終ステップ rule_matches.rule_id[0]（あれば CWE を併記）
-    - 深刻度   : vulnerability JSON から取得（fallback=medium）
-    - 説明     : inline_findings.message（重複除去・最大3件）＋ decision/impact/preconditions
-    - 折り返し : overflow-wrap:anywhere; を要所に付与してはみ出し防止
     """
     import re, json
     import html as html_module
 
     if not vulnerabilities:
         return ""
-
-    def _safe(s, default=""):
-        return default if s is None else str(s)
-
-    def _to_lines(line_field):
-        if isinstance(line_field, list):
-            return ", ".join(str(x) for x in line_field)
-        if line_field is None:
-            return ""
-        return str(line_field)
-
-    def _get_last_step_rule_ids(vuln: Dict[str, Any]) -> List[str]:
-        last = None
-        for step in (vuln.get("taint_analysis") or []):
-            if last is None or (step.get("position", -1) > last.get("position", -1)):
-                last = step
-        return (((last or {}).get("analysis") or {}).get("rule_matches") or {}).get("rule_id") or []
-
-    def _extract_primary_vuln_json(vstr: str) -> Dict[str, Any]:
-        try:
-            m = re.search(r"\{.*?\}", _safe(vstr), re.S)
-            return {} if not m else json.loads(m.group(0))
-        except Exception:
-            return {}
 
     out = [
         '<section class="vulnerabilities-section">',
@@ -401,12 +418,9 @@ def generate_vulnerability_details_html(vulnerabilities: List[Dict[str, Any]]) -
     out.append("</section>")
     return "\n".join(out)
 
-
 def generate_inline_findings_html(inline_findings: List[Dict[str, Any]], rule_index: Dict = None) -> str:
     """
     Inline Findings（下段）
-    - rule_index から最終ステップ rule_id を補完（なければ inline の rule_matches）
-    - 折り返し強化ではみ出し防止
     """
     rule_index = rule_index or {}
     if not inline_findings:

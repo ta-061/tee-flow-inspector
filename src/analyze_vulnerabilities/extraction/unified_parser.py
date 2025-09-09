@@ -69,7 +69,7 @@ class UnifiedLLMResponseParser:
                 return {"raw_taint": content, "parse_error": f"JSON decode error: {str(e)}"}
     
     def _parse_response(self, response: str, phase: str, context: Optional[Dict]) -> Dict:
-        """レスポンスの実際の解析処理"""
+        """レスポンスの実際の解析処理（改良版）"""
         result = self._create_empty_result(phase)
         
         # 行単位で分割（JSON構造を考慮）
@@ -101,6 +101,15 @@ class UnifiedLLMResponseParser:
                 
                 if self.debug:
                     print(f"[DEBUG] Line {line_num} parse error: {e}")
+        
+        # endフェーズで3行目が処理されなかった場合、レスポンス全体からEND_FINDINGSを探す
+        if phase == "end" and not result.get("end_findings"):
+            # レスポンス全体からEND_FINDINGSを抽出
+            end_findings_result = self._parse_end_findings(response)
+            if end_findings_result.get("end_findings"):
+                result["end_findings"] = end_findings_result["end_findings"]
+                if self.debug:
+                    print(f"[DEBUG] Extracted END_FINDINGS from full response")
         
         # 解析成功/失敗の判定
         if self._is_valid_result(result, phase):
@@ -240,12 +249,12 @@ class UnifiedLLMResponseParser:
         return {"findings": findings}
     
     def _parse_end_findings(self, content: str) -> Dict:
-        """END_FINDINGS形式のパース"""
+        """END_FINDINGS形式のパース（改良版）"""
         end_findings = []
         
-        # END_FINDINGS=パターンを探す
-        pattern = r'END_FINDINGS\s*=\s*(\{.*\})'
-        match = re.search(pattern, content, re.IGNORECASE)
+        # END_FINDINGS=パターンを探す（改行を考慮しない）
+        pattern = r'END_FINDINGS\s*=\s*(\{[^}]*(?:\{[^}]*\}[^}]*)*\})'
+        match = re.search(pattern, content, re.IGNORECASE | re.DOTALL)
         
         if match:
             try:
