@@ -176,177 +176,65 @@ flowchart LR
 
 ## Phase5 — テイント解析 / 脆弱性判定（`src/analyze_vulnerabilities/taint_analyzer.py`）
 
-  ### 目的
-  
-  * CDF（Candidate Data Flows）を入力に、**関数チェーンを start → middle → end の段階解析**で追跡し、各ステップで **二行契約（Two‑line contract）**に従う構造化出力を取得。
-  * 途中の **FINDINGS** を逐次収集し、末尾で **END_FINDINGS を優先**してマージ。:contentReference[oaicite:1]{index=1}
-  * ハイブリッド（**DITING ルール + CodeQL 由来ヒント**）/ LLM‑only、および **RAG 有無**の 4 構成に対応。:contentReference[oaicite:2]{index=2} :contentReference[oaicite:3]{index=3} :contentReference[oaicite:4]{index=4}
+### 目的
+LLMを活用してTEEアプリケーションのソースコードに対するテイント解析を実行し、REE（Normal World）からの入力が危険なシンクに到達する脆弱性を検出する。
 
 ### 主な処理
+1. **段階的解析**: 関数チェーンを start → middle → end の3段階で解析
+2. **テイント追跡**: REE入力から危険シンクまでのデータフローを追跡
+3. **整合性チェック**: LLM出力の論理的矛盾を検出・修正
+4. **キャッシュ最適化**: 共通の解析結果を再利用してトークン消費を削減
 
-1. **初期設定**:
-   * 解析モード設定（hybrid/llm_only × rag有無）
-   * プロンプトテンプレート読み込み
-   * LLMクライアント初期化
+### フォルダ構造
+```
+analyze_vulnerabilities/
+├── taint_analyzer.py      # メインエントリー
+├── core/                   # 解析コアロジック
+├── extraction/            # LLMレスポンス解析
+├── prompts/               # プロンプト管理
+├── processing/            # 整合性チェック
+├── optimization/          # キャッシュ・最適化
+├── communication/         # LLM通信
+├── io_handlers/          # 入出力処理
+└── utils/                # ユーティリティ
+```
 
-2. **フロー単位の解析**:
-   * 各候補フローを関数チェーンとして解析
-   * 関数コード抽出
-   * LLMによる段階的テイント追跡
-   * JSON形式の構造化レスポンス取得
+### 出力契約
 
-3. **整合性チェック**:
-   * テイントフローの検証
-   * Findings の一貫性確認
-   * 誤検出の除去
+#### Start/Middle フェーズ
+- **Line 1**: テイント解析JSON（tainted_vars, propagation等）
+- **Line 2**: `FINDINGS` - 構造的リスク（ループ境界、ポインタ演算等）でシンク未到達
 
-4. **結果統合**:
-   * Findings のマージ（END優先）
-   * 重複除去
-   * 統計情報の集計
+#### End フェーズ  
+- **Line 1**: `{"vulnerability_found":"yes"|"no"}`
+- **Line 2**: 脆弱性詳細JSON
+- **Line 3**: `END_FINDINGS` - シンクに到達しなかった構造的問題のみ
 
-  ### ディレクトリ構成（抜粋）
-  ```bash
-  src/analyze_vulnerabilities/
-  ├── taint_analyzer.py          # フェーズドライバ（CLI）
-  ├── core/                      # 解析中核（分割）
-  │   ├── taint_analyzer_core.py
-  │   ├── function_analyzer.py
-  │   ├── findings_merger.py
-  │   ├── consistency_checker.py
-  │   └── llm_handler.py
-  ├── parsing/                   # パーサ/JSON修復
-  │   ├── vulnerability_parser.py
-  │   ├── json_repair.py
-  │   └── code_extractor.py
-  ├── io_handlers/               # 会話/ログ/Markdown要約
-  │   ├── conversation.py
-  │   ├── logger.py
-  │   └── report_generator.py
-  ├── optimization/              # 接頭辞キャッシュ/トークン計測
-  │   ├── chain_tree.py
-  │   ├── prefix_cache.py
-  │   └── token_tracking_client.py
-  └── prompts/                   # 4モードのテンプレ管理
-      └── prompts.py
-  ```
-  
-  * **会話管理**はチェーン毎に履歴をリセット（トークン削減）し、system→user→assistant の履歴を最小構成で維持します。:contentReference[oaicite:5]{index=5}
-  * **ロガー**は高速バッチ書き込み＋長文セクション出力に対応しています。:contentReference[oaicite:6]{index=6}
-  * **トークン計測**は `TokenTrackingClient` を介して**推定**し、総トークン/呼び出し回数を集計します。:contentReference[oaicite:7]{index=7}
-  
-  ### 実行エントリ（CLI）
-  
-  * `src/analyze_vulnerabilities/taint_analyzer.py`
-    * 主要引数: `--flows`（CDF）, `--phase12`, `--output`, `--provider`, `--no-diting-rules`, `--no-enhanced-prompts`, `--no-rag`, `--track-tokens`, `--no-cache` 等。:contentReference[oaicite:8]{index=8}
-    * モード切替: `set_analysis_mode("hybrid"|"llm_only", use_rag)` / `set_rag_enabled(...)`。テンプレは `/prompts/vulnerabilities_prompt/<mode>/<no_rag|with_rag>/*.txt` からロード。:contentReference[oaicite:9]{index=9}
-  
-  ### DITING ルール＆CodeQL ヒントの注入
-  
-  * **DITING ルール JSON**と**ルールヒントブロック**を **system.txt** に埋め込み。`codeql_rules.json` にある `detection_rules[*].rule_id` は**ホワイトリスト**として扱い、各応答の `rule_matches.rule_id` は原則この集合（＋`other`）に制限。:contentReference[oaicite:10]{index=10} :contentReference[oaicite:11]{index=11} :contentReference[oaicite:12]{index=12}
-  * 具体的な注入処理は `setup_diting_rules_enhanced()` 内で行い、`{diting_rules_json}` と `{RULE_HINTS_BLOCK}` を system テンプレに展開。:contentReference[oaicite:13]{index=13}
-  
-  ### プロンプトの 4 構成とロード
-  
-  * `hybrid/llm_only × with_rag/no_rag` の 4 組合せを `PromptManager` が切替。`get_start_prompt / get_middle_prompt / get_middle_prompt_multi_params / get_end_prompt` を経由してテンプレ読み込み＆変数展開。:contentReference[oaicite:14]{index=14}
-  * RAG 有効時は、最終シンク関数・引数に基づき検索した**根拠断片**を `rag_context` として middle 系プロンプトに注入します。:contentReference[oaicite:15]{index=15}
-  
-  ### 出力**契約**（二行プロトコル）
-  
-  * **start / middle** ステップ  
-    **1行目**：  
-    `{"function":"<name>","propagation":[],"sanitizers":[],"sinks":[],"evidence":[],"rule_matches":{"rule_id":[],"others":[]}}`  
-    **2行目**：  
-    `FINDINGS={"items":[{...}]}`（空なら `[]`）は，   
-      - 中間検出として出力する。
-      - シンク関数に到達しない脆弱性（例: forループによる境界不備）も含めて列挙する。
-      - Recall（見逃し防止）を優先して、候補を広めに拾ってよい。
-    * ガードレール：`TEE_Malloc/TEE_Free` は **非シンク**、`TEE_GenerateRandom` の出力は**機微でない**等。:contentReference[oaicite:16]{index=16} :contentReference[oaicite:17]{index=17} :contentReference[oaicite:18]{index=18}
-    * **multi‑params** 版も同契約（解析対象パラメータを独立追跡）。:contentReference[oaicite:19]{index=19} :contentReference[oaicite:20]{index=20}
-  * **end** ステップ  
-    **1行目**：`{"vulnerability_found":"yes"|"no"}`  
-    **2行目**：`yes` の場合は CWE/Severity/Flow/Exploitability 等を含む **厳密 JSON**、`no` の場合は否定根拠＋有効化されたサニタイザ一覧等。  
-    **3行目**：`END_FINDINGS={"items":[...]}`は `FINDINGS` と同様。
-      - **最終出力の簡潔なリスト**。
-      - **シンクに到達する脆弱性は含めない**。  
-        → それらは詳細 JSON（CWE 番号や taint_flow_summary などを含む大きい方）でのみ報告する。  
-      - **シンクに到達しない脆弱性だけを列挙する**。  
-        例: 固定長配列への無限コピー、ループによる境界不備、境界チェック欠如など。
-      - Precision（誤検出抑制）を意識して記述する。
-  
-  > **system.txt** には OP‑TEE/TrustZone 固有の前提とガードレール、`rule_matches` の必須性/順序、DITING パーティショニングルールが明示されています（**変更禁止の機械可読ブロック**）。:contentReference[oaicite:22]{index=22}
-  
-  実行フロー（関数ステップのシーケンス図）
-  ```mermaid
-  sequenceDiagram
-    participant Core as TaintAnalyzerCore
-    participant CE as CodeExtractor
-    participant PM as PromptManager
-    participant CM as ConversationManager
-    participant LLM as LLM Provider
-    participant VP as VulnerabilityParser
-  
-    loop for each chain (prefix-cached)
-      Core->>CM: start_new_chain()
-      Core->>CE: 関数/シンク周辺コードの抽出
-      Core->>PM: 該当テンプレ読込 + RAG文脈(任意)
-      PM-->>Core: system/start|middle|end プロンプト
-      Core->>CM: user メッセージ追加
-      CM->>LLM: chat.completion（リトライ/診断付き）
-      LLM-->>CM: 応答（two-line contract）
-      Core->>VP: 1行目JSON + FINDINGS抽出/修復
-      Note right of Core: FINDINGS を逐次蓄積
-    end
-    Core->>LLM: endプロンプト送信（最終判定）
-    LLM-->>Core: vulnerability_found + END_FINDINGS
-    Core->>VP: END_FINDINGS抽出
-    Note right of Core: END を優先して FINDINGS 統合
-  ```
-  
-  * 会話管理はチェーン毎に履歴を最小化（system + 当該プロンプトのみ）。
-  * ロギングはバッチ/長文に強い StructuredLogger を使用。
-  * CLI/モード/プロンプト読込は taint_analyzer.py と prompts/prompts.py による。
-  
-  ### 出力（<TA>_vulnerabilities.json 概略）
+### 実行フロー
 
-  ```json
-{
-  "statistics": {
-    "analysis_date": "...",
-    "analysis_time_formatted": "...",
-    "llm_provider": "...",
-    "analysis_mode": "hybrid|llm_only",
-    "rag_enabled": true,
-    "cache_enabled": true,
-    "total_chains_analyzed": 42,
-    "functions_analyzed": 99,
-    "llm_calls": 120,
-    "cache_stats": {"hits": 12, "misses": 30, "hit_rate": "28.6%"},
-    "findings_stats": {"total_collected": 10, "end_findings": 3, ...},
-    "token_usage": {"total_tokens": 39656, ...}
-  },
-  "total_flows_analyzed": 8,
-  "vulnerabilities_found": 3,
-  "vulnerabilities": [
-    {
-      "vd": {"file":"ta/a.c","line":120,"sink":"TEE_MemMove","param_index":1},
-      "chain": ["TA_InvokeCommandEntryPoint","process","copy_buf","TEE_MemMove"],
-      "taint_analysis": [{"function":"...","analysis":"<two-line text>", "..."}],
-      "vulnerability": "<end step raw>",
-      "vulnerability_details": {"details":{"vulnerability_type":"CWE-787","...":"..."}},
-      "reasoning_trace": [{"taint_state": {...}, "risk_indicators": ["..."]}],
-      "inline_findings": [{"id":"...","rule":"...","file":"...","line":120}]
-    }
-  ],
-  "inline_findings": [ { "...": "merged (END優先)" } ]
-}
+```mermaid
+graph TD
+    A[入力: flows.json] --> B[システムプロンプト設定]
+    B --> C[フロー単位で解析開始]
+    C --> D[キャッシュ確認]
+    D --> E{キャッシュヒット?}
+    E -->|Yes| F[キャッシュ使用]
+    E -->|No| G[Start: エントリー解析]
+    F --> H[Middle: 伝播追跡]
+    G --> H
+    H --> I[End: 脆弱性判定]
+    I --> J[整合性チェック]
+    J --> K{矛盾あり?}
+    K -->|Yes| L[判定修正]
+    K -->|No| M[結果保存]
+    L --> M
+    M --> N[次のフロー or 完了]
+```
 
-  ```
-  * `statistics`（日時、モード、RAG、キャッシュ、LLM 呼数、トークン、Findings 集計など）  
-  * `vulnerabilities`（チェイン単位の決定・詳細・トレース・FINDINGS）  
-  * `inline_findings`（全体横断の統合済み FINDINGS）  
-  （保存は `taint_analyzer.py` が担当）:contentReference[oaicite:29]{index=29}
-  
+### 整合性チェックの役割
+- **脆弱性ありだがFindingsなし** → レスポンスから証拠を救済抽出
+- **脆弱性なしだがFindingsあり** → 実際の脆弱性なら昇格
+- **テイントフロー断絶** → 再評価または降格
   ---
 
 ## Phase6 — HTMLレポート生成（`src/report/generate_report.py`）

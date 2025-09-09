@@ -386,321 +386,281 @@ graph TB
 ```
 
 ## Phase 5: テイント解析と脆弱性検査
-
-### 処理フロー
+## 1. システム全体フロー
 
 ```mermaid
 graph TB
-    Start([開始]) --> LoadInputs[入力データ読み込み<br/>・candidate_flows.json<br/>・phase12.json<br/>・設定パラメータ]
+    Start[開始: taint_analyzer.py]
+    Start --> ParseArgs[コマンドライン引数解析]
+    ParseArgs --> LoadInput[入力データ読み込み<br/>- flows.json<br/>- phase12.json]
     
-    LoadInputs --> InitConfig[解析設定初期化<br/>・モード決定<br/>・RAG設定<br/>・JSONリトライ戦略]
+    LoadInput --> InitLLM[LLMクライアント初期化<br/>UnifiedLLMClient]
+    InitLLM --> SetupPrompt[システムプロンプト設定<br/>4つのモード対応]
     
-    InitConfig --> CheckMode{解析モード?}
+    SetupPrompt --> InitComponents[コンポーネント初期化<br/>- CodeExtractor<br/>- VulnerabilityUtils<br/>- TaintAnalyzer]
     
-    CheckMode -->|hybrid| InitHybrid[Hybridモード初期化<br/>・DITINGルール読込<br/>・CodeQLルール読込]
-    CheckMode -->|llm_only| InitLLMOnly[LLM-onlyモード初期化<br/>・CodeQLヒントのみ]
+    InitComponents --> AnalyzeFlows[全フロー解析開始]
     
-    InitHybrid --> CheckRAG1{RAG有効?}
-    InitLLMOnly --> CheckRAG2{RAG有効?}
+    AnalyzeFlows --> FlowLoop{各フローを<br/>順次処理}
     
-    CheckRAG1 -->|Yes| SetupHybridRAG[Hybrid+RAG設定<br/>・RAGクライアント初期化<br/>・ベクトルストア構築]
-    CheckRAG1 -->|No| SetupHybridNoRAG[Hybrid設定<br/>・ルールのみ使用]
+    FlowLoop --> AnalyzeSingle[単一フロー解析]
+    AnalyzeSingle --> CheckCache[キャッシュチェック]
     
-    CheckRAG2 -->|Yes| SetupLLMRAG[LLM+RAG設定<br/>・RAGクライアント初期化]
-    CheckRAG2 -->|No| SetupLLMNoRAG[LLM-only設定<br/>・最小構成]
+    CheckCache --> CacheHit{キャッシュ<br/>ヒット?}
+    CacheHit -->|Yes| RestoreState[状態復元]
+    CacheHit -->|No| AnalyzeFunctions[関数チェーン解析]
     
-    SetupHybridRAG --> GeneratePrompt
-    SetupHybridNoRAG --> GeneratePrompt
-    SetupLLMRAG --> GeneratePrompt
-    SetupLLMNoRAG --> GeneratePrompt
+    RestoreState --> AnalyzeFunctions
+    AnalyzeFunctions --> FuncLoop{各関数を<br/>順次解析}
     
-    GeneratePrompt[システムプロンプト生成<br/>・テンプレート読込<br/>・プレースホルダー置換]
+    FuncLoop --> ExtractCode[関数コード抽出]
+    ExtractCode --> CallLLM[LLM呼び出し<br/>テイント解析]
+    CallLLM --> ParseResponse[統合パーサーで<br/>レスポンス解析]
+    ParseResponse --> UpdateCache[キャッシュ更新]
     
-    GeneratePrompt --> InitComponents[コンポーネント初期化<br/>・CodeExtractor<br/>・VulnerabilityParser<br/>・TokenTrackingClient]
+    UpdateCache --> NextFunc{次の関数<br/>あり?}
+    NextFunc -->|Yes| FuncLoop
+    NextFunc -->|No| VulnAnalysis[脆弱性判定]
     
-    InitComponents --> InitAnalyzer[TaintAnalyzer初期化<br/>・PrefixCache<br/>・LLMHandler<br/>・ConsistencyChecker]
+    VulnAnalysis --> ConsistencyCheck[整合性チェック]
+    ConsistencyCheck --> CollectFindings[Findings収集]
     
-    InitAnalyzer --> FlowLoop[各フローを解析]
+    CollectFindings --> NextFlow{次のフロー<br/>あり?}
+    NextFlow -->|Yes| FlowLoop
+    NextFlow -->|No| MergeFindings[Findings統合]
     
-    FlowLoop --> ExtractFlowInfo[フロー情報抽出<br/>・function_chain<br/>・function_call_line<br/>・vd（脆弱性記述）]
-    
-    ExtractFlowInfo --> CheckCache{キャッシュ<br/>チェック?}
-    
-    CheckCache -->|Hit| RestoreCache[キャッシュ状態復元<br/>・会話履歴<br/>・解析結果]
-    CheckCache -->|Miss| StartNew[新規解析開始]
-    
-    RestoreCache --> AnalyzeRemaining
-    StartNew --> AnalyzeFirst
-    
-    AnalyzeFirst[最初の関数から解析]
-    AnalyzeRemaining[残りの関数を解析]
-    
-    AnalyzeFirst --> FunctionLoop
-    AnalyzeRemaining --> FunctionLoop
-    
-    FunctionLoop[関数解析ループ]
-    FunctionLoop --> ExtractCode[関数コード抽出<br/>・行番号付加<br/>・コメント除去]
-    
-    ExtractCode --> BuildContext[呼び出しコンテキスト構築<br/>・caller情報<br/>・call_line情報]
-    
-    BuildContext --> GenerateFuncPrompt[関数プロンプト生成<br/>・start/middle/end判定<br/>・RAGコンテキスト追加]
-    
-    GenerateFuncPrompt --> CallLLM[LLM呼び出し<br/>（リトライ付き）]
-    
-    CallLLM --> CheckJSON{JSON解析<br/>成功?}
-    
-    CheckJSON -->|No| RetryJSON{リトライ<br/>戦略?}
-    RetryJSON -->|smart| SmartRetry[条件付きリトライ<br/>・重要関数優先<br/>・JSON痕跡確認]
-    RetryJSON -->|aggressive| AggressiveRetry[常にリトライ]
-    RetryJSON -->|none| AcceptFailure[失敗を受入]
-    
-    SmartRetry --> GenerateCorrection[JSON修正プロンプト生成]
-    AggressiveRetry --> GenerateCorrection
-    GenerateCorrection --> CallLLM
-    
-    CheckJSON -->|Yes| ParseResponse[レスポンス解析<br/>・テイント状態抽出<br/>・リスク指標抽出]
-    AcceptFailure --> ParseResponse
-    
-    ParseResponse --> ExtractFindings[FINDINGS抽出<br/>・インライン検出<br/>・rule_matches処理]
-    
-    ExtractFindings --> UpdateCache{キャッシュ<br/>更新?}
-    
-    UpdateCache -->|Yes| SavePrefix[接頭辞キャッシュ保存<br/>・解析状態<br/>・会話履歴]
-    UpdateCache -->|No| NextFunc
-    
-    SavePrefix --> NextFunc[次の関数へ]
-    
-    NextFunc --> MoreFuncs{他の関数<br/>ある?}
-    MoreFuncs -->|Yes| FunctionLoop
-    MoreFuncs -->|No| VulnAnalysis
-    
-    VulnAnalysis[脆弱性判定フェーズ]
-    VulnAnalysis --> GenerateEndPrompt[最終プロンプト生成]
-    
-    GenerateEndPrompt --> CallLLMFinal[LLM最終判定]
-    
-    CallLLMFinal --> ParseVuln[脆弱性判定解析<br/>・vulnerability_found<br/>・severity抽出]
-    
-    ParseVuln --> ExtractEndFindings[END_FINDINGS抽出<br/>（拡張抽出）]
-    
-    ExtractEndFindings --> CheckEndFindings{END_FINDINGS<br/>あり?}
-    
-    CheckEndFindings -->|No| RecoveryAttempt[救済抽出試行<br/>・柔軟パターン<br/>・LLM再要求]
-    CheckEndFindings -->|Yes| ConsistencyCheck1
-    
-    RecoveryAttempt --> ConsistencyCheck1[整合性チェック1:<br/>テイントフロー検証]
-    
-    ConsistencyCheck1 --> ValidTaint{有効な<br/>REE→sink?}
-    
-    ValidTaint -->|No| Reevaluate[再評価<br/>・降格判定<br/>・理由記録]
-    ValidTaint -->|Yes| ConsistencyCheck2
-    
-    Reevaluate --> ConsistencyCheck2[整合性チェック2:<br/>Findings一貫性]
-    
-    ConsistencyCheck2 --> CheckFindings{Findings<br/>一貫?}
-    
-    CheckFindings -->|No| AdjustFindings[Findings調整<br/>・誤検出除外<br/>・救済抽出]
-    CheckFindings -->|Yes| StoreResult
-    
-    AdjustFindings --> CheckCrypto{Crypto API<br/>のみ?}
-    
-    CheckCrypto -->|Yes| CheckDangerous{危険シンク<br/>あり?}
-    CheckCrypto -->|No| StoreResult
-    
-    CheckDangerous -->|No| DowngradeVuln[脆弱性降格<br/>・理由: crypto_only]
-    CheckDangerous -->|Yes| StoreResult
-    
-    DowngradeVuln --> StoreResult[結果保存]
-    
-    StoreResult --> NextFlow[次のフロー]
-    NextFlow --> MoreFlows{他のフロー<br/>ある?}
-    MoreFlows -->|Yes| FlowLoop
-    MoreFlows -->|No| MergeFindings
-    
-    MergeFindings[Findingsマージ処理]
-    MergeFindings --> GroupFindings[グループ化<br/>・複合キー生成<br/>・近似判定]
-    
-    GroupFindings --> PrioritySelect[優先順位選択<br/>・end > middle > start<br/>・refs記録]
-    
-    PrioritySelect --> DeduplicateID[ID重複除去<br/>・完全一致統合]
-    
-    DeduplicateID --> GenerateReport[レポート生成]
-    
-    GenerateReport --> SaveJSON[JSON出力<br/>・vulnerabilities<br/>・inline_findings<br/>・statistics]
-    
-    SaveJSON --> CheckSummary{サマリー<br/>生成?}
-    
-    CheckSummary -->|Yes| GenerateMD[Markdownレポート生成<br/>・脆弱性サマリー<br/>・Findingsサマリー]
-    CheckSummary -->|No| DisplayStats
-    
-    GenerateMD --> DisplayStats[統計表示<br/>・解析時間<br/>・トークン使用量<br/>・キャッシュ統計]
-    
-    DisplayStats --> End([終了])
-    
-    style InitConfig fill:#e1f5fe
-    style InitAnalyzer fill:#fff3e0
-    style FunctionLoop fill:#f3e5f5
-    style VulnAnalysis fill:#fce4ec
-    style MergeFindings fill:#e8f5e9
-    style GenerateReport fill:#c8e6c9
+    MergeFindings --> GenerateReport[レポート生成]
+    GenerateReport --> SaveOutput[結果保存<br/>- JSON<br/>- Summary]
+    SaveOutput --> End[終了]
 ```
 
-### サブプロセス詳細
+## 2. プロンプト設定フロー
 
-#### JSONリトライメカニズム
-```mermaid
-graph LR
-    JSONFail[JSON解析失敗] --> CheckStrategy{戦略確認}
-    CheckStrategy -->|smart| CheckImportance[重要度判定<br/>・最終関数?<br/>・エントリ?]
-    CheckStrategy -->|aggressive| AlwaysRetry[常にリトライ]
-    CheckStrategy -->|none| NoRetry[リトライなし]
-    
-    CheckImportance --> HasJSONTrace{JSON痕跡<br/>あり?}
-    HasJSONTrace -->|Yes| DoRetry[リトライ実行]
-    HasJSONTrace -->|No| CheckPosition{重要位置?}
-    CheckPosition -->|Yes| DoRetry
-    CheckPosition -->|No| NoRetry
-    
-    AlwaysRetry --> DoRetry
-    DoRetry --> CreatePrompt[修正プロンプト生成]
-    CreatePrompt --> Attempt1{試行1}
-    Attempt1 -->|失敗| Attempt2{試行2}
-    Attempt2 -->|失敗| Attempt3{試行3}
-    Attempt3 -->|失敗| GiveUp[諦める]
-```
-
-#### 整合性チェックプロセス
 ```mermaid
 graph TB
-    Input[解析結果] --> TaintCheck[テイントフロー検証]
-    TaintCheck --> HasPath{REE→Sink<br/>パスあり?}
+    SetupStart[setup_system_prompt開始]
+    SetupStart --> DetermineMode{モード判定}
     
-    HasPath -->|No| CheckVuln{脆弱性<br/>フラグ?}
-    HasPath -->|Yes| FindingsCheck
+    DetermineMode --> HybridRAG[Hybrid + RAG]
+    DetermineMode --> HybridNoRAG[Hybrid - RAG]
+    DetermineMode --> LLMOnlyRAG[LLM-only + RAG]
+    DetermineMode --> LLMOnlyNoRAG[LLM-only - RAG]
     
-    CheckVuln -->|Yes| Downgrade[降格処理<br/>・suspected設定]
-    CheckVuln -->|No| FindingsCheck
+    HybridRAG --> LoadDiting1[DITINGルール読込]
+    LoadDiting1 --> BuildHints1[CodeQLヒント生成]
+    BuildHints1 --> InitRAG1[RAGクライアント初期化]
+    InitRAG1 --> LoadTemplate1[テンプレート読込<br/>hybrid/with_rag/]
     
-    Downgrade --> FindingsCheck[Findings一貫性確認]
+    HybridNoRAG --> LoadDiting2[DITINGルール読込]
+    LoadDiting2 --> BuildHints2[CodeQLヒント生成]
+    BuildHints2 --> LoadTemplate2[テンプレート読込<br/>hybrid/no_rag/]
     
-    FindingsCheck --> VulnYes{vuln=yes?}
-    VulnYes -->|Yes| HasFindings{Findings<br/>あり?}
-    VulnYes -->|No| CheckFindings2{Findings<br/>あり?}
+    LLMOnlyRAG --> BuildHints3[CodeQLヒント生成]
+    BuildHints3 --> InitRAG3[RAGクライアント初期化]
+    InitRAG3 --> LoadTemplate3[テンプレート読込<br/>llm_only/with_rag/]
     
-    HasFindings -->|No| SalvageAttempt[救済抽出<br/>・柔軟パターン<br/>・空構造検出]
-    HasFindings -->|Yes| ValidateFindings
+    LLMOnlyNoRAG --> BuildHints4[CodeQLヒント生成]
+    BuildHints4 --> LoadTemplate4[テンプレート読込<br/>llm_only/no_rag/]
     
-    CheckFindings2 -->|Yes| UpgradeVuln[脆弱性昇格]
-    CheckFindings2 -->|No| Output
+    LoadTemplate1 --> ReplacePlaceholders[プレースホルダー置換<br/>- diting_rules_json<br/>- RULE_HINTS_BLOCK]
+    LoadTemplate2 --> ReplacePlaceholders
+    LoadTemplate3 --> ReplacePlaceholders
+    LoadTemplate4 --> ReplacePlaceholders
     
-    SalvageAttempt --> FoundFindings{救済<br/>成功?}
-    FoundFindings -->|Yes| ValidateFindings[Findings検証]
-    FoundFindings -->|No| MarkSuspected[suspected設定]
-    
-    ValidateFindings --> RemoveFP[誤検出除去<br/>・プレースホルダー<br/>・line=0]
-    
-    RemoveFP --> Output[調整済み結果]
-    UpgradeVuln --> Output
-    MarkSuspected --> Output
+    ReplacePlaceholders --> ValidatePrompt[プロンプト検証]
+    ValidatePrompt --> ReturnPrompt[プロンプトとメタデータ返却]
 ```
 
-####　簡易レポート生成 - Phase 5
+## 3. 関数解析フロー
+
 ```mermaid
 graph TB
-    Start([開始]) --> LoadResults[解析結果読み込み<br/>・vulnerabilities<br/>・inline_findings<br/>・statistics]
+    FuncStart[FunctionAnalyzer.analyze_function開始]
+    FuncStart --> ExtractFunc[関数コード抽出<br/>CodeExtractor使用]
     
-    LoadResults --> CheckFormat{出力形式?}
+    ExtractFunc --> BuildContext[呼び出しコンテキスト構築]
+    BuildContext --> GenPrompt[プロンプト生成]
     
-    CheckFormat -->|JSON| GenerateJSON[JSON生成<br/>・構造化データ<br/>・メタデータ追加]
-    CheckFormat -->|Markdown| GenerateMD[Markdown生成<br/>・人間可読形式<br/>・セクション分割]
-    CheckFormat -->|CSV| GenerateCSV[CSV生成<br/>・表形式<br/>・Excel互換]
-    CheckFormat -->|All| GenerateAll[全形式生成]
+    GenPrompt --> StartPrompt{位置=0?}
+    StartPrompt -->|Yes| GetStartPrompt[get_start_prompt]
+    StartPrompt -->|No| GetMiddlePrompt[get_middle_prompt]
     
-    GenerateJSON --> AddMetadata[メタデータ追加<br/>・生成時刻<br/>・バージョン<br/>・設定情報]
+    GetStartPrompt --> AddToConv[会話履歴に追加]
+    GetMiddlePrompt --> CheckRAG{RAG有効?}
     
-    GenerateMD --> CreateSections[セクション作成<br/>・統計サマリー<br/>・脆弱性詳細<br/>・Findings一覧]
+    CheckRAG -->|Yes| SearchRAG[RAGコンテキスト取得]
+    CheckRAG -->|No| AddToConv
+    SearchRAG --> AddToConv
     
-    CreateSections --> FormatVulns[脆弱性整形<br/>・チェイン表示<br/>・シンク情報<br/>・重要度]
+    AddToConv --> CallLLMFunc[LLMHandler.ask_with_handler]
     
-    FormatVulns --> FormatFindings[Findings整形<br/>・カテゴリ別<br/>・ファイル別<br/>・関数別]
+    CallLLMFunc --> ValidateResp[SmartResponseValidator<br/>早期検証と自動修復]
     
-    GenerateCSV --> CreateHeaders[ヘッダー作成<br/>・標準フィールド]
-    CreateHeaders --> WriteRows[行データ書き込み]
+    ValidateResp --> ParseResp[UnifiedLLMResponseParser<br/>統合パース処理]
     
-    GenerateAll --> ParallelGen[並列生成<br/>・JSON<br/>・Markdown<br/>・CSV]
+    ParseResp --> ParseSuccess{パース<br/>成功?}
+    ParseSuccess -->|No| RetryDecision[IntelligentRetryStrategy<br/>リトライ判定]
     
-    AddMetadata --> SaveJSON[JSON保存]
-    FormatFindings --> SaveMD[Markdown保存]
-    WriteRows --> SaveCSV[CSV保存]
-    ParallelGen --> SaveAll[全ファイル保存]
+    RetryDecision --> ShouldRetry{リトライ<br/>すべき?}
+    ShouldRetry -->|Yes| CreateCorrection[修正プロンプト生成]
+    CreateCorrection --> CallLLMFunc
+    ShouldRetry -->|No| ProcessResult
     
-    SaveJSON --> GenerateStats
-    SaveMD --> GenerateStats
-    SaveCSV --> GenerateStats
-    SaveAll --> GenerateStats
+    ParseSuccess -->|Yes| ProcessResult[結果処理<br/>- テイント情報抽出<br/>- Findings抽出<br/>- 推論トレース更新]
     
-    GenerateStats[統計レポート生成]
-    GenerateStats --> AnalysisTime[解析時間統計<br/>・総時間<br/>・フロー平均<br/>・関数平均]
-    
-    AnalysisTime --> TokenStats[トークン統計<br/>・総使用量<br/>・入力/出力<br/>・API呼び出し数]
-    
-    TokenStats --> CacheStats[キャッシュ統計<br/>・ヒット率<br/>・削減量<br/>・効率性]
-    
-    CacheStats --> FindingsStats[Findings統計<br/>・総数<br/>・カテゴリ別<br/>・重複除去数]
-    
-    FindingsStats --> ConsistencyStats[整合性統計<br/>・再評価数<br/>・降格数<br/>・救済数]
-    
-    ConsistencyStats --> CreateSummary[サマリー作成<br/>・主要指標<br/>・推奨事項<br/>・次のステップ]
-    
-    CreateSummary --> DisplayResults[結果表示<br/>・コンソール出力<br/>・ファイルパス<br/>・実行時間]
-    
-    DisplayResults --> End([終了])
-    
-    style LoadResults fill:#e1f5fe
-    style GenerateStats fill:#fff3e0
-    style CreateSummary fill:#e8f5e9
+    ProcessResult --> FuncEnd[終了]
 ```
-#### 脆弱性レポート構造
+
+## 4. 統合パーサー処理フロー
+
 ```mermaid
 graph TB
-    Report[レポート] --> Header[ヘッダー<br/>・タイトル<br/>・生成日時<br/>・バージョン]
+    ParseStart[UnifiedLLMResponseParser開始]
+    ParseStart --> CheckCache{キャッシュ<br/>確認}
     
-    Report --> Statistics[統計セクション<br/>・解析モード<br/>・実行時間<br/>・検出数]
+    CheckCache -->|Hit| ReturnCached[キャッシュ結果返却]
+    CheckCache -->|Miss| CheckType{入力タイプ<br/>判定}
     
-    Report --> Vulnerabilities[脆弱性セクション]
-    Vulnerabilities --> VulnItem[各脆弱性]
+    CheckType -->|Dict| HandleDict[辞書形式処理]
+    CheckType -->|String| SplitLines[スマート行分割<br/>JSON構造考慮]
     
-    VulnItem --> Chain[チェイン情報<br/>・関数フロー<br/>・呼び出し順序]
+    SplitLines --> ProcessLine1[Line1処理]
+    ProcessLine1 --> Phase1{フェーズ<br/>判定}
     
-    VulnItem --> SinkInfo[シンク情報<br/>・関数名<br/>・ファイル<br/>・行番号]
+    Phase1 -->|start/middle| ParseTaint[テイントJSON解析]
+    Phase1 -->|end| ParseVuln[脆弱性判定解析]
     
-    VulnItem --> TaintFlow[テイントフロー<br/>・各ステップ<br/>・伝播状態<br/>・検証結果]
+    ParseTaint --> ProcessLine2[Line2処理]
+    ParseVuln --> ProcessLine2
     
-    VulnItem --> Evidence[証拠<br/>・コード片<br/>・rule_matches<br/>・FINDINGS]
+    ProcessLine2 --> Phase2{フェーズ<br/>判定}
+    Phase2 -->|start/middle| ParseFindings[FINDINGS解析]
+    Phase2 -->|end| ParseDetails[詳細JSON解析]
     
-    Report --> FindingsList[Findings一覧]
-    FindingsList --> ByCategory[カテゴリ別<br/>・UO<br/>・WIV<br/>・SMO]
+    ParseFindings --> CheckLine3{3行目<br/>あり?}
+    ParseDetails --> CheckLine3
     
-    FindingsList --> ByFile[ファイル別<br/>・グループ化<br/>・行番号順]
+    CheckLine3 -->|Yes & end| ParseEndFindings[END_FINDINGS解析]
+    CheckLine3 -->|No| ValidateResult[結果検証]
+    ParseEndFindings --> ValidateResult
     
-    FindingsList --> ByPhase[フェーズ別<br/>・start<br/>・middle<br/>・end]
+    ValidateResult --> Success{検証<br/>成功?}
+    Success -->|Yes| UpdateCache[キャッシュ更新]
+    Success -->|No| RecordError[エラー記録]
     
-    Report --> Recommendations[推奨事項<br/>・修正優先度<br/>・対策方法<br/>・参考情報]
+    UpdateCache --> ReturnResult[結果返却]
+    RecordError --> ReturnResult
+    
+    HandleDict --> ExtractFields[フィールド抽出]
+    ExtractFields --> ReturnResult
 ```
-#### 統計ダッシュボード
+
+## 5. 脆弱性判定フロー
+
 ```mermaid
-graph LR
-    Stats[統計情報] --> Performance[パフォーマンス]
-    Performance --> Time[時間<br/>・総時間<br/>・平均時間]
-    Performance --> Tokens[トークン<br/>・使用量<br/>・コスト推定]
+graph TB
+    VulnStart[VulnerabilityAnalyzer開始]
+    VulnStart --> GenEndPrompt[get_end_prompt]
     
-    Stats --> Quality[品質指標]
-    Quality --> Coverage[カバレッジ<br/>・解析フロー数<br/>・成功率]
-    Quality --> Accuracy[精度<br/>・整合性<br/>・降格率]
+    GenEndPrompt --> CallLLMVuln[LLMに脆弱性判定要求]
+    CallLLMVuln --> ValidateVuln[レスポンス検証<br/>SmartResponseValidator]
     
-    Stats --> Efficiency[効率性]
-    Efficiency --> Cache[キャッシュ<br/>・ヒット率<br/>・削減効果]
-    Efficiency --> Retry[リトライ<br/>・成功率<br/>・回数]
+    ValidateVuln --> ParseVulnResp[統合パーサーで解析]
+    ParseVulnResp --> ExtractDecision[脆弱性判定抽出]
+    
+    ExtractDecision --> ExtractEndFindings[END_FINDINGS抽出]
+    
+    ExtractEndFindings --> CheckEmpty{END_FINDINGS<br/>空?}
+    CheckEmpty -->|Yes & Vuln| RecoveryAttempt[Findings救済試行]
+    CheckEmpty -->|No| CheckTaintFlow
+    
+    RecoveryAttempt --> RequestFindings[LLMに再要求]
+    RequestFindings --> CheckTaintFlow[テイントフロー検証]
+    
+    CheckTaintFlow --> ValidFlow{有効な<br/>フロー?}
+    ValidFlow -->|No & Vuln| Reevaluate[整合性再評価]
+    ValidFlow -->|Yes| CheckFindingsConsist
+    
+    Reevaluate --> UpdateDecision[判定更新]
+    UpdateDecision --> CheckFindingsConsist[Findings整合性チェック]
+    
+    CheckFindingsConsist --> Consistent{整合?}
+    Consistent -->|No| AdjustFindings[Findings調整<br/>- 誤検出除外<br/>- 救済抽出]
+    Consistent -->|Yes| BuildResult
+    
+    AdjustFindings --> BuildResult[最終結果構築]
+    BuildResult --> VulnEnd[終了]
+```
+
+## 6. LLM通信とエラー処理フロー
+
+```mermaid
+graph TB
+    LLMStart[LLMHandler.ask_with_handler開始]
+    LLMStart --> BuildFullContext[完全コンテキスト構築]
+    
+    BuildFullContext --> RetryLoop{リトライ<br/>ループ}
+    
+    RetryLoop --> CallAPI[LLM API呼び出し]
+    CallAPI --> CheckEmpty{空レスポンス?}
+    
+    CheckEmpty -->|Yes| DiagnoseEmpty[ResponseDiagnostics<br/>空レスポンス診断]
+    CheckEmpty -->|No| CheckError{エラー?}
+    
+    DiagnoseEmpty --> LogError1[エラーログ記録]
+    
+    CheckError -->|Yes| AnalyzeError[LLMErrorAnalyzer<br/>エラー分析]
+    CheckError -->|No| ReturnSuccess[成功レスポンス返却]
+    
+    AnalyzeError --> LogError2[エラーログ記録]
+    
+    LogError1 --> CheckRetry{リトライ<br/>可能?}
+    LogError2 --> CheckRetry
+    
+    CheckRetry -->|Yes & attempts < max| WaitBackoff[バックオフ待機]
+    WaitBackoff --> RetryLoop
+    
+    CheckRetry -->|No| HandleFatal[致命的エラー処理]
+    HandleFatal --> SaveErrorLog[エラーログ保存]
+    SaveErrorLog --> ExitProgram[プログラム終了]
+```
+
+## 7. キャッシュとFindings統合フロー
+
+```mermaid
+graph TB
+    CacheStart[PrefixCache処理]
+    CacheStart --> CheckPrefix{接頭辞<br/>確認}
+    
+    CheckPrefix --> SearchCache[最長一致検索]
+    SearchCache --> Found{見つかった?}
+    
+    Found -->|Yes| RestoreConv[会話履歴復元]
+    Found -->|No| StartFresh[新規開始]
+    
+    RestoreConv --> ContinueAnalysis[解析継続]
+    StartFresh --> ContinueAnalysis
+    
+    ContinueAnalysis --> SavePrefix[接頭辞保存]
+    
+    subgraph Findings統合
+        MergeStart[FindingsMerger開始]
+        MergeStart --> GroupFindings[グループ化<br/>- file<br/>- line<br/>- sink<br/>- rule]
+        
+        GroupFindings --> ProcessGroups{各グループ<br/>処理}
+        
+        ProcessGroups --> CheckDup{重複?}
+        CheckDup -->|Yes| SelectBest[代表選択<br/>end優先]
+        CheckDup -->|No| KeepSingle[単一保持]
+        
+        SelectBest --> MergeReasons[理由統合]
+        KeepSingle --> AddToFinal
+        MergeReasons --> AddToFinal[最終リストに追加]
+        
+        AddToFinal --> NextGroup{次の<br/>グループ?}
+        NextGroup -->|Yes| ProcessGroups
+        NextGroup -->|No| ReturnMerged[統合結果返却]
+    end
 ```
 
 ## Phase 6: HTMLレポート生成
