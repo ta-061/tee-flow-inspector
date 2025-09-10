@@ -74,6 +74,13 @@ class FunctionAnalyzer:
         is_final: bool
     ):
         """関数を解析（統合パーサー使用）"""
+        # キャッシュチェック
+        if self.conversation_manager.is_function_cached(chain, position):
+            cached_result = self.conversation_manager.get_cached_result(chain, position)
+            results["taint_analysis"].append(cached_result)
+            self.logger.writeln(f"[CACHE] Using cached result for {func_name}")
+            return
+        
         self.stats["functions_analyzed"] += 1
         
         # 関数コードを取得
@@ -101,7 +108,7 @@ class FunctionAnalyzer:
             "has_call_context": bool(call_context)
         }
         
-        # プロンプトを生成して解析を実行
+        # _analyze_with_unified_parserを呼び出して解析
         parsed = self._analyze_with_unified_parser(
             func_name, func_code, position, chain, vd, call_context, is_final, context
         )
@@ -110,6 +117,36 @@ class FunctionAnalyzer:
         self._process_parsed_response(
             parsed, func_name, position, chain, vd, results, is_final
         )
+        
+        # taint_infoを構築（resultsから最後に追加されたものを取得）
+        taint_info = results["taint_analysis"][-1] if results["taint_analysis"] else {
+            "function": func_name,
+            "position": position,
+            "analysis": parsed.get("taint_analysis"),
+            "has_context": position > 0,
+            "is_final": is_final,
+            "parse_success": parsed.get("parse_success", False)
+        }
+        
+        # プロンプトとレスポンスを取得
+        # _analyze_with_unified_parserで使用したプロンプトとレスポンスを取得
+        # conversation_managerの履歴から取得
+        history = self.conversation_manager.get_history()
+        prompt = None
+        response = None
+        
+        # 履歴から最後のuser/assistantペアを探す
+        for i in range(len(history) - 1, 0, -1):
+            if history[i]["role"] == "assistant" and i > 0 and history[i-1]["role"] == "user":
+                prompt = history[i-1]["content"]
+                response = history[i]["content"]
+                break
+        
+        # キャッシュに保存
+        if prompt and response:
+            self.conversation_manager.cache_function_result(
+                chain, position, prompt, response, taint_info
+            )
     
     def _analyze_with_unified_parser(
         self,

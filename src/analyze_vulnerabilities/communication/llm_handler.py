@@ -75,7 +75,29 @@ class LLMHandler:
             LLMのレスポンス
         """
         self.stats["total_calls"] += 1
-        messages = conversation_manager.get_history()
+        phase = context.get('phase', '')
+
+        # endフェーズの場合は全履歴を送信
+        if phase == 'end':
+            messages = conversation_manager.get_history()
+        else:
+            # start/middleフェーズは選択的な履歴
+            chain_str = context.get('chain', '')
+            chain = chain_str.split(' -> ') if chain_str else []
+            position = context.get('position', 0)
+            
+            if chain and hasattr(conversation_manager, 'get_history_for_function'):
+                messages = conversation_manager.get_history_for_function(chain, position)
+            else:
+                messages = conversation_manager.get_history()
+            
+            # 現在の質問を追加
+            current_history = conversation_manager.get_history()
+            if current_history and current_history[-1]["role"] == "user":
+                current_question = current_history[-1]
+                if current_question not in messages:
+                    messages.append(current_question)
+        
         
         # コンテキストに追加情報を含める
         full_context = self._build_full_context(context)
@@ -176,12 +198,25 @@ class LLMHandler:
     
     def _call_llm(self, messages: List[Dict]) -> str:
         """LLMを呼び出し"""
-        if hasattr(self.client, 'chat_completion_with_tokens'):
-            response, _ = self.client.chat_completion_with_tokens(messages)
-            return response
-        else:
-            return self.client.chat_completion(messages)
-    
+        total_chars = sum(len(m.get("content", "")) for m in messages)
+        print(f"[DEBUG] Sending to LLM:")
+        print(f"  - Messages: {len(messages)}")
+        print(f"  - Total chars: {total_chars}")
+        print(f"  - Estimated tokens: {total_chars // 4}")
+        
+        try:
+            if hasattr(self.client, 'chat_completion_with_tokens'):
+                response, tokens = self.client.chat_completion_with_tokens(messages)
+                print(f"[DEBUG] Response received: {len(response) if response else 'EMPTY'} chars")
+                return response
+            else:
+                response = self.client.chat_completion(messages)
+                print(f"[DEBUG] Response received: {len(response) if response else 'EMPTY'} chars")
+                return response
+        except Exception as e:
+            print(f"[DEBUG] LLM call exception: {type(e).__name__}: {e}")
+            raise
+        
     def _is_empty_response(self, response) -> bool:
         """空レスポンスかチェック"""
         return not response or (isinstance(response, str) and response.strip() == "")

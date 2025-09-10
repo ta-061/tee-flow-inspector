@@ -371,7 +371,7 @@ def generate_vulnerability_details_html(vulnerabilities: List[Dict[str, Any]]) -
         # 説明の構築
         msgs = []
         for f in (v.get("inline_findings") or []):
-            m = (f or {}).get("message")
+            m = (f or {}).get("why")
             if m:
                 msgs.append(m.strip())
         # 重複削除（順序維持）
@@ -453,7 +453,7 @@ def generate_inline_findings_html(inline_findings: List[Dict[str, Any]], rule_in
         severity = (f.get("severity") or "medium").lower()
         function = f.get("function") or "Unknown"
         phase = f.get("phase") or "unknown"
-        message = f.get("message") or f.get("details") or "No details"
+        message = f.get("why") or f.get("details") or "No details"
         code_excerpt = f.get("code_excerpt")
 
         if isinstance(line_val, list):
