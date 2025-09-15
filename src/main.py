@@ -321,32 +321,25 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool,
         # Phase5: テイント解析と脆弱性検査
         phase_start = time.time()
         taint_py = Path(__file__).parent / "analyze_vulnerabilities" / "taint_analyzer.py"
-        
-        # マクロを含める場合と含めない場合で出力ファイル名を変更
-        if include_debug_macros:
-            vulnerabilities = res_dir / f"{ta_dir.name}_vulnerabilities_with_macros.json"
-        else:
-            vulnerabilities = res_dir / f"{ta_dir.name}_vulnerabilities.json"
-        
+        vulnerabilities = res_dir / f"{ta_dir.name}_vulnerabilities.json"
+
         taint_cmd = [sys.executable, str(taint_py),
                     "--flows", str(candidate_flows),
                     "--phase12", str(phase12),
-                    "--output", str(vulnerabilities),
-                    "--generate-summary"]
-        
-        # LLM-onlyモードの場合、DITINGルールを無効化
+                    "--output", str(vulnerabilities)]
+
+        # サマリー生成
+        taint_cmd.append("--summary")
+
+        # モード設定（LLM-onlyまたはhybrid）
         if llm_only:
-            taint_cmd.append("--no-diting-rules")
-        
-        # RAGオプション
-        if not use_rag:
-            taint_cmd.append("--no-rag")
-        
-        # トークン追跡オプション
-        if track_tokens:
-            taint_cmd.append("--track-tokens")
-        
-        print(f"[phase5_command] → python3 {taint_py} {' '.join(taint_cmd[1:])}")
+            taint_cmd.extend(["--mode", "llm_only"])
+        # else: デフォルトでhybridなので指定不要
+
+        # RAGオプション（デフォルトで無効なので、有効化する場合のみ指定）
+        if use_rag:  
+            taint_cmd.append("--use-rag")
+        print(f"[phase5_command] → python3 {taint_py.name} {' '.join(taint_cmd[3:])}")
         run(taint_cmd, ta_dir, v, "Phase 5: Taint Analysis")
         phase_times["phase5_taint_analysis"] = time.time() - phase_start
 
