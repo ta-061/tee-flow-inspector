@@ -6,6 +6,11 @@ DECISION RULES (short; unchanged)
 - Crypto APIs (TEE_AsymmetricEncrypt/Decrypt, TEE_AE*, TEE_Cipher*) are POLICY-EXCLUDED as sinks for "unencrypted_output". If they are the last call, return "no" unless there is a subsequent unencrypted copy to REE (e.g., snprintf/TEE_MemMove into a REE memref).
 - Prefer concrete code evidence (file:line). Use "unknown" when unavailable.
 
+LINE-LEVEL DETERMINATION
+- Evaluate **each sink-call line independently** (e.g., 110/215/235/241). Do NOT treat the whole function as uniformly vulnerable.
+- A sanitizer/check **applies only from its program point forward**; a post-check does not retroactively sanitize earlier lines.
+- A line is *vulnerable* iff its *own* preconditions (taint → sink, insufficient checks at/above the line) hold. Otherwise, it is *safe* and MUST NOT be listed.
+
 STRICT OUTPUT CONTRACT — EXACT LINES (no prose, no code fences)
 Line 1 (REQUIRED):
 {"vulnerability_found":"yes"|"no"}
@@ -36,7 +41,18 @@ If "yes", use:
     "confidence_level": "high|medium|low"
   },
   "decision_rationale": "<why this IS a vulnerability>",
-  "line_evidence": [ /* OPTIONAL */ ]
+  "vulnerable_line_count": <int>,                //count of vulnerable lines
+  "vulnerable_lines": [                          //list ONLY vulnerable lines (safe lines excluded)
+    {
+      "file":"<path>|unknown",
+      "line":<int>|0,
+      "function":"<enclosing_fn>|unknown",
+      "sink_function":"<callee or '=' for direct write>|unknown",
+      "rule_id":"unencrypted_output|weak_input_validation|shared_memory_overwrite|other",
+      "why":"<one-sentence, line-specific reason>"
+    }
+    // ... one object per vulnerable line
+  ]
 }
 
 If "no", use:
@@ -59,13 +75,19 @@ If "no", use:
   "decision_rationale": "<why this ISN'T a vulnerability (include crypto-API exclusion when applicable)>"
 }
 
-Line 3 (REQUIRED): EXACT END_FINDINGS block (DO NOT use FINDINGS here). ONLY include structure-driven issues that **did not** reach a final dangerous sink.
-END_FINDINGS={"items":[
+Line 3 (REQUIRED): EXACT "structural_risks" block.
+- List ONLY non-external-call (structure/semantics-driven) issues that **did not** reach a final dangerous sink, e.g.:
+  - tainted loop bounds indexing a local/TEE buffer,
+  - pointer/offset arithmetic leading to potential OOB,
+  - direct assignment writes (e.g., buf[i] = x) governed by tainted values,
+  - param_types vs access mismatch (no external sink call on the line).
+- DO NOT include external sink calls like memcpy/TEE_MemMove/snprintf here (those belong only in details JSON if vulnerable).
+{"structural_risks":[
   {
     "file":"<path>|unknown",
     "line":<int>|0,
     "function":"<current_or_related_fn>",
-    "sink_function":"<sink_name>",
+    "sink_function":"<'='|array_write|unknown>",         // use '=' for direct writes; never an external function here
     "rule_matches":{"rule_id":["<known_rule_id or 'other'>"],"others":[]},
     "why":"<one-line reason>",
     "code_excerpt":"<short optional snippet>"
