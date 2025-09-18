@@ -1,413 +1,266 @@
 # フェーズ5: LLMベースのテイント解析システム
 
 ## 概要
-フェーズ5は、LLM（Large Language Model）を活用してTEE（Trusted Execution Environment）のソースコードに対するテイント解析を実行し、脆弱性を検出するシステムです。統合パーサー（v3.0）により効率的な解析を実現し、整合性チェック機能により高精度な脆弱性判定を行います。
+
+フェーズ5は、LLM（Large Language Model）を活用してTEE（Trusted Execution Environment）のソースコードに対するテイント解析を実行し、脆弱性を検出するシステムです。統合パーサーにより効率的な解析を実現し、チェック機能により高精度な脆弱性判定を行います。
+
+### 主な特徴
+- **ハイブリッド解析**: LLM単体、DITING単体、またはハイブリッドモードでの解析が可能
+- **プレフィックスキャッシュ**: 解析済みの関数チェーンを再利用して高速化
+- **構造的リスク検出**: シンクに到達しない構造的な脆弱性も検出
+- **統合レポート**: 同一行の複数の問題を統合して報告
 
 ## システムアーキテクチャ
 
-### ディレクトリ構造
+```mermaid
+graph TB
+    A[入力ファイル] --> B[Prompt Manager]
+    B --> C[LLM Client]
+    C --> D[Response Parser]
+    D --> E[Flow Analyzer]
+    E --> F[Cache Manager]
+    F --> E
+    E --> G[Vulnerability Decision]
+    G --> H[JSON Reporter]
+    H --> I[Output Files]
 ```
-analyze_vulnerabilities/
-├── __init__.py
-├── taint_analyzer.py              # メインエントリーポイント、全体制御
-├── core/                          # 解析のコアロジック
-│   ├── __init__.py
-│   ├── taint_analyzer_core.py    # 解析オーケストレーション、フロー制御
-│   ├── function_analyzer.py      # 関数単位のテイント解析実行
-│   └── vulnerability_analyzer.py # 最終的な脆弱性判定、END_FINDINGS収集
-├── extraction/                    # データ抽出と解析
-│   ├── __init__.py
-│   ├── unified_parser.py         # LLMレスポンスの統合的解析
-│   └── vulnerability_utils.py    # ID生成、ルール管理ユーティリティ
-├── prompts/                       # プロンプト管理とコード処理
-│   ├── __init__.py
-│   ├── prompts.py                # 4モード対応プロンプト生成
-│   └── code_extractor.py         # ソースコード抽出と整形
-├── processing/                    # レスポンス処理と品質管理
-│   ├── __init__.py
-│   ├── response_validator.py     # LLMレスポンス検証と自動修復
-│   ├── retry_strategy.py         # インテリジェントリトライ戦略
-│   ├── consistency_checker.py    # 解析結果の整合性チェック
-│   └── findings_merger.py        # 重複除去とFindings統合
-├── communication/                 # 外部通信
-│   ├── __init__.py
-│   └── llm_handler.py            # LLM通信、エラー処理、リトライ
-├── optimization/                  # 最適化機能
-│   ├── __init__.py
-│   ├── prefix_cache.py           # チェイン接頭辞キャッシュ
-│   └── token_tracking_client.py  # トークン使用量追跡
-├── io_handlers/                   # 入出力処理
-│   ├── __init__.py
-│   ├── logger.py                 # 構造化ログ出力
-│   ├── conversation.py           # LLM会話履歴管理
-│   └── report_generator.py       # レポート生成
-└── utils/                         # ユーティリティ
-    ├── __init__.py
-    └── utils.py                   # 共通ユーティリティ関数
+
+## ディレクトリ構造
+
+```
+/workspace/src/analyze_vulnerabilities/
+├── taint_analyzer.py           # メインエントリポイント
+├── core/
+│   ├── engine.py               # 解析エンジン
+│   └── flow_analyzer.py        # フロー解析器
+├── parsing/
+│   └── response_parser.py      # LLMレスポンス解析
+├── prompts/
+│   ├── code_extractor.py       # コード抽出
+│   └── prompt_manager.py       # プロンプト管理
+├── llm/
+│   ├── openai_client.py        # OpenAI API
+│   └── conversation.py         # 会話コンテキスト管理
+├── cache/
+│   └── function_cache.py       # プレフィックスキャッシュ
+└── output/
+    ├── json_reporter.py        # JSON形式レポート生成
+    └── conversation_logger.py  # 会話履歴記録
 ```
 
 ## 主要機能
 
-### 1. 段階的テイント解析
-- **Start**: エントリーポイントでREE入力をテイント源として識別
-- **Middle**: 関数間のテイント伝播を追跡
-- **End**: 最終的な脆弱性判定
+### 1. テイント解析
+- REE（Rich Execution Environment）から入力されるデータの追跡
+- 関数間のデータフロー解析
+- シンク関数への到達可能性判定
 
-### 2. 統合パーサー
-- 一度の処理でLLMレスポンスのすべての要素を抽出
-- JSON構造を考慮した賢い行分割
-- キャッシュによる再解析の回避
+### 2. 脆弱性検出
+- **CWE-200**: 情報漏洩（Unencrypted Output）
+- **CWE-787**: バッファオーバーフロー（Out-of-bounds Write）
+- **CWE-20**: 入力検証不備（Improper Input Validation）
 
-### 3. 整合性チェック
-- テイントフローの論理的一貫性を検証
-- 脆弱性判定とFindingsの矛盾を検出・修正
-- 構造的リスクと実際の脆弱性を区別
-
-### 4. 自動修復機能
-- 不完全なLLM出力の自動補完
-- 欠落フィールドの追加
-- パターンマッチングによる情報救済
+### 3. 構造的リスク検出
+- テイントされたループ境界
+- ポインタ演算によるリスク
+- サイズ計算の問題
 
 ## 実行方法
 
 ### 基本コマンド
+
 ```bash
-python3 taint_analyzer.py \
-  --flows <candidate_flows.json> \
-  --phase12 <phase12_results.json> \
-  --output <vulnerabilities.json> \
-  --generate-summary
+python3 /workspace/src/analyze_vulnerabilities/taint_analyzer.py \
+  --flows <候補フローJSON> \
+  --phase12 <フェーズ1/2データJSON> \
+  --output <出力ファイルパス> \
+  [オプション]
 ```
 
 ### オプション
-- `--no-rag`: RAG機能を無効化
-- `--track-tokens`: トークン使用量を追跡
-- `--no-cache`: キャッシュを無効化（デバッグ用）
-- `--json-retry`: JSONリトライ戦略（none/intelligent/aggressive/conservative）
 
-## コア機能の詳細
+| オプション | 説明 | デフォルト |
+|---------|------|----------|
+| `--mode` | 解析モード (llm/diting/hybrid) | hybrid |
+| `--rag` | RAG（Retrieval-Augmented Generation）を有効化 | 無効 |
+| `--no-cache` | キャッシュを無効化 | 有効 |
+| `--verbose` | 詳細ログ出力 | 無効 |
+| `--llm-provider` | LLMプロバイダー (openai/anthropic) | openai |
 
-### 1. 統合パーサー (UnifiedLLMResponseParser)
+### 実行例
 
-#### 概要
-LLMの出力を一度の処理ですべて解析する効率的なパーサー。JSON構造の破損や不完全な出力にも対応。
+```bash
+# ハイブリッドモードで解析（デフォルト）
+python3 taint_analyzer.py \
+  --flows ta_candidate_flows.json \
+  --phase12 ta_phase12.json \
+  --output ta_vulnerabilities.json \
+  --verbose
 
-#### 処理フロー
+# LLMのみで解析
+python3 taint_analyzer.py \
+  --flows ta_candidate_flows.json \
+  --phase12 ta_phase12.json \
+  --output ta_vulnerabilities.json \
+  --mode llm
 
-```
-LLMレスポンス
-    ↓
-[1. キャッシュチェック]
-    ↓ (キャッシュミス)
-[2. 賢い行分割]
-    ├─ 括弧のネスト深度を追跡
-    ├─ 文字列内の改行を無視
-    └─ JSON構造の完了地点で分割
-    ↓
-[3. フェーズ別解析]
-    ├─ start/middle: 2行期待
-    │   ├─ Line 1: テイント解析JSON
-    │   └─ Line 2: FINDINGS
-    └─ end: 3行期待
-        ├─ Line 1: vulnerability_found
-        ├─ Line 2: 詳細JSON
-        └─ Line 3: END_FINDINGS
-    ↓
-[4. 各行の個別解析]
-    ├─ JSONパース試行
-    ├─ 失敗時は文字列クリーニング
-    └─ パターンマッチングで情報抽出
-    ↓
-[5. 結果のマージ]
-    └─ キャッシュに保存
+# キャッシュをクリアして実行
+python3 taint_analyzer.py \
+  --flows ta_candidate_flows.json \
+  --phase12 ta_phase12.json \
+  --output ta_vulnerabilities.json \
+  --no-cache
 ```
 
-#### 主要メソッド
+## 各コア機能の詳細
 
-##### `parse_complete_response()`
-```python
-def parse_complete_response(response, phase, context):
-    # 1. キャッシュチェック（同じレスポンスの再解析を回避）
-    cache_key = self._get_cache_key(response, phase)
-    if cache_key in self.cache:
-        return self.cache[cache_key]
-    
-    # 2. JSON構造を考慮した行分割
-    lines = self._split_response_lines(response)
-    
-    # 3. 各行を解析
-    for line_num, line_content in enumerate(lines):
-        parsed_line = self._parse_single_line(line_num, line_content, phase)
-        self._merge_line_result(result, parsed_line)
-    
-    # 4. 検証と結果返却
-    if self._is_valid_result(result, phase):
-        result["parse_success"] = True
+### 1. フロー解析プロセス
+
+```mermaid
+flowchart TD
+    Start[フロー解析開始] --> CheckCache[キャッシュチェック]
+    CheckCache -->|ヒット| RestoreContext[コンテキスト復元]
+    CheckCache -->|ミス| InitContext[コンテキスト初期化]
+    RestoreContext --> AnalyzeRemaining[残り関数を解析]
+    InitContext --> AnalyzeAll[全関数を解析]
+    AnalyzeAll --> SaveCache[キャッシュ保存]
+    AnalyzeRemaining --> SaveCache
+    SaveCache --> FinalDecision[最終判定]
+    FinalDecision --> BuildResult[結果構築]
+    BuildResult --> End[解析完了]
 ```
 
-##### `_split_response_lines()` - 賢い行分割
-```python
-def _split_response_lines(response):
-    brace_count = 0
-    bracket_count = 0
-    in_string = False
-    
-    for char in response:
-        if char == '"' and not escape_next:
-            in_string = not in_string
-        
-        if not in_string:
-            if char == '{': brace_count += 1
-            elif char == '}': brace_count -= 1
-            elif char == '[': bracket_count += 1
-            elif char == ']': bracket_count -= 1
-        
-        # 構造が閉じたら行を区切る
-        if char == '\n' and brace_count == 0 and bracket_count == 0:
-            lines.append(current_line)
+### 2. 関数解析プロセス
+
+```mermaid
+flowchart TD
+    Start[関数解析開始] --> ExtractCode[コード抽出]
+    ExtractCode --> GeneratePrompt[プロンプト生成]
+    GeneratePrompt --> CallLLM[LLM呼び出し]
+    CallLLM --> ParseResponse[レスポンス解析]
+    ParseResponse -->|成功| UpdateTaint[テイント状態更新]
+    ParseResponse -->|失敗| RetryPrompt[リトライプロンプト生成]
+    RetryPrompt --> CallLLM
+    UpdateTaint --> CheckStructural[構造的リスク確認]
+    CheckStructural --> SaveAnalysis[解析結果保存]
+    SaveAnalysis --> End[関数解析完了]
 ```
 
-### 2. 整合性チェック (ConsistencyChecker)
+### 3. レスポンス解析プロセス
 
-#### 概要
-LLMの判定とテイント解析結果の論理的一貫性を検証し、矛盾を自動修正。
-
-#### 処理フロー
-
-```
-[脆弱性判定とFindings]
-    ↓
-[1. テイントフロー検証]
-    ├─ 各ステップでテイント保持確認
-    ├─ REE入力 → シンクの経路検証
-    └─ 途中でテイント消失 → 無効
-    ↓
-[2. 矛盾パターンの検出]
-    ├─ パターンA: vuln=yes, findings=[]
-    │   └─ 救済抽出を試行
-    ├─ パターンB: vuln=no, findings=[実際の脆弱性]
-    │   └─ 脆弱性ありに昇格
-    └─ パターンC: テイントフロー断絶
-        └─ 再評価または降格
-    ↓
-[3. 調整処理]
-    ├─ 降格: 証拠不足の場合
-    ├─ 昇格: 有効なfindingsがある場合
-    └─ 維持: 矛盾なしの場合
+```mermaid
+flowchart TD
+    Start[レスポンス受信] --> Normalize[正規化処理]
+    Normalize --> ExtractJSON[JSON抽出]
+    ExtractJSON -->|単一行| ParseSingle[単一行解析]
+    ExtractJSON -->|複数行| ParseMulti[複数行解析]
+    ParseSingle --> ValidateFields[必須フィールド検証]
+    ParseMulti --> ValidateFields
+    ValidateFields -->|完全| Success[解析成功]
+    ValidateFields -->|不足| CheckCritical[重要度チェック]
+    CheckCritical -->|重要| RequestRetry[リトライ要求]
+    CheckCritical -->|非重要| Success
+    Success --> End[解析完了]
 ```
 
-#### 主要メソッド
+### 4. 脆弱性判定プロセス
 
-##### `validate_taint_flow()` - テイントフロー検証
-```python
-def validate_taint_flow(results, chain, vd):
-    taint_preserved = False
-    
-    for i, step in enumerate(taint_analysis):
-        analysis = step.get("analysis", {})
-        tainted_vars = analysis.get("tainted_vars", [])
-        
-        if i == 0:
-            # エントリーポイント: REE入力が存在
-            taint_preserved = bool(tainted_vars)
-        else:
-            # 中間ステップ: テイント伝播を確認
-            if taint_preserved and not tainted_vars:
-                # テイント消失を検出
-                return False
-        
-        # シンク到達確認
-        if analysis.get("sink_reached"):
-            return taint_preserved
+```mermaid
+flowchart TD
+    Start[判定開始] --> CollectTaint[テイント情報収集]
+    CollectTaint --> CheckSink[シンク到達確認]
+    CheckSink -->|到達| CheckMitigation[緩和策確認]
+    CheckSink -->|未到達| CheckStructural[構造的リスク確認]
+    CheckMitigation -->|なし| VulnFound[脆弱性検出]
+    CheckMitigation -->|あり| SafeResult[安全と判定]
+    CheckStructural -->|あり| RiskFound[リスク検出]
+    CheckStructural -->|なし| SafeResult
+    VulnFound --> GenerateDetails[詳細情報生成]
+    RiskFound --> GenerateDetails
+    GenerateDetails --> End[判定完了]
 ```
 
-##### `check_findings_consistency()` - 矛盾の検出と修正
-```python
-def check_findings_consistency(vuln_found, findings, response):
-    # ケース1: 脆弱性ありだがfindingsなし
-    if vuln_found and not findings:
-        salvaged = self._salvage_findings_unified(response)
-        if salvaged:
-            return True, salvaged, "Salvaged"
-        else:
-            return False, [], "No evidence"
-    
-    # ケース2: 脆弱性なしだがfindingsあり
-    elif not vuln_found and findings:
-        actual_vulns = self._filter_actual_vulnerabilities(findings)
-        if actual_vulns:
-            return True, actual_vulns, "Upgraded"
-    
-    return vuln_found, findings, "Consistent"
+### 5. キャッシュ管理プロセス
+
+```mermaid
+flowchart TD
+    Start[キャッシュ処理] --> GenerateKey[キー生成]
+    GenerateKey --> SearchPrefix[プレフィックス検索]
+    SearchPrefix -->|発見| LoadData[データ読み込み]
+    SearchPrefix -->|なし| ReturnEmpty[空を返す]
+    LoadData --> ValidateData[データ検証]
+    ValidateData -->|有効| ReturnCached[キャッシュ返却]
+    ValidateData -->|無効| ReturnEmpty
+    ReturnCached --> End[処理完了]
+    ReturnEmpty --> End
 ```
 
-### 3. 自動修復機能 (SmartResponseValidator)
+## 出力形式
 
-#### 概要
-LLMの不完全な出力を検証し、可能な限り自動修復。
+### ta_vulnerabilities.json
 
-#### 処理フロー
-
-```
-[LLMレスポンス]
-    ↓
-[1. 必須パターンチェック]
-    ├─ フェーズ別の必須要素確認
-    ├─ 欠落要素のリスト作成
-    └─ 回復可能性の判定
-    ↓
-[2. 自動修復試行]
-    ├─ 構造修復
-    │   ├─ 改行の正規化
-    │   ├─ 閉じ括弧の補完
-    │   └─ カンマの修正
-    ├─ フィールド修復
-    │   ├─ 欠落フィールドの追加
-    │   ├─ デフォルト値の設定
-    │   └─ 型の修正
-    └─ FINDINGS構造の補完
-        ├─ 空のFINDINGS追加
-        └─ END_FINDINGS変換
-    ↓
-[3. 修復後の再検証]
-    └─ 成功率の記録
-```
-
-#### 主要メソッド
-
-##### `validate_and_recover()` - 検証と回復
-```python
-def validate_and_recover(response, phase, attempt_recovery=True):
-    # 1. 必須パターンの確認
-    missing = self._check_required_patterns(response, phase)
-    
-    if not missing:
-        return True, response  # 修復不要
-    
-    # 2. 回復可能性の判定
-    if not self._is_recoverable(response, missing, phase):
-        return False, response
-    
-    # 3. 自動修復
-    recovered = self._attempt_recovery(response, missing, phase)
-    
-    # 4. 修復後の再検証
-    missing_after = self._check_required_patterns(recovered, phase)
-    if not missing_after:
-        return True, recovered
+```json
+{
+  "metadata": {
+    "analysis_date": "2025-09-17T14:49:50",
+    "mode": "hybrid",
+    "llm_provider": "openai"
+  },
+  "statistics": {
+    "total_flows_analyzed": 3,
+    "vulnerabilities_found": 1,
+    "structural_risks_found": 4,
+    "execution_time_seconds": 333.67
+  },
+  "vulnerabilities": [
+    {
+      "vulnerability_id": "VULN-0001",
+      "file": "test.c",
+      "line": 64,
+      "vulnerability_types": ["CWE-200"],
+      "severity": "high",
+      "descriptions": ["..."]
+    }
+  ],
+  "structural_risks": [
+    {
+      "finding_id": "RISK-0001",
+      "file": "test.c",
+      "line": 115,
+      "rules": ["weak_input_validation"],
+      "descriptions": ["..."]
+    }
+  ]
+}
 ```
 
-##### `_attempt_recovery()` - 具体的な修復処理
-```python
-def _attempt_recovery(response, missing, phase):
-    recovered = response
-    
-    # FINDINGSが欠けている場合
-    if "FINDINGS structure" in missing:
-        # JSON行の後にFINDINGSを追加
-        json_line_idx = self._find_json_line(recovered)
-        lines = recovered.split('\n')
-        lines.insert(json_line_idx + 1, 'FINDINGS={"items":[]}')
-        recovered = '\n'.join(lines)
-    
-    # 特定フィールドの追加
-    if "function field" in missing:
-        recovered = self._add_missing_field(
-            recovered, "function", "unknown"
-        )
-    
-    return recovered
-```
+## トラブルシューティング
 
-## 救済抽出の詳細
+### LLMレスポンスが不安定な場合
+- `--no-cache`オプションでキャッシュをクリア
+- `--verbose`で詳細ログを確認
+- temperature設定を0に調整
 
-### パターンマッチングによる情報救済
+### structural_risksが検出されない場合
+- プロンプトファイルの確認
+- レスポンスパーサーのデバッグモード有効化
+- 会話履歴の確認（conversations.jsonl）
 
-```python
-def _salvage_findings_unified(response):
-    # 1. 統合パーサーで試行
-    parsed = self.parser.parse_complete_response(response, "unknown")
-    if parsed.get("findings"):
-        return parsed["findings"]
-    
-    # 2. パターンマッチング
-    patterns = [
-        (r'line\s+(\d+)', 'line'),
-        (r'(memcpy|TEE_MemMove|sprintf)', 'sink'),
-        (r'buffer overflow|overwrite', 'vulnerability')
-    ]
-    
-    evidence = {}
-    for pattern, key in patterns:
-        match = re.search(pattern, response)
-        if match:
-            evidence[key] = match.group(1)
-    
-    # 3. Finding構築
-    if 'line' in evidence and 'sink' in evidence:
-        return [{
-            "line": int(evidence['line']),
-            "sink_function": evidence['sink'],
-            "why": evidence.get('vulnerability', 'Salvaged'),
-            "salvaged": True
-        }]
-```
+### パフォーマンスが遅い場合
+- キャッシュが有効か確認
+- バッチ処理の検討
+- APIレート制限の確認
 
-## 実際の動作例
+## 開発者向け情報
 
-### 矛盾検出と修正の例
+### 新しい脆弱性パターンの追加
 
-```
-[Input]
-Middle: FINDINGS=[{"rule":"unencrypted_output","line":111}]
-End: {"vulnerability_found":"no"}
+1. `codeql_rules.json`に新しいルールを追加
+2. プロンプトテンプレートを更新
+3. パーサーの検証ルールを追加
 
-[Processing]
-1. 矛盾検出: 脆弱性なしだがfindingsあり
-2. Findings検証: unencrypted_outputは実際の脆弱性
-3. 判定修正: vulnerability_found → "yes"
+### LLMプロバイダーの追加
 
-[Output]
-[CONSISTENCY] Adjusting: False -> True
-(Valid findings found despite vulnerability_found=no)
-```
-
-
-### 統計情報
-- 解析フロー数と脆弱性検出数
-- キャッシュヒット率
-- パース成功率
-- トークン使用量
-
-## パフォーマンス最適化
-
-1. **プレフィックスキャッシュ**
-   - 共通の関数チェーン接頭辞を再利用
-   - 約40-50%のキャッシュヒット率
-
-2. **トークン効率化**
-   - 平均4,800トークン/呼び出し
-   - キャッシュにより約3,000トークン削減
-
-3. **バッチ処理**
-   - ログ出力の効率化
-   - メモリ使用量の最適化
-
-## 技術的特徴
-
-- **統合パーサー**: 形式エラーに強い堅牢な解析
-- **インテリジェントリトライ**: 品質スコアベースの再試行
-- **多層的エラーハンドリング**: 解析成功率の向上
-- **ハイブリッドモード**: DITINGルールとLLMの組み合わせ
-
-## 制限事項と注意点
-
-1. LLMの判断が矛盾することがあるため、整合性チェックが必須
-2. 構造的リスク（ループ境界など）と実際の脆弱性の区別が重要
-3. センシティブデータの定義はコンテキストに依存
-
-## 今後の改善点
-
-- プロンプトの最適化による矛盾の削減
-- より高度なテイントフロー追跡
-- 誤検出率のさらなる低減
+1. `llm/`ディレクトリに新しいクライアントを実装
+2. `LLMClientInterface`を継承
+3. `prompt_manager.py`で設定を追加

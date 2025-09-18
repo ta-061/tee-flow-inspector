@@ -174,67 +174,176 @@ flowchart LR
 
 ---
 
-## Phase5 — テイント解析 / 脆弱性判定（`src/analyze_vulnerabilities/taint_analyzer.py`）
+# Phase5 — テイント解析 / 脆弱性判定（`src/analyze_vulnerabilities`）
 
-### 目的
-LLMを活用してTEEアプリケーションのソースコードに対するテイント解析を実行し、REE（Normal World）からの入力が危険なシンクに到達する脆弱性を検出する。
+## 目的
 
-### 主な処理
-1. **段階的解析**: 関数チェーンを start → middle → end の3段階で解析
-2. **テイント追跡**: REE入力から危険シンクまでのデータフローを追跡
-3. **整合性チェック**: LLM出力の論理的矛盾を検出・修正
-4. **キャッシュ最適化**: 共通の解析結果を再利用してトークン消費を削減
+LLMを活用してTrusted Application（TA）のソースコードに対するテイント解析を実行し、REE（Rich Execution Environment）とTEE（Trusted Execution Environment）間のデータフローにおける脆弱性を検出する。
 
-### フォルダ構造
+### 検出対象
+- **CWE-200**: 情報漏洩（Unencrypted Output to REE）
+- **CWE-787**: バッファオーバーフロー（Out-of-bounds Write）
+- **CWE-20**: 入力検証不備（Weak Input Validation）
+- **構造的リスク**: テイントされたループ境界、ポインタ演算など
+
+## 主な処理
+
+1. **フロー解析**: Phase3で特定された関数チェーンを順次解析
+2. **テイント追跡**: REEから入力されたデータの伝播を追跡
+3. **脆弱性判定**: シンク関数への到達と緩和策の有無を評価
+4. **キャッシュ活用**: プレフィックスキャッシュによる解析の高速化
+5. **統合レポート**: 同一行の複数問題を統合して報告
+
+## フォルダ構造
+
 ```
-analyze_vulnerabilities/
-├── taint_analyzer.py      # メインエントリー
-├── core/                   # 解析コアロジック
-├── extraction/            # LLMレスポンス解析
-├── prompts/               # プロンプト管理
-├── processing/            # 整合性チェック
-├── optimization/          # キャッシュ・最適化
-├── communication/         # LLM通信
-├── io_handlers/          # 入出力処理
-└── utils/                # ユーティリティ
+.
+├── __init__.py
+├── cache
+│   ├── __init__.py
+│   └── function_cache.py        # プレフィックスキャッシュ管理
+├── core
+│   ├── __init__.py
+│   ├── engine.py                # メイン解析エンジン
+│   └── flow_analyzer.py         # 単一フロー解析器
+├── llm
+│   ├── __init__.py
+│   └── conversation.py          # LLM会話コンテキスト管理
+├── output
+│   ├── __init__.py
+│   ├── conversation_logger.py   # 会話履歴記録
+│   └── json_reporter.py         # JSON形式レポート生成
+├── parsing
+│   ├── __init__.py
+│   └── response_parser.py       # LLMレスポンス解析
+├── prompts
+│   ├── __init__.py
+│   ├── code_extractor.py        # ソースコード抽出
+│   └── prompts.py               # プロンプトテンプレート管理
+└── taint_analyzer.py            # エントリポイント
 ```
 
-### 出力契約
+## 出力契約
 
-#### Start/Middle フェーズ
-- **Line 1**: テイント解析JSON（tainted_vars, propagation等）
-- **Line 2**: `FINDINGS` - 構造的リスク（ループ境界、ポインタ演算等）でシンク未到達
+### 入力
+- `ta_candidate_flows.json`: Phase3で抽出された候補フロー
+- `ta_phase12.json`: Phase1/2の解析データ（AST情報など）
 
-#### End フェーズ  
-- **Line 1**: `{"vulnerability_found":"yes"|"no"}`
-- **Line 2**: 脆弱性詳細JSON
-- **Line 3**: `END_FINDINGS` - シンクに到達しなかった構造的問題のみ
+### 出力: `ta_vulnerabilities.json`
 
-### 実行フロー
+```json
+{
+  "metadata": {
+    "analysis_date": "ISO8601形式",
+    "mode": "llm|diting|hybrid",
+    "llm_provider": "openai|anthropic"
+  },
+  "statistics": {
+    "total_flows_analyzed": "解析フロー数",
+    "vulnerabilities_found": "検出脆弱性数",
+    "structural_risks_found": "構造的リスク数",
+    "execution_time_seconds": "実行時間"
+  },
+  "vulnerabilities": [
+    {
+      "vulnerability_id": "VULN-XXXX",
+      "file": "ファイルパス",
+      "line": "行番号",
+      "consolidated": true,
+      "vulnerability_types": ["CWE-XXX"],
+      "severity": "critical|high|medium|low",
+      "rule_ids": ["ルールID配列"],
+      "descriptions": ["説明配列"],
+      "chains": [["関数チェーン"]],
+      "taint_flow_summaries": [{}],
+      "exploitation_analyses": [{}],
+      "missing_mitigations": [{}]
+    }
+  ],
+  "structural_risks": [
+    {
+      "finding_id": "RISK-XXXX",
+      "file": "ファイルパス",
+      "line": "行番号",
+      "consolidated": true,
+      "rules": ["ルール配列"],
+      "phases": ["検出フェーズ"],
+      "descriptions": ["説明配列"]
+    }
+  ]
+}
+```
+
+### 会話ログ: `conversations.jsonl`
+各LLMとのやり取りをJSONL形式で記録
+
+## 実行フロー
 
 ```mermaid
-graph TD
-    A[入力: flows.json] --> B[システムプロンプト設定]
-    B --> C[フロー単位で解析開始]
-    C --> D[キャッシュ確認]
-    D --> E{キャッシュヒット?}
-    E -->|Yes| F[キャッシュ使用]
-    E -->|No| G[Start: エントリー解析]
-    F --> H[Middle: 伝播追跡]
+flowchart TD
+    A[開始] --> B[入力ファイル読込]
+    B --> C[解析エンジン初期化]
+    C --> D[各フローを処理]
+    
+    D --> E[キャッシュ確認]
+    E -->|ヒット| F[部分解析]
+    E -->|ミス| G[全関数解析]
+    
+    F --> H[関数ごとに解析]
     G --> H
-    H --> I[End: 脆弱性判定]
-    I --> J[整合性チェック]
-    J --> K{矛盾あり?}
-    K -->|Yes| L[判定修正]
-    K -->|No| M[結果保存]
-    L --> M
-    M --> N[次のフロー or 完了]
+    
+    H --> I[LLM呼び出し]
+    I --> J[レスポンス解析]
+    J -->|失敗| K[リトライ]
+    K --> I
+    J -->|成功| L[テイント状態更新]
+    
+    L --> M[構造的リスク抽出]
+    M --> N[キャッシュ保存]
+    N -->|次の関数| H
+    N -->|完了| O[最終判定]
+    
+    O --> P[脆弱性判定]
+    P --> Q[結果統合]
+    Q -->|次のフロー| D
+    Q -->|全完了| R[レポート生成]
+    
+    R --> S[JSON出力]
+    S --> T[終了]
 ```
 
-### 整合性チェックの役割
-- **脆弱性ありだがFindingsなし** → レスポンスから証拠を救済抽出
-- **脆弱性なしだがFindingsあり** → 実際の脆弱性なら昇格
-- **テイントフロー断絶** → 再評価または降格
+### 実行コマンド
+
+```bash
+# 基本実行
+python3 taint_analyzer.py \
+  --flows ta_candidate_flows.json \
+  --phase12 ta_phase12.json \
+  --output ta_vulnerabilities.json
+
+# 詳細ログ付き
+python3 taint_analyzer.py \
+  --flows ta_candidate_flows.json \
+  --phase12 ta_phase12.json \
+  --output ta_vulnerabilities.json \
+  --verbose
+
+# キャッシュクリア
+python3 taint_analyzer.py \
+  --flows ta_candidate_flows.json \
+  --phase12 ta_phase12.json \
+  --output ta_vulnerabilities.json \
+  --no-cache
+```
+
+### 主要パラメータ
+
+| パラメータ | 説明 | デフォルト |
+|-----------|------|------------|
+| `--mode` | 解析モード（llm/diting/hybrid） | hybrid |
+| `--rag` | RAG有効化 | False |
+| `--no-cache` | キャッシュ無効化 | False |
+| `--verbose` | 詳細出力 | False |
   ---
 
 ## Phase6 — HTMLレポート生成（`src/report/generate_report.py`）
@@ -248,8 +357,8 @@ graph TD
 1. **入力ファイル読み込み**:
    * `vulnerabilities.json`（または `_with_macros` 版）
    * `phase12.json`
-   * `sinks.json`（オプション）
-   * `taint_analysis_log.txt`（会話履歴）
+   * `sinks.json`
+   * `conversations.jsonl`（会話履歴）
 
 2. **ログ解析**:
    * LLMとの会話履歴を抽出
