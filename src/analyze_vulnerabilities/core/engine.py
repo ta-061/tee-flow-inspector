@@ -125,9 +125,7 @@ class TaintAnalysisEngine:
                     traceback.print_exc()
                 continue
         
-        # findingsをマージ
-        merged_findings = self._merge_findings(all_findings)
-        self.stats["findings_count"] = len(merged_findings)
+        self.stats["findings_count"] = len(all_findings)
         
         # 実行時間を計算
         execution_time = time.time() - self.start_time
@@ -145,7 +143,7 @@ class TaintAnalysisEngine:
         # JSONレポートを生成
         report = self.reporter.generate_report(
             vulnerabilities=all_vulnerabilities,
-            findings=merged_findings,
+            findings=all_findings,
             statistics=statistics,
             metadata=metadata
         )
@@ -179,25 +177,7 @@ class TaintAnalysisEngine:
         if len(chain) > 3:
             chain_str += f" -> ... ({len(chain)} functions)"
         print(f"\n[{current}/{total}] Analyzing: {chain_str}")
-    
-    def _merge_findings(self, findings: List[Dict]) -> List[Dict]:
-        """重複したfindingsをマージ"""
-        unique = {}
-        for finding in findings:
-            # ユニークキーを生成
-            key = (
-                finding.get("file"),
-                finding.get("line"),
-                finding.get("rule"),
-                finding.get("function")
-            )
-            
-            # 既存のエントリーがない、またはより詳細な情報を持つ場合は更新
-            if key not in unique or finding.get("phase") == "end":
-                unique[key] = finding
-        
-        return list(unique.values())
-    
+
     def get_statistics(self) -> Dict:
         """統計情報を取得"""
         stats = {

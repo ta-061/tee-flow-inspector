@@ -328,13 +328,14 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool,
                     "--phase12", str(phase12),
                     "--output", str(vulnerabilities)]
 
-        # サマリー生成
-        taint_cmd.append("--summary")
-
         # モード設定（LLM-onlyまたはhybrid）
         if llm_only:
             taint_cmd.extend(["--mode", "llm_only"])
         # else: デフォルトでhybridなので指定不要
+
+        # 詳細ログ
+        if v:
+            taint_cmd.append("--verbose")
 
         # RAGオプション（デフォルトで無効なので、有効化する場合のみ指定）
         if use_rag:  
@@ -350,11 +351,12 @@ def process_project(proj: Path, identify_py: Path, skip: set[str], v: bool,
         report_html = res_dir / f"{ta_dir.name}_vulnerability_report.html"
         
         report_cmd = [sys.executable, str(report_py),
+             "--sinks", str(sinks),
+             "--flows", str(candidate_flows),
              "--vulnerabilities", str(vulnerabilities),
              "--phase12", str(phase12),
              "--project-name", proj.name,
              "--output", str(report_html)]
-        report_cmd.extend(["--sinks", str(sinks)])
         
         if v:
             print(f"[DEBUG] Report command: {' '.join(report_cmd)}")

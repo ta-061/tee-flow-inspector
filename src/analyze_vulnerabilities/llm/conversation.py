@@ -41,31 +41,99 @@ class ConversationContext:
                 "tainted_vars": self._extract_tainted_vars(response)
             })
     
-    def build_messages_for_new_prompt(self, prompt: str) -> List[Dict]:
-        """新規プロンプト用のメッセージリスト"""
-        return [
-            {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": prompt}
-        ]
+    def build_messages_for_new_prompt(self, prompt: str, include_all_history: bool = False) -> List[Dict]:
+        """
+        プロンプト用のメッセージリスト
+        include_all_history=True の場合、これまでの全履歴を含める
+        """
+        messages = [{"role": "system", "content": self.system_prompt}]
+        
+        if include_all_history and self.exchanges:
+            # これまでの全ての会話履歴を追加
+            for exchange in self.exchanges:
+                messages.append({"role": "user", "content": exchange["prompt"]})
+                messages.append({"role": "assistant", "content": exchange["response"]})
+        
+        # 新しいプロンプトを追加
+        messages.append({"role": "user", "content": prompt})
+        
+        return messages
     
-    def build_messages_for_retry(self, retry_prompt: str) -> List[Dict]:
+    def build_messages_for_retry(self, retry_prompt: str, verbose: bool = False) -> List[Dict]:
         """
         再質問用のメッセージリスト（会話履歴付き）
         現在の関数に関する履歴を含める
         """
         messages = [{"role": "system", "content": self.system_prompt}]
         
+        if verbose:
+            print(f"\n[RETRY CONVERSATION HISTORY]")
+            print(f"  Current function: {self.current_function}")
+            
         # 現在の関数の会話履歴を追加
+        included_count = 0
         for exchange in self.exchanges:
             if exchange["function"] == self.current_function:
                 messages.append({"role": "user", "content": exchange["prompt"]})
                 messages.append({"role": "assistant", "content": exchange["response"]})
+                included_count += 1
+                
+                if verbose:
+                    prompt_preview = exchange["prompt"][:100].replace('\n', ' ')
+                    response_preview = exchange["response"][:100].replace('\n', ' ')
+                    print(f"    Including exchange {included_count}:")
+                    print(f"      Q: {prompt_preview}...")
+                    print(f"      A: {response_preview}...")
+        
+        if verbose:
+            print(f"  Total included: {included_count} exchanges")
+            print(f"  Adding retry prompt")
+            print("[END RETRY HISTORY]\n")
         
         # 再質問を追加
         messages.append({"role": "user", "content": retry_prompt})
         
         return messages
     
+    def build_messages_for_final_decision(self, end_prompt: str, verbose: bool = False) -> List[Dict]:
+        """
+        最終判定用のメッセージリスト（全会話履歴付き）
+        """
+        messages = [{"role": "system", "content": self.system_prompt}]
+        
+        if verbose:
+            print("\n[CONVERSATION HISTORY FOR FINAL DECISION]")
+            print(f"  Including {len(self.exchanges)} exchanges:")
+        
+        # チェーン全体の会話履歴を時系列順に追加
+        for i, exchange in enumerate(self.exchanges):
+            messages.append({"role": "user", "content": exchange["prompt"]})
+            messages.append({"role": "assistant", "content": exchange["response"]})
+            
+            if verbose:
+                func_name = exchange.get("function", "unknown")
+                position = exchange.get("position", -1)
+                phase = exchange.get("phase")
+                phase_str = phase.value if hasattr(phase, 'value') else str(phase)
+                
+                # プロンプトと応答の最初の100文字を表示
+                prompt_preview = exchange["prompt"][:100].replace('\n', ' ')
+                response_preview = exchange["response"][:100].replace('\n', ' ')
+                
+                print(f"    [{i+1}] Function: {func_name} (pos={position}, phase={phase_str})")
+                print(f"        Q: {prompt_preview}...")
+                print(f"        A: {response_preview}...")
+        
+        if verbose:
+            print(f"  Adding final decision prompt")
+            print("[END CONVERSATION HISTORY]\n")
+        
+        # 最終判定プロンプトを追加
+        messages.append({"role": "user", "content": end_prompt})
+        
+        return messages
+
+
     def get_previous_taint_state(self) -> str:
         """前の関数のテイント状態をサマリー"""
         if self.current_position == 0 or not self.chain_taint_states:

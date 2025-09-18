@@ -100,9 +100,6 @@ def get_html_template() -> str:
                 </div>
             </div>
             <p style="text-align: center; margin-top: 1.5rem; color: #7f8c8d;">
-                シンク特定時間: <strong>{{sink_analysis_time}}</strong> ({{sink_seconds}}) | 
-                テイント解析時間: <strong>{{taint_analysis_time}}</strong> ({{taint_seconds}}) | 
-                合計解析時間: <strong>{{total_time}}</strong> ({{total_seconds}})<br>
                 解析日時: <strong>{{analysis_date}}</strong>
             </p>
         </section>
@@ -146,8 +143,7 @@ def get_html_template() -> str:
         'total_chains', 'unique_chains', 'vuln_count', 'inline_findings_count',
         'func_count', 'llm_calls', 'cache_hit_rate', 'cache_reuse_count',
         'total_time', 'analysis_date', 'timeline_html', 'token_usage_html',
-        'vulnerabilities_html', 'chains_html', 'sink_analysis_time',
-        'taint_analysis_time', 'sink_seconds', 'taint_seconds', 'total_seconds',
+        'vulnerabilities_html', 'chains_html',
         'sinks_summary_html', 'inline_findings_html'
     ]
     

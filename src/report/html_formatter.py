@@ -336,10 +336,7 @@ def _extract_primary_vuln_json(vstr: str) -> Dict[str, Any]:
         return {}
 
 def generate_vulnerability_details_html(vulnerabilities: List[Dict[str, Any]]) -> str:
-    """
-    脆弱性カード（上段）をテンプレート標準のスタイルで出力する。
-    """
-    import re, json
+    """脆弱性カード（上段）をテンプレート標準のスタイルで出力する。"""
     import html as html_module
 
     if not vulnerabilities:
@@ -351,53 +348,56 @@ def generate_vulnerability_details_html(vulnerabilities: List[Dict[str, Any]]) -
     ]
 
     for i, v in enumerate(vulnerabilities, start=1):
-        vd = v.get("vd") or {}
-        sink = _safe(vd.get("sink"), "Unknown")
-        file_path = _safe(vd.get("file"), "Unknown")
-        lines = _to_lines(vd.get("line"))
-        chain = " -> ".join(v.get("chain") or [])
-
-        # タイプ（最後のステップの rule_id から）
-        rule_ids = _get_last_step_rule_ids(v)
-        vtype = rule_ids[0] if rule_ids else "Unknown"
-
-        # severity / CWE を vulnerability 文字列から
-        vjson = _extract_primary_vuln_json(_safe(v.get("vulnerability", "")))
-        severity = _safe((vjson.get("severity") or "medium")).lower()
+        # 新形式のフィールドから直接取得
+        sink_functions = v.get("sink_functions", [])
+        sink = sink_functions[0] if sink_functions else "Unknown"
+        file_path = _safe(v.get("file"), "Unknown")
+        lines = _to_lines(v.get("line"))
+        
+        # chainsフィールド（複数形）から取得
+        chains = v.get("chains", [])
+        if chains and isinstance(chains[0], list):
+            chain = " -> ".join(chains[0])
+        else:
+            chain = ""
+        
+        # 脆弱性タイプとCWE
+        vtype = v.get("primary_vulnerability_type", "Unknown")
+        cwe = ""
+        if vtype.startswith("CWE-"):
+            cwe = vtype
+            # rule_idsから実際のタイプを取得
+            rule_ids = v.get("rule_ids", [])
+            if rule_ids:
+                vtype = rule_ids[0]
+        
+        # severity（直接フィールドから）
+        severity = _safe(v.get("severity", "medium")).lower()
         if severity not in ("critical", "high", "medium", "low"):
             severity = "unknown"
-        cwe = vjson.get("vulnerability_type")
-
+        
         # 説明の構築
-        msgs = []
-        for f in (v.get("inline_findings") or []):
-            m = (f or {}).get("why")
-            if m:
-                msgs.append(m.strip())
-        # 重複削除（順序維持）
-        seen, uniq = set(), []
-        for m in msgs:
-            if m not in seen:
-                seen.add(m)
-                uniq.append(m)
-        left = " / ".join(uniq[:3]) if uniq else ""
+        descriptions = v.get("descriptions", [])
+        decision_rationales = v.get("decision_rationales", [])
+        
+        # 説明文を組み立て
+        desc_parts = []
+        if descriptions:
+            desc_parts.append(descriptions[0])
+        if decision_rationales:
+            desc_parts.append(f"判定理由: {decision_rationales[0]}")
+        
+        description = " / ".join(desc_parts) if desc_parts else "—"
+        
+        # タイプ表示の構築
+        type_parts = []
+        if vtype != "Unknown":
+            type_parts.append(vtype)
+        if cwe:
+            type_parts.append(cwe)
+        type_line = " / ".join(type_parts) if type_parts else "Unknown"
 
-        decision = vjson.get("decision_rationale")
-        impact = (vjson.get("exploitation_analysis") or {}).get("impact")
-        precond = (vjson.get("exploitation_analysis") or {}).get("preconditions")
-        tail = []
-        if decision:
-            tail.append(f"Rationale: {decision}")
-        if impact:
-            tail.append(f"Impact: {impact}")
-        if precond:
-            tail.append("Preconditions: " + (", ".join(precond) if isinstance(precond, list) else str(precond)))
-        right = " ".join(tail)
-
-        description = " / ".join([p for p in (left, right) if p]) or "—"
-        type_line = f"{vtype} / {cwe}" if cwe else vtype
-
-        # HTML（テンプレ既存クラスに合わせる）
+        # HTML出力
         out.append(
             f"""
 <div class="vulnerability-detail">
@@ -407,7 +407,7 @@ def generate_vulnerability_details_html(vulnerabilities: List[Dict[str, Any]]) -
   </div>
   <div class="vuln-content" style="overflow-wrap:anywhere;">
     <p><strong>チェーン:</strong> <span style="overflow-wrap:anywhere;">{html_module.escape(chain)}</span></p>
-    <p><strong>場所:</strong> <span style="overflow-wrap:anywhere;">{html_module.escape(file_path)}:{html_module.escape(lines)}</span></p>
+    <p><strong>場所:</strong> <span style="overflow-wrap:anywhere;">{html_module.escape(file_path)}:{html_module.escape(str(lines))}</span></p>
     <p><strong>タイプ:</strong> <span style="overflow-wrap:anywhere;">{html_module.escape(type_line)}</span></p>
     <p><strong>説明:</strong> <span style="overflow-wrap:anywhere;">{html_module.escape(description)}</span></p>
   </div>
@@ -451,10 +451,10 @@ def generate_inline_findings_html(inline_findings: List[Dict[str, Any]], rule_in
         heading = (rule_ids[0] if rule_ids else (f.get("category") or f.get("type") or "Unknown"))
 
         severity = (f.get("severity") or "medium").lower()
-        function = f.get("function") or "Unknown"
-        phase = f.get("phase") or "unknown"
-        message = f.get("why") or f.get("details") or "No details"
-        code_excerpt = f.get("code_excerpt")
+        function = f.get("sink_functions") or "Unknown"
+        phase = f.get("phases") or "unknown"
+        message = f.get("descriptions") or f.get("why") or f.get("details") or "No details"
+        code_excerpt = f.get("code_excerpts")
 
         if isinstance(line_val, list):
             line_text = ", ".join(map(str, line_val)) if line_val else "?"
@@ -549,7 +549,7 @@ def generate_execution_timeline_html(sinks_data: Optional[Dict], statistics: Dic
         total_time += sink_time
     
     # フェーズ5: テイント解析
-    taint_time = statistics.get("analysis_time_seconds", 0)
+    taint_time = statistics.get("execution_time_seconds",0)
     if taint_time:
         phases.append({
             "name": "フェーズ5: テイント解析",

@@ -41,6 +41,12 @@ class FlowAnalyzer:
         chain = flow["chains"]["function_chain"]
         vd = flow["vd"]
         
+        if self.verbose:
+            print(f"\n{'='*60}")
+            print(f"[FLOW {flow_idx}] Starting analysis")
+            print(f"  Chain: {' → '.join(chain)}")
+            print(f"  Sink: {vd.get('sink')} (param {vd.get('param_index')})")
+        
         # 接頭辞キャッシュをチェック（get_longest_prefix_matchを使用）
         cached_length = 0
         cached_analyses = []
@@ -62,10 +68,13 @@ class FlowAnalyzer:
                             return cached_data["result"]
                     else:
                         cached_funcs = " → ".join(chain[:cached_length])
-                        print(f"  [CACHE HIT] Reusing {cached_length}/{len(chain)} functions: {cached_funcs}")
+                        print(f"  [CACHE HIT] Reusing {cached_length}/{len(chain)} functions")
+                        print(f"    Cached: {cached_funcs}")
                         self.stats["cache_hits"] += 1
             else:
                 self.stats["cache_misses"] += 1
+                if self.verbose:
+                    print(f"  [CACHE MISS] No cached data found")
         
         # 会話ロガー開始
         if self.conversation_logger:
@@ -76,6 +85,9 @@ class FlowAnalyzer:
         if cached_conversation:
             conversation.exchanges = cached_conversation.get("exchanges", [])
             conversation.chain_taint_states = cached_conversation.get("taint_states", [])
+            
+            if self.verbose:
+                print(f"  [CONTEXT RESTORED] {len(conversation.exchanges)} exchanges from cache")
         
         # キャッシュされた分析結果をコピー
         chain_analyses = cached_analyses[:cached_length] if cached_analyses else []
@@ -83,7 +95,7 @@ class FlowAnalyzer:
         # 残りの関数を解析（キャッシュされていない部分のみ）
         for position in range(cached_length, len(chain)):
             if self.verbose:
-                print(f"  [{position+1}/{len(chain)}] Analyzing {chain[position]}...")
+                print(f"\n  [{position+1}/{len(chain)}] Analyzing {chain[position]}...")
             
             analysis = self._analyze_function(
                 chain[position], position, chain, vd, conversation
@@ -105,6 +117,9 @@ class FlowAnalyzer:
                 self.cache.save_prefix(chain, position, conversation_data)
         
         # 最終的な脆弱性判定
+        if self.verbose:
+            print(f"\n[VULNERABILITY DECISION] Making final decision for flow {flow_idx}")
+        
         vulnerability_decision = self._make_final_decision(
             chain_analyses, chain, vd, conversation
         )
@@ -132,6 +147,12 @@ class FlowAnalyzer:
         # 会話ロガー終了
         if self.conversation_logger:
             self._finalize_conversation_log(vulnerability_decision)
+        
+        if self.verbose:
+            is_vuln = result.get("is_vulnerable", False)
+            status = "VULNERABLE" if is_vuln else "SAFE"
+            print(f"\n[FLOW {flow_idx}] Analysis complete: {status}")
+            print(f"{'='*60}\n")
         
         return result
 
@@ -218,44 +239,62 @@ class FlowAnalyzer:
         return analyses
     
     def _analyze_function(self, func_name: str, position: int,
-                         chain: List[str], vd: Dict,
-                         conversation: ConversationContext) -> Dict:
-        """個別関数の解析"""
+                        chain: List[str], vd: Dict,
+                        conversation: ConversationContext) -> Dict:
+        """個別関数の解析（呼び出しコンテキスト付き）"""
         phase = self._determine_phase(position, len(chain))
         conversation.start_new_function(func_name, position, phase)
         
-        # コード抽出
+        if self.verbose:
+            print(f"\n[ANALYZING FUNCTION] {func_name} at position {position}")
+            print(f"  Phase: {phase.value}")
+            if position > 0:
+                print(f"  Called by: {chain[position-1]}")
+        
+        # 呼び出し元を特定
+        caller_func = chain[position - 1] if position > 0 else None
+        
+        # コンテキスト付きでコード抽出
         is_sink = (position == len(chain) - 1)
-        code = self.code_extractor.extract_function_code(
-            func_name, vd if is_sink else None
+        code = self.code_extractor.extract_function_code_with_context(
+            func_name, 
+            caller_func=caller_func,
+            vd=vd if is_sink else None
         )
         
         # プロンプト生成
         prompt = self._generate_prompt(func_name, code, position, chain, vd, conversation)
         
-        # LLM呼び出し
-        response = self._call_llm(prompt, conversation)
+        # LLM呼び出し（position > 0 の場合は履歴付き）
+        if position == 0:
+            # STARTフェーズ：履歴なし
+            response = self._call_llm(prompt, conversation, include_history=False)
+        else:
+            # MIDDLE/ENDフェーズ：これまでの全履歴付き
+            response = self._call_llm(prompt, conversation, include_history=True)
         
         # 会話記録
         if self.conversation_logger:
             self._log_conversation(func_name, position, phase.value, 
-                                 "initial", prompt, response)
+                                "initial", prompt, response)
         
         # レスポンス解析
         parse_result = self.parser.parse_response(response, phase)
         
         # 再質問処理
         if parse_result.needs_retry:
+            if self.verbose:
+                print(f"  [RETRY NEEDED] for {func_name}")
             parse_result = self._handle_retry(
                 parse_result, func_name, code, position, phase, conversation
             )
         
         return parse_result.data
-    
+
     def _handle_retry(self, initial_result: ParseResult, func_name: str,
-                     code: str, position: int, phase: AnalysisPhase,
-                     conversation: ConversationContext) -> ParseResult:
-        """再質問の処理"""
+                    code: str, position: int, phase: AnalysisPhase,
+                    conversation: ConversationContext) -> ParseResult:
+        """再質問の処理（全履歴付き）"""
         max_retries = 2
         current_result = initial_result
         
@@ -263,61 +302,94 @@ class FlowAnalyzer:
             self.stats["retries"] += 1
             
             if self.verbose:
-                print(f"    [RETRY {retry_count}] Missing: {current_result.missing_critical}")
+                print(f"\n  [RETRY {retry_count}/{max_retries}] for {func_name}")
+                print(f"    Missing critical info: {current_result.missing_critical}")
             
             # 再質問プロンプト
             retry_prompt = self._enhance_retry_prompt(
                 current_result.retry_prompt, func_name, code
             )
             
-            # LLM呼び出し（履歴付き）
-            response = self._call_llm_with_history(retry_prompt, conversation)
+            # 全履歴付きでリトライ（現在の関数の失敗も含む）
+            messages = [{"role": "system", "content": conversation.system_prompt}]
+            
+            # 全ての会話履歴を追加
+            for exchange in conversation.exchanges:
+                messages.append({"role": "user", "content": exchange["prompt"]})
+                messages.append({"role": "assistant", "content": exchange["response"]})
+            
+            # リトライプロンプトを追加
+            messages.append({"role": "user", "content": retry_prompt})
+            
+            if self.verbose:
+                print(f"  [RETRY WITH FULL HISTORY] Including {len(conversation.exchanges)} exchanges")
+            
+            response = self.llm.chat_completion(messages)
+            conversation.add_exchange(retry_prompt, response)
+            self.stats["llm_calls"] += 1
             
             # 会話記録
             if self.conversation_logger:
                 self._log_conversation(func_name, position, phase.value,
-                                     "retry", retry_prompt, response,
-                                     {"missing": current_result.missing_critical})
+                                    "retry", retry_prompt, response,
+                                    {"missing": current_result.missing_critical})
             
             # 再パース
             current_result = self.parser.parse_response(response, phase)
             
             if current_result.success:
                 self.stats["retry_successes"] += 1
+                if self.verbose:
+                    print(f"    [RETRY SUCCESS] Got required information")
                 break
+            elif self.verbose:
+                print(f"    [RETRY INCOMPLETE] Still missing: {current_result.missing_critical}")
         
         return current_result
     
     def _make_final_decision(self, chain_analyses: List[Dict],
                             chain: List[str], vd: Dict,
                             conversation: ConversationContext) -> Dict:
-        """最終的な脆弱性判定"""
+        """最終的な脆弱性判定（全履歴付き）"""
         end_prompt = get_end_prompt()
-        response = self._call_llm(end_prompt, conversation)
+        
+        if self.verbose:
+            print(f"\n[FINAL DECISION] Preparing to analyze vulnerability for chain with {len(chain)} functions")
+        
+        # 全会話履歴付きでメッセージを構築
+        messages = conversation.build_messages_for_final_decision(end_prompt, verbose=self.verbose)
+        
+        # LLM呼び出し
+        response = self.llm.chat_completion(messages)
+        conversation.add_exchange(end_prompt, response)
+        self.stats["llm_calls"] += 1
         
         # 記録
         if self.conversation_logger:
             self._log_conversation("final_decision", -1, "end",
-                                 "final", end_prompt, response)
+                                "final", end_prompt, response)
         
         # パース
         parse_result = self.parser.parse_response(response, AnalysisPhase.END)
         
-        # 再質問が必要な場合
+        # 再質問が必要な場合（全履歴付き）
         if parse_result.needs_retry:
+            if self.verbose:
+                print(f"[FINAL DECISION] Retry needed for final decision")
             parse_result = self._handle_retry(
                 parse_result, "final_decision", "", -1,
                 AnalysisPhase.END, conversation
             )
         
         return parse_result.data
+
     
     # ========== ヘルパーメソッド ==========
     
     def _generate_prompt(self, func_name: str, code: str, position: int,
                         chain: List[str], vd: Dict,
                         conversation: ConversationContext) -> str:
-        """プロンプト生成"""
+        """プロンプト生成（codeには既に呼び出しコンテキストが含まれている）"""
         if position == 0:
             return get_start_prompt(func_name, "params", code)
         else:
@@ -326,27 +398,36 @@ class FlowAnalyzer:
             return get_middle_prompt(
                 source_function=func_name,
                 param_name="params",
-                code=code,
+                code=code,  # 既に呼び出しコンテキストが含まれている
                 upstream_context=context,
                 sink_function=vd.get("sink") if is_sink else None,
                 target_params=f"param {vd.get('param_index')}" if is_sink else ""
             )
     
-    def _call_llm(self, prompt: str, conversation: ConversationContext) -> str:
+    def _call_llm(self, prompt: str, conversation: ConversationContext, 
+                include_history: bool = False) -> str:
         """LLM呼び出し"""
-        messages = conversation.build_messages_for_new_prompt(prompt)
+        messages = conversation.build_messages_for_new_prompt(prompt, include_all_history=include_history)
+        
+        if self.verbose and include_history:
+            print(f"  [INCLUDING HISTORY] {len(conversation.exchanges)} previous exchanges")
+        
         response = self.llm.chat_completion(messages)
         conversation.add_exchange(prompt, response)
         self.stats["llm_calls"] += 1
         return response
     
     def _call_llm_with_history(self, prompt: str,
-                              conversation: ConversationContext) -> str:
+                            conversation: ConversationContext) -> str:
         """履歴付きLLM呼び出し"""
-        messages = conversation.build_messages_for_retry(prompt)
+        if self.verbose:
+            print(f"\n[LLM CALL WITH HISTORY] Function: {conversation.current_function}")
+        
+        messages = conversation.build_messages_for_retry(prompt, verbose=self.verbose)
         response = self.llm.chat_completion(messages)
         conversation.add_exchange(prompt, response)
         self.stats["llm_calls"] += 1
+        
         return response
     
     def _log_conversation(self, func_name: str, position: int, phase: str,
@@ -408,13 +489,22 @@ Code (first 300 chars): {code[:300]}...
         
         # structural_risks収集
         all_structural_risks = []
+
+
+        # chain_analysesから収集
         for analysis in chain_analyses:
-            if "structural_risks" in analysis:
+            if "structural_risks" in analysis and analysis["structural_risks"]:
                 all_structural_risks.extend(analysis["structural_risks"])
+                if self.verbose:
+                    print(f"  Collected {len(analysis['structural_risks'])} risks from {analysis.get('phase', 'unknown')} phase")
         
+        # vulnerability_decisionからも収集
         if "structural_risks" in vulnerability_decision:
             all_structural_risks.extend(vulnerability_decision["structural_risks"])
-        
+
+        if self.verbose and all_structural_risks:
+            print(f"[DEBUG] Total structural_risks collected: {len(all_structural_risks)}")
+    
         return {
             "flow_index": flow_idx,
             "chain": chain,
@@ -422,7 +512,7 @@ Code (first 300 chars): {code[:300]}...
             "is_vulnerable": decision.get("found", False),
             "vulnerability_type": details.get("vulnerability_type"),
             "vulnerability_details": details,
-            "findings": all_structural_risks,
+            "findings": all_structural_risks,  # 確実に設定
             "chain_analyses": chain_analyses
         }
     

@@ -11,6 +11,8 @@ ANALYSIS TASKS (start hop)
 - Record sanitizers (bounds/type/access checks) with evidence lines.
 - Identify dangerous sinks (memcpy/memmove/TEE_MemMove, output ops, writes to REE memrefs). TEE_Malloc/Free are NOT sinks; random is NON-sensitive.
 - ALSO consider structure-driven risks even if no sink call occurs yet: loop bounds on tainted values, index/offset arithmetic, size arithmetic (strlen/sizeof), sequential per-byte copies, pointer arithmetic, or param_types vs actual access mismatch. If any such risk exists, emit a FINDINGS item with exact file:line and a short code excerpt.
+- Treat <param>.memref.size and any derived length/index expressions as tainted if they originate from REE.
+- When a tainted length/index is used, include it in both "propagation" (argN form) and "tainted_vars".
 
 CLASSIFICATION
 - Use rule_matches.rule_id only from the whitelist: ["unencrypted_output","weak_input_validation","shared_memory_overwrite","other"].
@@ -21,6 +23,7 @@ FALSE-POSITIVE GUARDRAILS (policy; concise)
 
 OUTPUT FORMAT (EXACTLY TWO LINES):
 Line 1: Taint analysis JSON (must include "tainted_vars")
+- "sinks" must include full signature with arguments and file:line as shown in the middle-step template.
 {"function":"{source_function}","propagation":[...],"sanitizers":[...],"sinks":[...],"evidence":[...],"rule_matches":{"rule_id":[...],"others":[]},"tainted_vars":[...]}
 
 Line 2: One item per structurally weak line; leave as "unknown" if necessary.

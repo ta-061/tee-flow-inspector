@@ -66,12 +66,15 @@ class ResponseParser:
         """
         self.stats["total_parses"] += 1
         
+        # レスポンスを正規化
+        normalized_response = self._normalize_llm_response(response)
+        
         try:
             # Parse based on phase
             if phase == AnalysisPhase.END:
-                data = self._parse_end_response(response)
+                data = self._parse_end_response(normalized_response)
             else:
-                data = self._parse_start_middle_response(response, phase)
+                data = self._parse_start_middle_response(normalized_response, phase)
             
             # Validate critical fields with relaxed logic
             missing = self._validate_critical_fields_smart(data, phase)
@@ -106,6 +109,8 @@ class ResponseParser:
             self.stats["failed_parses"] += 1
             if self.debug:
                 print(f"[PARSE ERROR] {e}")
+                import traceback
+                traceback.print_exc()
             
             # Parse failure retry prompt
             retry_prompt = self._generate_format_correction_prompt(phase)
@@ -116,10 +121,54 @@ class ResponseParser:
                 retry_prompt=retry_prompt
             )
     
+    def _normalize_llm_response(self, response: str) -> str:
+        """Normalize LLM response to ensure consistent format"""
+        lines = []
+        
+        for line in response.split('\n'):
+            # コードブロックマーカーを除去
+            if line.strip() in ['```json', '```', '```JSON', '```Json']:
+                continue
+            
+            # 一般的なプレフィックスを除去
+            stripped = line.strip()
+            if stripped.lower().startswith(('output:', 'result:', 'response:', 'answer:')):
+                line = line[line.index(':') + 1:]
+            
+            lines.append(line)
+        
+        normalized = '\n'.join(lines)
+        
+        # "Line N:" プレフィックスを除去
+        normalized = self._remove_line_prefixes(normalized)
+        
+        if self.debug:
+            if normalized != response:
+                print(f"[NORMALIZE] Response was normalized")
+        
+        return normalized
+    
+    def _remove_line_prefixes(self, text: str) -> str:
+        """Remove common line prefixes like 'Line 1:', 'Line 2:', etc."""
+        pattern = r'^[Ll]ine\s*\d+\s*:\s*'
+        lines = []
+        
+        for line in text.split('\n'):
+            cleaned = re.sub(pattern, '', line)
+            lines.append(cleaned)
+        
+        return '\n'.join(lines)
+    
     def _parse_start_middle_response(self, response: str, 
                                     phase: AnalysisPhase) -> Dict:
         """Parse START/MIDDLE phase (2-line format)"""
         lines = self._extract_json_lines(response, 2)
+        
+        # デバッグ：抽出されたJSONラインを表示
+        if self.debug:
+            print(f"[PARSER] Extracted {len(lines)} JSON lines from response")
+            for i, line in enumerate(lines):
+                print(f"  Line {i+1}: {line[:100]}...")
         
         result = {
             "phase": phase.value,
@@ -133,12 +182,40 @@ class ResponseParser:
             taint = self._parse_json_safely(lines[0])
             if taint:
                 result["taint_analysis"] = taint
+                if self.debug:
+                    print(f"[PARSER] Taint analysis keys: {list(taint.keys())}")
         
-        # Line 2: Structural risks
+        # Line 2: Structural risks  
         if len(lines) > 1:
             risks = self._parse_json_safely(lines[1])
-            if risks and "structural_risks" in risks:
-                result["structural_risks"] = risks["structural_risks"]
+            if self.debug:
+                print(f"[PARSER] Line 2 parsed type: {type(risks)}")
+                if risks:
+                    print(f"[PARSER] Line 2 keys: {list(risks.keys()) if isinstance(risks, dict) else 'LIST'}")
+            
+            if risks:
+                # "structural_risks"キーがあるか確認
+                if isinstance(risks, dict) and "structural_risks" in risks:
+                    result["structural_risks"] = risks["structural_risks"]
+                    if self.debug:
+                        print(f"[PARSER] Found {len(result['structural_risks'])} structural risks in dict")
+                # リストの場合も考慮
+                elif isinstance(risks, list):
+                    result["structural_risks"] = risks
+                    if self.debug:
+                        print(f"[PARSER] Found {len(result['structural_risks'])} structural risks as list")
+                else:
+                    if self.debug:
+                        print(f"[PARSER] WARNING: Line 2 has unexpected format: {risks}")
+        else:
+            # 2行目が見つからない場合、空のstructural_risksを設定
+            if self.debug:
+                print(f"[PARSER] WARNING: No second line found for structural_risks, setting empty array")
+            result["structural_risks"] = []
+        
+        # 最終確認
+        if self.debug:
+            print(f"[PARSER] Final result has {len(result['structural_risks'])} structural_risks")
         
         return result
     
@@ -177,7 +254,6 @@ class ResponseParser:
                 # For "no" cases, add default explanations if missing
                 if not result["vulnerability_decision"].get("found"):
                     if "why_no_vulnerability" not in details and "decision_rationale" not in details:
-                        # Try to extract from raw response or use default
                         details["why_no_vulnerability"] = self._extract_explanation_from_response(response) or "No vulnerability found based on analysis"
                         details["decision_rationale"] = "Taint analysis did not reveal exploitable path to dangerous sink"
         
@@ -188,6 +264,96 @@ class ResponseParser:
                 result["structural_risks"] = risks["structural_risks"]
         
         return result
+    
+    def _extract_json_lines(self, response: str, count: int) -> List[str]:
+        """Extract JSON lines from response (robust version handling multiple formats)"""
+        lines = []
+        
+        # 方法1: シンプルな行ベースの抽出
+        for line in response.split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith('{') and line.endswith('}'):
+                try:
+                    json.loads(line)  # JSONとして妥当かチェック
+                    lines.append(line)
+                    if len(lines) >= count:
+                        break
+                except json.JSONDecodeError:
+                    pass
+        
+        # 方法2: 必要な行数が見つからない場合、複数行JSONを探す
+        if len(lines) < count:
+            if self.debug:
+                print(f"[EXTRACT] Only found {len(lines)} single-line JSON, trying multiline extraction")
+            
+            multiline_jsons = self._extract_multiline_json(response)
+            for obj_str in multiline_jsons:
+                if obj_str not in lines:
+                    lines.append(obj_str)
+                    if len(lines) >= count:
+                        break
+        
+        # デバッグ出力
+        if self.debug:
+            print(f"[EXTRACT] Found {len(lines)} JSON lines from response")
+            if len(lines) < count:
+                print(f"[EXTRACT WARNING] Expected {count} lines but found {len(lines)}")
+                # 生のレスポンスの一部を表示
+                print(f"[EXTRACT DEBUG] Response preview (first 300 chars):")
+                print(f"  {response[:300]}...")
+        
+        return lines
+    
+    def _extract_multiline_json(self, text: str) -> List[str]:
+        """Extract JSON objects that may span multiple lines"""
+        json_objects = []
+        current_json = ""
+        brace_count = 0
+        in_string = False
+        escape_next = False
+        
+        for char in text:
+            if escape_next:
+                current_json += char
+                escape_next = False
+                continue
+                
+            if char == '\\' and in_string:
+                escape_next = True
+                current_json += char
+                continue
+                
+            if char == '"' and not escape_next:
+                in_string = not in_string
+                
+            if not in_string:
+                if char == '{':
+                    if brace_count == 0:
+                        current_json = ""  # 新しいJSONオブジェクト開始
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    
+            current_json += char
+            
+            # JSONオブジェクトが完成
+            if brace_count == 0 and current_json.strip() and '{' in current_json:
+                try:
+                    # JSONとして妥当かチェック
+                    parsed = json.loads(current_json.strip())
+                    # 1行に圧縮
+                    compact = json.dumps(parsed, ensure_ascii=False, separators=(',', ':'))
+                    json_objects.append(compact)
+                    current_json = ""
+                except json.JSONDecodeError:
+                    current_json = ""
+        
+        if self.debug and json_objects:
+            print(f"[EXTRACT MULTILINE] Found {len(json_objects)} multiline JSON objects")
+        
+        return json_objects
     
     def _validate_critical_fields_smart(self, data: Dict, 
                                        phase: AnalysisPhase) -> List[str]:
@@ -215,7 +381,6 @@ class ResponseParser:
                             missing.append(field)
                 else:
                     # For non-vulnerabilities, be more lenient
-                    # Only require at least ONE explanation field
                     explanation_fields = ["why_no_vulnerability", "decision_rationale"]
                     has_explanation = any(field in details for field in explanation_fields)
                     
@@ -224,14 +389,12 @@ class ResponseParser:
                         if "raw_response" in data:
                             extracted = self._extract_explanation_from_response(data["raw_response"])
                             if not extracted:
-                                # Only mark ONE as missing to reduce retries
                                 missing.append("why_no_vulnerability")
         
         return missing
     
     def _extract_explanation_from_response(self, response: str) -> Optional[str]:
         """Try to extract explanation from raw response text"""
-        # Look for common explanation patterns
         patterns = [
             r'"why_no_vulnerability"\s*:\s*"([^"]+)"',
             r'"decision_rationale"\s*:\s*"([^"]+)"',
@@ -250,43 +413,38 @@ class ResponseParser:
     def _generate_retry_prompt(self, missing: List[str], 
                                phase: AnalysisPhase, data: Dict) -> str:
         """Generate specific retry prompts"""
-        # Skip retry for non-critical fields
         if all(field in self.NON_CRITICAL_FIELDS for field in missing):
-            return ""  # No retry needed
+            return ""
         
         if phase == AnalysisPhase.END:
             is_vuln = data.get("vulnerability_decision", {}).get("found", False)
             
             if "vulnerable_lines" in missing and is_vuln:
                 return """Please provide the specific vulnerable lines:
-{"vulnerable_lines": [
-  {"file": "<path>", "line": <number>, "function": "<name>", 
-   "sink_function": "<sink>", "why": "<reason>"}
-]}"""
+{"vulnerable_lines": [{"file": "<path>", "line": <number>, "function": "<name>", "sink_function": "<sink>", "why": "<reason>"}]}"""
             
             elif "vulnerability_type" in missing and is_vuln:
                 return """Please specify the CWE vulnerability type:
 {"vulnerability_type": "CWE-XXX"}
-
 Common types: CWE-200 (Information Exposure), CWE-787 (Out-of-bounds Write), CWE-20 (Input Validation)"""
             
             elif "why_no_vulnerability" in missing and not is_vuln:
-                # Simplified prompt for non-vulnerability explanation
-                return """Please provide a brief explanation in Line 2:
-{"why_no_vulnerability": "<one-sentence explanation>"}
-
-Example: {"why_no_vulnerability": "Taint does not reach dangerous sink"}"""
+                return """Please provide a brief explanation:
+{"why_no_vulnerability": "<one-sentence explanation>"}"""
         
         else:  # START/MIDDLE
+            base_prompt = """IMPORTANT: Output EXACTLY 2 lines of JSON (no prefixes, no formatting):
+Line 1: Complete taint analysis JSON
+Line 2: {"structural_risks":[...]} or {"structural_risks":[]}
+
+"""
             if "tainted_vars" in missing:
-                return """Please list all tainted variables:
-{"tainted_vars": ["var1", "var2", ...]}"""
-            
+                return base_prompt + "Missing: tainted_vars list"
             elif "propagation" in missing:
-                return """Please show the taint propagation:
-{"propagation": ["var1 <- source @ file:line", ...]}"""
+                return base_prompt + "Missing: propagation flows"
+            elif "function" in missing:
+                return base_prompt + "Missing: function name"
         
-        # Default
         critical_only = [f for f in missing if f not in self.NON_CRITICAL_FIELDS]
         if critical_only:
             return f"Missing critical fields: {', '.join(critical_only)}. Please provide them."
@@ -295,31 +453,23 @@ Example: {"why_no_vulnerability": "Taint does not reach dangerous sink"}"""
     def _generate_format_correction_prompt(self, phase: AnalysisPhase) -> str:
         """Format error correction prompt"""
         if phase == AnalysisPhase.END:
-            return """Please provide EXACTLY 3 lines of valid JSON:
-Line 1: {"vulnerability_found":"yes" or "no"}
-Line 2: {detailed JSON with at least one explanation field}
-Line 3: {"structural_risks":[...]}"""
+            return """Output EXACTLY 3 lines of valid JSON (no prefixes like "Line 1:"):
+{"vulnerability_found":"yes" or "no"}
+{detailed JSON with vulnerability details}
+{"structural_risks":[...]}"""
         else:
-            return """Please provide EXACTLY 2 lines of valid JSON:
-Line 1: {"function":"...", "tainted_vars":[...], ...}
-Line 2: {"structural_risks":[...]}"""
-    
-    def _extract_json_lines(self, response: str, count: int) -> List[str]:
-        """Extract JSON lines from response"""
-        lines = []
-        for line in response.split('\n'):
-            line = line.strip()
-            if line.startswith('{') and line.endswith('}'):
-                lines.append(line)
-                if len(lines) >= count:
-                    break
-        return lines
+            return """Output EXACTLY 2 lines of valid JSON (no prefixes like "Line 1:"):
+{"function":"...","tainted_vars":[...],"propagation":[...],"sinks":[...],"evidence":[...],"rule_matches":{...}}
+{"structural_risks":[...] or []}"""
     
     def _parse_json_safely(self, text: str) -> Optional[Dict]:
         """Safe JSON parsing"""
         try:
             return json.loads(text)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            if self.debug:
+                print(f"[JSON ERROR] Failed to parse: {text[:100]}...")
+                print(f"  Error: {e}")
             return None
     
     def get_statistics(self) -> Dict:

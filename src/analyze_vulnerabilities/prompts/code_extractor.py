@@ -5,7 +5,7 @@
 """
 
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import re
 from functools import lru_cache
 
@@ -32,9 +32,70 @@ class CodeExtractor:
             "misses": 0
         }
     
+    def extract_function_code_with_context(self, func_name: str, 
+                                          caller_func: Optional[str] = None,
+                                          vd: dict = None) -> str:
+        """
+        関数のソースコードを呼び出しコンテキスト付きで抽出
+        
+        Args:
+            func_name: 対象関数名  
+            caller_func: 呼び出し元関数名（チェーンの前の関数）
+            vd: 脆弱性情報
+            
+        Returns:
+            str: 呼び出しコンテキスト付きのコード
+        """
+        # 呼び出し位置を検出
+        call_context = ""
+        if caller_func and caller_func in self.user_functions:
+            call_info = self._find_function_call(caller_func, func_name)
+            if call_info:
+                call_context = self._format_call_context(call_info, caller_func)
+        
+        # 通常の関数コード抽出
+        if func_name in self.user_functions:
+            func = self.user_functions[func_name]
+            file_path = func["file"]
+            
+            # vdから強調すべき行を特定（sink関数の場合）
+            highlight_lines = None
+            if vd and func_name == vd.get("sink"):
+                if isinstance(vd.get("line"), list):
+                    highlight_lines = tuple(vd["line"])
+                elif vd.get("line"):
+                    highlight_lines = (vd["line"],)
+            
+            func_tuple = (
+                func["name"],
+                func["file"],
+                func["line"],
+                func.get("end_line", -1)
+            )
+            
+            code = self._extract_and_format_code(func_tuple, highlight_lines)
+            
+            # コンテキスト付きで返す
+            if call_context:
+                return f"{call_context}\n\nfile: {file_path}\n\n{code}"
+            else:
+                return f"file: {file_path}\n\n{code}"
+        
+        # 外部関数の場合
+        if vd and func_name == vd["sink"]:
+            file_path = vd["file"]
+            code = self._extract_function_call_context(vd)
+            
+            if call_context:
+                return f"{call_context}\n\nfile: {file_path}\n\n{code}"
+            else:
+                return f"file: {file_path}\n\n{code}"
+        
+        return f"file: unknown\n\n// External function: {func_name}"
+    
     def extract_function_code(self, func_name: str, vd: dict = None) -> str:
         """
-        関数のソースコードまたは呼び出しコンテキストを抽出
+        関数のソースコードまたは呼び出しコンテキストを抽出（後方互換性のため維持）
         
         Args:
             func_name: 関数名
@@ -43,45 +104,92 @@ class CodeExtractor:
         Returns:
             str: "file: ファイルパス\n\nソースコード" の形式で返される
         """
-        # ユーザ定義関数から探す
-        if func_name in self.user_functions:
-            func = self.user_functions[func_name]
-            # ファイルパスを取得
-            file_path = func["file"]
-            
-            # 辞書をタプルに変換してキャッシュ可能にする
-            func_tuple = (
-                func["name"],
-                func["file"],
-                func["line"],
-                func.get("end_line", -1)
-            )
-            code = self._extract_and_clean_code(func_tuple)
-            
-            # 指定されたフォーマットで返す
-            return f"file: {file_path}\n\n{code}"
+        return self.extract_function_code_with_context(func_name, None, vd)
+    
+    def _find_function_call(self, caller_func_name: str, callee_func_name: str) -> Optional[Dict]:
+        """
+        caller_func内でcallee_funcを呼び出している位置を検出
+        """
+        caller = self.user_functions[caller_func_name]
+        file_path = Path(caller["file"])
+        if not file_path.is_absolute():
+            file_path = self.project_root / file_path
         
-        # 外部関数の場合
-        if vd and func_name == vd["sink"]:
-            file_path = vd["file"]
-            code = self._extract_function_call_context(vd)
-            return f"file: {file_path}\n\n{code}"
+        if not file_path.exists():
+            return None
         
-        return f"file: unknown\n\n// External function: {func_name}"
+        lines = file_path.read_text(encoding="utf-8").splitlines()
+        start = caller["line"] - 1
+        end = caller.get("end_line", len(lines))
+        
+        # 関数呼び出しパターンを検索（複数のパターンに対応）
+        patterns = [
+            rf'\b{re.escape(callee_func_name)}\s*\(',  # 通常の関数呼び出し
+            rf'return\s+{re.escape(callee_func_name)}\s*\(',  # return文での呼び出し
+            rf'=\s*{re.escape(callee_func_name)}\s*\(',  # 代入文での呼び出し
+        ]
+        
+        for i in range(start, min(end, len(lines))):
+            line = lines[i]
+            for pattern in patterns:
+                if re.search(pattern, line):
+                    return {
+                        "file": caller["file"],
+                        "line": i + 1,
+                        "caller": caller_func_name,
+                        "line_content": line.strip()
+                    }
+        
+        return None
+    
+    def _format_call_context(self, call_info: Dict, caller_func: str) -> str:
+        """
+        呼び出しコンテキストをフォーマット
+        """
+        file_path = Path(call_info["file"])
+        if not file_path.is_absolute():
+            file_path = self.project_root / file_path
+        
+        if not file_path.exists():
+            return f"=== CALL CONTEXT ===\nCalled from {caller_func} at line {call_info['line']}"
+        
+        lines = file_path.read_text(encoding="utf-8").splitlines()
+        call_line = call_info["line"] - 1
+        
+        # コンテキスト範囲（前後2行）
+        start = max(0, call_line - 2)
+        end = min(len(lines), call_line + 3)
+        
+        context_lines = [
+            f"=== CALL CONTEXT ===",
+            f"Called from {caller_func} at line {call_info['line']}:"
+        ]
+        
+        for i in range(start, end):
+            # コメントを除去
+            clean_line = self._strip_comments(lines[i])
+            # 呼び出し行には>>>を付ける
+            prefix = ">>> " if i == call_line else "    "
+            line_num = i + 1
+            context_lines.append(f"{line_num}: {prefix}{clean_line}")
+        
+        return "\n".join(context_lines)
     
     @lru_cache(maxsize=128)
-    def _extract_and_clean_code(self, func_tuple: tuple) -> str:
+    def _extract_raw_code(self, func_tuple: tuple) -> Tuple[List[str], int]:
         """
-        ユーザ定義関数のコードを抽出して整形（キャッシュ付き）
+        生のコード行を抽出（キャッシュ用）
+        
+        Returns:
+            (code_lines, start_line) のタプル
         """
-        # タプルから必要な情報を取り出す
         func_name, func_file, func_line, func_end_line = func_tuple
         
         rel_path = Path(func_file)
         abs_path = (self.project_root / rel_path) if self.project_root and not rel_path.is_absolute() else rel_path
         
         if not abs_path.exists():
-            return f"// Function {func_name} source file not found"
+            return ([f"// Function {func_name} source file not found"], func_line)
         
         # ファイル内容を読み込み
         lines = abs_path.read_text(encoding="utf-8").splitlines()
@@ -90,11 +198,31 @@ class CodeExtractor:
         # 関数の終了行を検出
         code_lines = self._extract_function_body(lines, start_line)
         
-        # 行番号を付加
-        numbered_lines = [
-            f"{start_line + i + 1}: {line}" 
-            for i, line in enumerate(code_lines)
-        ]
+        return (code_lines, start_line)
+    
+    def _extract_and_format_code(self, func_tuple: tuple, highlight_lines: Optional[Tuple[int]] = None) -> str:
+        """
+        コードを抽出して整形（ハイライト付き）
+        
+        Args:
+            func_tuple: 関数情報のタプル
+            highlight_lines: 強調表示する行番号のタプル（hashableのためタプル使用）
+        """
+        # キャッシュから生のコードを取得
+        code_lines, start_line = self._extract_raw_code(func_tuple)
+        
+        # 行番号を付加（重要な行には>>>を追加）
+        numbered_lines = []
+        for i, line in enumerate(code_lines):
+            line_num = start_line + i + 1
+            
+            # ハイライト判定
+            if highlight_lines and line_num in highlight_lines:
+                prefix = ">>> "
+            else:
+                prefix = "    "
+            
+            numbered_lines.append(f"{line_num}: {prefix}{line}")
         
         code = "\n".join(numbered_lines)
         return self._clean_code_for_llm(code)
@@ -248,7 +376,7 @@ class CodeExtractor:
     
     def get_cache_stats(self) -> dict:
         """キャッシュの統計情報を取得"""
-        cache_info = self._extract_and_clean_code.cache_info()
+        cache_info = self._extract_raw_code.cache_info()
         return {
             "hits": cache_info.hits,
             "misses": cache_info.misses,
@@ -258,7 +386,7 @@ class CodeExtractor:
     
     def clear_cache(self):
         """キャッシュをクリア"""
-        self._extract_and_clean_code.cache_clear()
+        self._extract_raw_code.cache_clear()
     
     def extract_function_signature(self, func_name: str) -> str:
         """関数のシグネチャのみを抽出"""

@@ -28,7 +28,6 @@ def parse_arguments():
     parser.add_argument( "--provider", choices=["openai", "claude", "deepseek", "gemini", "local"], help="使用するLLMプロバイダー（未指定時は設定ファイルのデフォルト）")
     
     # ========== 出力オプション ==========
-    parser.add_argument( "--summary", action="store_true", help="人間が読みやすいMarkdownサマリーを生成")
     parser.add_argument( "--verbose", action="store_true", help="詳細な出力")
     
     # ========== デバッグ・最適化 ==========
@@ -238,9 +237,6 @@ def main():
             use_rag=args.use_rag,
             rules_path=rules_path
         )
-
-        # 会話ログファイルのパスを決定
-        conversations_file = args.output.parent / "conversations.jsonl"
         
         # エンジンの初期化（出力パスも渡す）
         print(f"[INFO] Initializing analysis engine...")
@@ -330,24 +326,6 @@ def main():
         token_usage=token_usage,
         cache_stats=cache_stats
     )
-    
-    # Markdownサマリー生成（オプション）
-    if args.summary:
-        try:
-            from output.markdown_reporter import MarkdownReporter
-            
-            summary_path = args.output.with_suffix('.md')
-            reporter = MarkdownReporter()
-            reporter.generate_summary(
-                output_path=summary_path,
-                results=results,
-                statistics=statistics,
-                args=args
-            )
-            print(f"[INFO] Summary saved to: {summary_path}")
-        except Exception as e:
-            print(f"[WARN] Failed to generate markdown summary: {e}")
-    
     print(f"\n[INFO] Analysis complete")
     print(f"[INFO] Results saved to: {args.output}")
 

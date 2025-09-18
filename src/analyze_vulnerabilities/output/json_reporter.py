@@ -1,10 +1,9 @@
 # output/json_reporter.py
 """
 解析結果をJSON形式で出力
-脆弱性は行単位で分割して記録
+同一ファイル・同一行の問題を統合して記録
 """
 
-import hashlib
 import json
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -25,14 +24,14 @@ class JSONReporter:
                        metadata: Dict) -> Dict:
         """
         完全なレポートを生成
-        vulnerable_linesとstructural_risksを行単位で分割
+        vulnerable_linesとstructural_risksを行単位で統合
         """
         
-        # 脆弱性を行単位で分割
-        line_level_vulnerabilities = self._split_vulnerabilities_by_line(vulnerabilities)
+        # 脆弱性を行単位で統合
+        line_level_vulnerabilities = self._consolidate_vulnerabilities_by_line(vulnerabilities)
         
-        # structural_risksも行単位で整理
-        line_level_findings = self._organize_findings_by_line(findings)
+        # structural_risksも行単位で統合
+        line_level_findings = self._consolidate_findings_by_line(findings)
         
         # 統計情報の構築
         enhanced_statistics = self._build_statistics(
@@ -54,7 +53,7 @@ class JSONReporter:
             # 統計情報
             "statistics": enhanced_statistics,
             
-            # 解析結果（行単位）
+            # 解析結果（行単位で統合）
             "total_vulnerability_lines": len(line_level_vulnerabilities),
             "vulnerabilities": line_level_vulnerabilities,
             
@@ -64,14 +63,12 @@ class JSONReporter:
         
         return report
 
-    
-    def _split_vulnerabilities_by_line(self, vulnerabilities: List[Dict]) -> List[Dict]:
+    def _consolidate_vulnerabilities_by_line(self, vulnerabilities: List[Dict]) -> List[Dict]:
         """
-        脆弱性を行単位で分割
-        vulnerable_linesの各エントリを個別の脆弱性として記録
+        同一ファイル・同一行の脆弱性を統合
+        複数のルールや詳細情報を配列として保持
         """
-        line_level = []
-        vuln_id = 1
+        consolidated = {}
         
         for vuln in vulnerabilities:
             details = vuln.get("vulnerability_details", {})
@@ -85,104 +82,284 @@ class JSONReporter:
                     "line": vd.get("line", 0),
                     "function": vuln.get("chain", ["unknown"])[-1],
                     "sink_function": vd.get("sink", "unknown"),
-                    "why": details.get("decision_rationale", "Vulnerability detected")
+                    "why": details.get("decision_rationale", "Vulnerability detected"),
+                    "rule_id": "other"
                 }]
             
-            # 各行を個別のエントリとして記録
+            # 各行について統合処理
             for line_info in vulnerable_lines:
-                entry = {
-                    "vulnerability_id": f"VULN-{vuln_id:04d}",
-                    "file": line_info.get("file", "unknown"),
-                    "line": line_info.get("line", 0),
-                    "function": line_info.get("function", "unknown"),
-                    "sink_function": line_info.get("sink_function", "unknown"),
-                    "vulnerability_type": details.get("vulnerability_type", "unknown"),
-                    "severity": details.get("severity", "medium"),
-                    "rule_id": line_info.get("rule_id", "other"),
-                    "description": line_info.get("why", ""),
-                    "chain": vuln.get("chain", []),
-                    "taint_flow_summary": details.get("taint_flow_summary", {}),
-                    "exploitation_analysis": details.get("exploitation_analysis", {}),
-                    "missing_mitigations": details.get("missing_mitigations", []),
-                    "confidence_level": details.get("confidence_factors", {}).get("confidence_level", "medium"),
-                    "decision_rationale": details.get("decision_rationale", "")
-                }
-                line_level.append(entry)
-                vuln_id += 1
+                # 統合キー: ファイルと行番号
+                key = (
+                    line_info.get("file", "unknown"),
+                    line_info.get("line", 0)
+                )
+                
+                if key not in consolidated:
+                    # 新規エントリを作成
+                    consolidated[key] = {
+                        "file": line_info.get("file", "unknown"),
+                        "line": line_info.get("line", 0),
+                        "functions": [],
+                        "sink_functions": [],
+                        "vulnerability_types": [],
+                        "severities": [],
+                        "rule_ids": [],
+                        "descriptions": [],
+                        "chains": [],
+                        "taint_flow_summaries": [],
+                        "exploitation_analyses": [],
+                        "missing_mitigations": [],
+                        "confidence_levels": [],
+                        "decision_rationales": []
+                    }
+                
+                entry = consolidated[key]
+                
+                # 関数名を追加（重複を避ける）
+                func = line_info.get("function", "unknown")
+                if func not in entry["functions"]:
+                    entry["functions"].append(func)
+                
+                # シンク関数を追加
+                sink = line_info.get("sink_function", "unknown")
+                if sink not in entry["sink_functions"]:
+                    entry["sink_functions"].append(sink)
+                
+                # 脆弱性タイプを追加
+                vuln_type = details.get("vulnerability_type", "unknown")
+                if vuln_type not in entry["vulnerability_types"]:
+                    entry["vulnerability_types"].append(vuln_type)
+                
+                # 重要度を追加
+                severity = details.get("severity", "medium")
+                if severity not in entry["severities"]:
+                    entry["severities"].append(severity)
+                
+                # ルールIDを追加
+                rule_id = line_info.get("rule_id", "other")
+                if rule_id not in entry["rule_ids"]:
+                    entry["rule_ids"].append(rule_id)
+                
+                # 説明を追加（重複チェック）
+                desc = line_info.get("why", "")
+                if desc and desc not in entry["descriptions"]:
+                    entry["descriptions"].append(desc)
+                
+                # チェーンを追加（重複チェック）
+                chain = vuln.get("chain", [])
+                chain_str = " -> ".join(chain)
+                if chain and chain_str not in [" -> ".join(c) for c in entry["chains"]]:
+                    entry["chains"].append(chain)
+                
+                # その他の詳細情報を追加
+                if details.get("taint_flow_summary"):
+                    entry["taint_flow_summaries"].append(details["taint_flow_summary"])
+                
+                if details.get("exploitation_analysis"):
+                    entry["exploitation_analyses"].append(details["exploitation_analysis"])
+                
+                # ミティゲーションをマージ
+                for mitigation in details.get("missing_mitigations", []):
+                    if mitigation not in entry["missing_mitigations"]:
+                        entry["missing_mitigations"].append(mitigation)
+                
+                # 信頼度レベル
+                conf_level = details.get("confidence_factors", {}).get("confidence_level", "medium")
+                if conf_level not in entry["confidence_levels"]:
+                    entry["confidence_levels"].append(conf_level)
+                
+                # 判定理由
+                rationale = details.get("decision_rationale", "")
+                if rationale and rationale not in entry["decision_rationales"]:
+                    entry["decision_rationales"].append(rationale)
         
-        # ファイル・行番号でソート
-        line_level.sort(key=lambda x: (x["file"], x["line"]))
+        # IDを付与して配列に変換
+        result = []
+        vuln_id = 1
+        for (file, line), data in sorted(consolidated.items()):
+            # 最も高い重要度を選択
+            severity_priority = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+            highest_severity = max(data["severities"], 
+                                  key=lambda x: severity_priority.get(x, 0))
+            
+            # 最も高い信頼度を選択
+            confidence_priority = {"high": 3, "medium": 2, "low": 1}
+            highest_confidence = max(data["confidence_levels"],
+                                   key=lambda x: confidence_priority.get(x, 0)) if data["confidence_levels"] else "medium"
+            
+            result.append({
+                "vulnerability_id": f"VULN-{vuln_id:04d}",
+                "file": file,
+                "line": line,
+                "consolidated": True,  # 統合されたエントリであることを示す
+                "detection_count": len(data["rule_ids"]),  # 検出された問題の数
+                
+                # 単数形フィールド（最も重要なものを選択）
+                "severity": highest_severity,
+                "confidence_level": highest_confidence,
+                "primary_vulnerability_type": data["vulnerability_types"][0] if data["vulnerability_types"] else "unknown",
+                
+                # 複数形フィールド（全ての情報を保持）
+                "functions": data["functions"],
+                "sink_functions": data["sink_functions"],
+                "vulnerability_types": data["vulnerability_types"],
+                "rule_ids": data["rule_ids"],
+                "descriptions": data["descriptions"],
+                "chains": data["chains"],
+                "taint_flow_summaries": data["taint_flow_summaries"],
+                "exploitation_analyses": data["exploitation_analyses"],
+                "missing_mitigations": data["missing_mitigations"],
+                "decision_rationales": data["decision_rationales"],
+                
+                # 追加の統計情報
+                "severity_distribution": {s: data["severities"].count(s) for s in set(data["severities"])},
+                "rule_distribution": {r: data["rule_ids"].count(r) for r in set(data["rule_ids"])}
+            })
+            vuln_id += 1
         
-        return line_level
+        return result
     
-    def _organize_findings_by_line(self, findings: List[Dict]) -> List[Dict]:
+    def _consolidate_findings_by_line(self, findings: List[Dict]) -> List[Dict]:
         """
-        structural_risksを行単位で整理
-        重複を除去し、各行を個別のエントリとして記録
+        同一ファイル・同一行のstructural_risksを統合
+        複数のルールや詳細情報を配列として保持
         """
-        # 重複除去用のセット
-        seen = set()
-        line_level = []
-        finding_id = 1
+        consolidated = {}
         
         for finding in findings:
-            # ユニークキーを生成
+            # 空のfindingはスキップ
+            if not finding or not finding.get("line"):
+                continue
+            
+            # 統合キー: ファイルと行番号
             key = (
-                finding.get("file"),
-                finding.get("line"),
-                finding.get("function"),
-                finding.get("rule"),
-                finding.get("phase")
+                finding.get("file", "unknown"),
+                finding.get("line", 0)
             )
             
-            if key not in seen:
-                seen.add(key)
-                
-                entry = {
-                    "finding_id": f"RISK-{finding_id:04d}",
+            if key not in consolidated:
+                # 新規エントリを作成
+                consolidated[key] = {
                     "file": finding.get("file", "unknown"),
                     "line": finding.get("line", 0),
-                    "function": finding.get("function", "unknown"),
-                    "sink_function": finding.get("sink_function", "unknown"),
-                    "rule": finding.get("rule", "other"),
-                    "phase": finding.get("phase", "unknown"),
-                    "description": finding.get("why", ""),
-                    "code_excerpt": finding.get("code_excerpt", ""),
-                    "rule_matches": finding.get("rule_matches", {"rule_id": [], "others": []})
+                    "functions": [],
+                    "sink_functions": [],
+                    "rules": [],
+                    "phases": [],
+                    "descriptions": [],
+                    "code_excerpts": [],
+                    "rule_matches_list": []
                 }
-                line_level.append(entry)
-                finding_id += 1
+            
+            entry = consolidated[key]
+            
+            # 各フィールドを追加（重複を避ける）
+            func = finding.get("function", "unknown")
+            if func not in entry["functions"]:
+                entry["functions"].append(func)
+            
+            sink = finding.get("sink_function", "unknown")
+            if sink and sink not in entry["sink_functions"]:
+                entry["sink_functions"].append(sink)
+            
+            rule = finding.get("rule", "other")
+            if rule not in entry["rules"]:
+                entry["rules"].append(rule)
+            
+            phase = finding.get("phase", "unknown")
+            if phase not in entry["phases"]:
+                entry["phases"].append(phase)
+            
+            desc = finding.get("why", "")
+            if desc and desc not in entry["descriptions"]:
+                entry["descriptions"].append(desc)
+            
+            excerpt = finding.get("code_excerpt", "")
+            if excerpt and excerpt not in entry["code_excerpts"]:
+                entry["code_excerpts"].append(excerpt)
+            
+            # rule_matchesを統合
+            if finding.get("rule_matches"):
+                entry["rule_matches_list"].append(finding["rule_matches"])
         
-        # ファイル・行番号でソート
-        line_level.sort(key=lambda x: (x["file"], x["line"]))
+        # IDを付与して配列に変換
+        result = []
+        finding_id = 1
+        for (file, line), data in sorted(consolidated.items()):
+            # rule_matchesを統合
+            merged_rule_matches = {"rule_id": [], "others": []}
+            for rm in data["rule_matches_list"]:
+                for rule_id in rm.get("rule_id", []):
+                    if rule_id not in merged_rule_matches["rule_id"]:
+                        merged_rule_matches["rule_id"].append(rule_id)
+                for other in rm.get("others", []):
+                    if other not in merged_rule_matches["others"]:
+                        merged_rule_matches["others"].append(other)
+            
+            result.append({
+                "finding_id": f"RISK-{finding_id:04d}",
+                "file": file,
+                "line": line,
+                "consolidated": True,  # 統合されたエントリであることを示す
+                "detection_count": len(data["rules"]),  # 検出された問題の数
+                
+                # 主要なルール（最初に検出されたもの）
+                "primary_rule": data["rules"][0] if data["rules"] else "other",
+                
+                # 全ての情報を配列として保持
+                "functions": data["functions"],
+                "sink_functions": data["sink_functions"],
+                "rules": data["rules"],
+                "phases": data["phases"],
+                "descriptions": data["descriptions"],
+                "code_excerpts": data["code_excerpts"],
+                "rule_matches": merged_rule_matches,
+                
+                # 追加の統計情報
+                "rule_distribution": {r: data["rules"].count(r) for r in set(data["rules"])},
+                "phase_distribution": {p: data["phases"].count(p) for p in set(data["phases"])}
+            })
+            finding_id += 1
         
-        return line_level
+        return result
     
     def _build_statistics(self, base_stats: Dict, 
                          vulnerabilities: List[Dict],
                          findings: List[Dict],
                          metadata: Dict) -> Dict:
         """
-        統計情報を構築
+        統計情報を構築（統合されたデータに対応）
         """
-        # 重要度別集計
+        # 重要度別集計（統合されたエントリから）
         severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
         for vuln in vulnerabilities:
-            severity = vuln.get("severity", "medium")
-            if severity in severity_counts:
-                severity_counts[severity] += 1
+            # severity_distributionがある場合は使用、なければ単一のseverityを使用
+            if "severity_distribution" in vuln:
+                for sev, count in vuln["severity_distribution"].items():
+                    if sev in severity_counts:
+                        severity_counts[sev] += count
+            else:
+                severity = vuln.get("severity", "medium")
+                if severity in severity_counts:
+                    severity_counts[severity] += 1
         
-        # CWE別集計
+        # CWE別集計（全てのタイプを集計）
         cwe_counts = {}
         for vuln in vulnerabilities:
-            cwe = vuln.get("vulnerability_type", "unknown")
-            cwe_counts[cwe] = cwe_counts.get(cwe, 0) + 1
+            for cwe in vuln.get("vulnerability_types", []):
+                cwe_counts[cwe] = cwe_counts.get(cwe, 0) + 1
         
-        # ルール別集計（findings）
+        # ルール別集計（全てのルールを集計）
         rule_counts = {}
         for finding in findings:
-            rule = finding.get("rule", "other")
-            rule_counts[rule] = rule_counts.get(rule, 0) + 1
+            for rule in finding.get("rules", []):
+                rule_counts[rule] = rule_counts.get(rule, 0) + 1
+        
+        # 統合による削減率を計算
+        total_detections = sum(v.get("detection_count", 1) for v in vulnerabilities)
+        total_detections += sum(f.get("detection_count", 1) for f in findings)
+        total_lines = len(vulnerabilities) + len(findings)
+        consolidation_rate = (1 - (total_lines / max(total_detections, 1))) * 100 if total_detections > 0 else 0
         
         return {
             # 基本統計
@@ -190,6 +367,11 @@ class JSONReporter:
             "flows_with_vulnerabilities": base_stats.get("vulnerabilities_found", 0),
             "total_vulnerability_lines": len(vulnerabilities),
             "total_structural_risk_lines": len(findings),
+            
+            # 統合情報
+            "total_detections_before_consolidation": total_detections,
+            "total_lines_after_consolidation": total_lines,
+            "consolidation_rate": f"{consolidation_rate:.1f}%",
             
             # 分布
             "severity_distribution": severity_counts,
