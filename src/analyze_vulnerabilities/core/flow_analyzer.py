@@ -29,6 +29,7 @@ class FlowAnalyzer:
         self.stats = {
             "llm_calls": 0,
             "cache_hits": 0,
+            "cache_partial_hits": 0,
             "cache_misses": 0,
             "retries": 0,
             "retry_successes": 0
@@ -47,38 +48,43 @@ class FlowAnalyzer:
             print(f"  Chain: {' → '.join(chain)}")
             print(f"  Sink: {vd.get('sink')} (param {vd.get('param_index')})")
         
+        # 会話ロガー開始
+        if self.conversation_logger:
+            self.conversation_logger.start_flow(flow_idx, chain, vd)
+
         # 接頭辞キャッシュをチェック（get_longest_prefix_matchを使用）
         cached_length = 0
         cached_analyses = []
         cached_conversation = None
-        
+        cached_data = None
+
         if self.cache:
             cached_length, cached_data = self.cache.get_longest_prefix_match(chain)
-            
-            if cached_data:
-                cached_analyses = cached_data.get("chain_analyses", [])
-                cached_conversation = cached_data.get("conversation_state", {})
-                
+
+        if cached_data:
+            cached_analyses = cached_data.get("chain_analyses", [])
+            cached_conversation = cached_data.get("conversation_state", {})
+
+            if cached_length == len(chain):
+                self.stats["cache_hits"] += 1
                 if self.verbose:
-                    if cached_length == len(chain):
-                        print(f"  [CACHE HIT] Complete flow cached")
-                        self.stats["cache_hits"] += 1
-                        # 完全一致の場合、resultがあれば返す
-                        if "result" in cached_data:
-                            return cached_data["result"]
-                    else:
-                        cached_funcs = " → ".join(chain[:cached_length])
-                        print(f"  [CACHE HIT] Reusing {cached_length}/{len(chain)} functions")
-                        print(f"    Cached: {cached_funcs}")
-                        self.stats["cache_hits"] += 1
-            else:
-                self.stats["cache_misses"] += 1
+                    print(f"  [CACHE HIT] Complete flow cached")
+                if "result" in cached_data:
+                    cached_result = cached_data["result"]
+                    if self.conversation_logger:
+                        self._log_cached_flow(cached_result)
+                    return cached_result
+            elif cached_length > 0:
+                self.stats["cache_hits"] += 1
+                self.stats["cache_partial_hits"] += 1
                 if self.verbose:
-                    print(f"  [CACHE MISS] No cached data found")
-        
-        # 会話ロガー開始
-        if self.conversation_logger:
-            self.conversation_logger.start_flow(flow_idx, chain, vd)
+                    cached_funcs = " → ".join(chain[:cached_length])
+                    print(f"  [CACHE HIT] Reusing {cached_length}/{len(chain)} functions")
+                    print(f"    Cached: {cached_funcs}")
+        elif self.cache:
+            self.stats["cache_misses"] += 1
+            if self.verbose:
+                print(f"  [CACHE MISS] No cached data found")
         
         # 会話コンテキスト初期化（キャッシュから復元または新規作成）
         conversation = ConversationContext(self.system_prompt)
@@ -439,7 +445,30 @@ class FlowAnalyzer:
                 func_name, position, phase, prompt_type,
                 prompt, response, metadata
             )
-    
+
+    def _log_cached_flow(self, cached_result: Dict):
+        """キャッシュヒット時のログを記録"""
+        if not self.conversation_logger:
+            return
+
+        is_vulnerable = cached_result.get("is_vulnerable", False)
+        vuln_type = cached_result.get("vulnerability_type")
+
+        self.conversation_logger.add_conversation(
+            function_name="cache",
+            position=-1,
+            phase="cached",
+            prompt_type="cached",
+            prompt="[CACHE] Reused cached analysis result.",
+            response=f"Returning cached result (is_vulnerable={is_vulnerable}, type={vuln_type})"
+        )
+
+        self.conversation_logger.end_flow(
+            is_vulnerable=is_vulnerable,
+            vulnerability_type=vuln_type,
+            vulnerability_details=cached_result.get("vulnerability_details", {})
+        )
+
     def _finalize_conversation_log(self, vulnerability_decision: Dict):
         """会話ログを完了"""
         if self.conversation_logger:

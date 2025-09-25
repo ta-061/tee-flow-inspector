@@ -1,7 +1,7 @@
 # parsing/response_parser.py
 import json
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from enum import Enum
 
 class AnalysisPhase(Enum):
@@ -120,6 +120,112 @@ class ResponseParser:
                 missing_critical=["parse_failed"],
                 retry_prompt=retry_prompt
             )
+    
+    def merge_retry_result(self, original_result: ParseResult, 
+                          retry_response: str, 
+                          phase: AnalysisPhase) -> ParseResult:
+        """
+        部分リトライ結果をマージする新しいメソッド（全フェーズ対応）
+        """
+        preserved_data = original_result.data.copy()
+        
+        # START/MIDDLEフェーズ: taint_analysisとstructural_risksの部分マージ
+        if phase in [AnalysisPhase.START, AnalysisPhase.MIDDLE]:
+            try:
+                # リトライレスポンスから必要な部分を抽出
+                lines = self._extract_json_lines(retry_response, 2)
+                
+                # 不足フィールドに応じて適切な行を処理
+                missing = original_result.missing_critical
+                
+                # taint_analysisが不足している場合
+                if any(field in ["function", "tainted_vars", "propagation"] for field in missing):
+                    if len(lines) > 0:
+                        taint = self._parse_json_safely(lines[0])
+                        if taint:
+                            # 既存のtaint_analysisとマージ
+                            if "taint_analysis" not in preserved_data:
+                                preserved_data["taint_analysis"] = {}
+                            preserved_data["taint_analysis"].update(taint)
+                
+                # structural_risksが不足している場合（通常は不足しないが念のため）
+                if "structural_risks" not in preserved_data or preserved_data["structural_risks"] is None:
+                    if len(lines) > 1:
+                        risks = self._parse_json_safely(lines[1])
+                        if risks:
+                            if isinstance(risks, dict) and "structural_risks" in risks:
+                                preserved_data["structural_risks"] = risks["structural_risks"]
+                            elif isinstance(risks, list):
+                                preserved_data["structural_risks"] = risks
+                    else:
+                        preserved_data["structural_risks"] = []
+                
+                # 成功判定
+                new_missing = self._validate_critical_fields_smart(preserved_data, phase)
+                if not new_missing:
+                    self.stats["successful_parses"] += 1
+                    return ParseResult(success=True, data=preserved_data)
+                
+            except Exception as e:
+                if self.debug:
+                    print(f"[MERGE ERROR] Failed to merge START/MIDDLE retry: {e}")
+            
+            # マージに失敗した場合は全体を再パース
+            return self.parse_response(retry_response, phase)
+        
+        # ENDフェーズ: 部分的なマージを行う
+        
+        # リトライレスポンスから必要な部分だけを抽出
+        try:
+            # 単一のJSONオブジェクトとして返される場合
+            partial_data = self._parse_json_safely(retry_response)
+            
+            if not partial_data:
+                # 複数行形式の場合も試す
+                lines = self._extract_json_lines(retry_response, 3)
+                if lines:
+                    partial_data = {}
+                    for line in lines:
+                        json_obj = self._parse_json_safely(line)
+                        if json_obj:
+                            partial_data.update(json_obj)
+            
+            if partial_data:
+                # vulnerable_linesが含まれている場合
+                if "vulnerable_lines" in partial_data:
+                    if "vulnerability_details" not in preserved_data:
+                        preserved_data["vulnerability_details"] = {}
+                    preserved_data["vulnerability_details"]["vulnerable_lines"] = partial_data["vulnerable_lines"]
+                    
+                    # vulnerable_line_countも更新
+                    preserved_data["vulnerability_details"]["vulnerable_line_count"] = len(partial_data["vulnerable_lines"])
+                
+                # その他の不足フィールドも更新
+                for field in ["vulnerability_type", "severity", "missing_mitigations"]:
+                    if field in partial_data:
+                        if "vulnerability_details" not in preserved_data:
+                            preserved_data["vulnerability_details"] = {}
+                        preserved_data["vulnerability_details"][field] = partial_data[field]
+                
+                # 元の判定結果を保持（重要！）
+                if preserved_data.get("vulnerability_decision", {}).get("found") is True:
+                    # vulnerability_foundがyesだった場合は維持
+                    pass  # すでにTrueなので変更不要
+                
+                self.stats["successful_parses"] += 1
+                return ParseResult(success=True, data=preserved_data)
+            
+        except Exception as e:
+            if self.debug:
+                print(f"[MERGE ERROR] Failed to merge retry result: {e}")
+        
+        # マージに失敗した場合は元のデータを返す
+        return ParseResult(
+            success=False,
+            data=preserved_data,
+            missing_critical=original_result.missing_critical,
+            retry_prompt=original_result.retry_prompt
+        )
     
     def _normalize_llm_response(self, response: str) -> str:
         """Normalize LLM response to ensure consistent format"""
@@ -412,19 +518,21 @@ class ResponseParser:
     
     def _generate_retry_prompt(self, missing: List[str], 
                                phase: AnalysisPhase, data: Dict) -> str:
-        """Generate specific retry prompts"""
+        """Generate specific retry prompts for missing fields only"""
         if all(field in self.NON_CRITICAL_FIELDS for field in missing):
             return ""
         
         if phase == AnalysisPhase.END:
             is_vuln = data.get("vulnerability_decision", {}).get("found", False)
             
+            # 不足フィールドのみを要求する具体的なプロンプト
             if "vulnerable_lines" in missing and is_vuln:
-                return """Please provide the specific vulnerable lines:
-{"vulnerable_lines": [{"file": "<path>", "line": <number>, "function": "<name>", "sink_function": "<sink>", "why": "<reason>"}]}"""
+                return """Based on your previous vulnerability detection, provide ONLY the missing vulnerable_lines field:
+{"vulnerable_lines": [{"file": "<path>", "line": <number>, "function": "<name>", "sink_function": "<sink>", "why": "<reason>"}]}
+Return ONLY this JSON object."""
             
             elif "vulnerability_type" in missing and is_vuln:
-                return """Please specify the CWE vulnerability type:
+                return """Based on your previous vulnerability detection, provide ONLY the missing vulnerability_type:
 {"vulnerability_type": "CWE-XXX"}
 Common types: CWE-200 (Information Exposure), CWE-787 (Out-of-bounds Write), CWE-20 (Input Validation)"""
             

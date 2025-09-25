@@ -382,9 +382,10 @@ class JSONReporter:
             "execution_time_seconds": base_stats.get("execution_time_seconds", 0),
             "llm_calls": base_stats.get("llm_calls", 0),
             "cache_hits": base_stats.get("cache_hits", 0),
+            "cache_partial_hits": base_stats.get("cache_partial_hits", 0),
             "cache_misses": base_stats.get("cache_misses", 0),
             "cache_hit_rate": self._calculate_hit_rate(base_stats),
-            
+
             # トークン使用量
             "token_usage": base_stats.get("token_usage", {}),
             
@@ -409,7 +410,7 @@ class JSONReporter:
         hits = stats.get("cache_hits", 0)
         misses = stats.get("cache_misses", 0)
         total = hits + misses
-        
+
         if total > 0:
             rate = hits / total * 100
             return f"{rate:.1f}%"

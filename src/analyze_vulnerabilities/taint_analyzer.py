@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import time
-from datetime import datetime
 
 def parse_arguments():
     """コマンドライン引数を解析"""
@@ -128,20 +127,23 @@ def display_analysis_summary(
 ):
     """解析結果のサマリーを表示"""
     duration = end_time - start_time
-    
+    detection_rate = (vulnerabilities_found / total_flows * 100) if total_flows else 0.0
+    avg_duration = (duration / total_flows) if total_flows else 0.0
+
     print("\n" + "=" * 60)
     print("Analysis Summary")
     print("=" * 60)
-    
+
     # 基本統計
     print(f"Total flows analyzed: {total_flows}")
     print(f"Vulnerabilities found: {vulnerabilities_found}")
-    print(f"Detection rate: {vulnerabilities_found/total_flows*100:.1f}%")
-    
+    print(f"Detection rate: {detection_rate:.1f}%")
+
     # 実行時間
     print(f"\nExecution time: {format_duration(duration)}")
-    print(f"Average per flow: {duration/total_flows:.2f} seconds")
-    
+    if total_flows:
+        print(f"Average per flow: {avg_duration:.2f} seconds")
+
     # トークン使用量（利用可能な場合）
     if token_usage:
         print(f"\nToken Usage:")
@@ -149,48 +151,32 @@ def display_analysis_summary(
         print(f"  Prompt tokens: {token_usage.get('prompt_tokens', 0):,}")
         print(f"  Completion tokens: {token_usage.get('completion_tokens', 0):,}")
         print(f"  API calls: {token_usage.get('api_calls', 0):,}")
-        
+
         # トークンあたりのコスト推定（例: GPT-4の場合）
-        if token_usage.get('total_tokens'):
-            avg_tokens_per_flow = token_usage['total_tokens'] / total_flows
+        total_tokens = token_usage.get('total_tokens')
+        if total_flows and total_tokens:
+            avg_tokens_per_flow = total_tokens / total_flows
             print(f"  Average per flow: {avg_tokens_per_flow:,.0f} tokens")
-    
+
     # キャッシュ統計（利用可能な場合）
     if cache_stats:
-        hit_rate = cache_stats.get('hits', 0) / (cache_stats.get('hits', 0) + cache_stats.get('misses', 1)) * 100
+        hits = cache_stats.get('hits', 0) + cache_stats.get('partial_hits', 0)
+        misses = cache_stats.get('misses', 0)
+        total_requests = hits + misses
+        hit_rate = (hits / total_requests * 100) if total_requests else 0.0
         print(f"\nCache Performance:")
         print(f"  Hits: {cache_stats.get('hits', 0)}")
+        if 'partial_hits' in cache_stats:
+            print(f"  Partial hits: {cache_stats.get('partial_hits', 0)}")
         print(f"  Misses: {cache_stats.get('misses', 0)}")
         print(f"  Hit rate: {hit_rate:.1f}%")
-        
+
         # キャッシュによる推定時間削減
         if cache_stats.get('hits', 0) > 0:
             estimated_time_saved = cache_stats['hits'] * 2.0  # 仮定: 1ヒットあたり2秒削減
             print(f"  Estimated time saved: {format_duration(estimated_time_saved)}")
-    
+
     print("=" * 60)
-
-
-def save_results(args, results: Dict, statistics: Dict):
-    """解析結果を保存"""
-    output_data = {
-        "metadata": {
-            "analysis_date": datetime.now().isoformat(),
-            "mode": args.mode,
-            "rag_enabled": args.use_rag,
-            "cache_enabled": not args.no_cache,
-        },
-        "statistics": statistics,
-        "results": results
-    }
-    
-    try:
-        with open(args.output, 'w', encoding='utf-8') as f:
-            json.dump(output_data, f, ensure_ascii=False, indent=2)
-        print(f"[INFO] Results saved to: {args.output}")
-    except Exception as e:
-        print(f"[ERROR] Failed to save results: {e}")
-        sys.exit(1)
 
 
 def main():
@@ -263,10 +249,10 @@ def main():
         print("=" * 60)
         
         results = engine.analyze_flows(flows_data)
-        
+
         print("=" * 60)
         print(f"[INFO] Analysis completed")
-        
+
         # エンジンから統計情報を取得
         engine_stats = engine.get_statistics()
         
@@ -299,30 +285,22 @@ def main():
     
     # 終了時刻を記録
     end_time = time.time()
-    
-    # 統計情報の構築
-    statistics = {
-        "execution_time_seconds": end_time - start_time,
-        "total_flows": len(flows_data),
-        "vulnerabilities_found": len(results.get("vulnerabilities", [])),
-        "findings_count": len(results.get("findings", [])),
-        "mode": args.mode,
-        "rag_enabled": args.use_rag,
-        "cache_enabled": not args.no_cache,
-        "llm_calls": engine_stats.get("llm_calls", 0),
-        "token_usage": token_usage,
-        "cache_stats": cache_stats
-    }
-    
-    # 結果を保存
-    save_results(args, results, statistics)
-    
+
     # サマリー表示
+    total_flows = engine_stats.get("total_flows")
+    if total_flows is None:
+        total_flows = len(flows_data)
+
+    vulnerabilities_found = engine_stats.get("vulnerabilities_found")
+    if vulnerabilities_found is None and isinstance(results, dict):
+        vulnerabilities_found = len(results.get("vulnerabilities", []))
+    if vulnerabilities_found is None:
+        vulnerabilities_found = 0
     display_analysis_summary(
         start_time=start_time,
         end_time=end_time,
-        total_flows=len(flows_data),
-        vulnerabilities_found=len(results.get("vulnerabilities", [])),
+        total_flows=total_flows,
+        vulnerabilities_found=vulnerabilities_found,
         token_usage=token_usage,
         cache_stats=cache_stats
     )

@@ -164,6 +164,7 @@ class TaintAnalysisEngine:
             "vulnerabilities_found": self.stats["vulnerabilities_found"],
             "llm_calls": base_stats.get("llm_calls", 0),
             "cache_hits": base_stats.get("cache_hits", 0),
+            "cache_partial_hits": base_stats.get("cache_partial_hits", 0),
             "cache_misses": base_stats.get("cache_misses", 0),
             "retries": base_stats.get("retries", 0),
             "retry_successes": base_stats.get("retry_successes", 0),
