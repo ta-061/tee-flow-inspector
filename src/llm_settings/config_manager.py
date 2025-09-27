@@ -57,6 +57,57 @@ class LLMConfig:
         self.config = self._load_config()
         self._validate_config()
     
+    def _get_default_gpt5_options(self) -> Dict[str, Any]:
+        """GPT-5系モデル用の詳細パラメータのデフォルト値"""
+        return {
+            "reasoning_effort": "minimal",  # minimal / low / medium / high
+            "reasoning_summary": None,       # auto / concise / detailed
+            "verbosity": "medium",          # low / medium / high
+            "response_format": "text",
+            "max_output_tokens": 2048,
+            "metadata": {},
+            "cache_control_type": "none",  # none / prompt / ephemeral
+            "cache_control_ttl_seconds": None,
+            "store": True,
+            "include": [],
+            "parallel_tool_calls": None,
+            "tool_choice": None,
+            "tools": [],
+            "service_tier": None,
+            "truncation": None,
+            "user": None,
+            "background": None,
+            "extra": {}
+        }
+
+    def _ensure_gpt5_defaults(self, openai_cfg: Dict[str, Any]):
+        """既存設定にGPT-5用パラメータが無い場合、デフォルトを補完"""
+        defaults = self._get_default_gpt5_options()
+        gpt5_options = openai_cfg.setdefault("gpt5_options", {})
+        deprecated_keys = {
+            "top_p",
+            "frequency_penalty",
+            "presence_penalty",
+            "logit_bias",
+            "temperature",
+        }
+        for key in list(gpt5_options.keys()):
+            if key in deprecated_keys:
+                gpt5_options.pop(key, None)
+        if "text_verbosity" in gpt5_options and "verbosity" not in gpt5_options:
+            gpt5_options["verbosity"] = gpt5_options.pop("text_verbosity")
+        include_value = gpt5_options.get("include")
+        if include_value is None:
+            gpt5_options["include"] = []
+        elif not isinstance(include_value, list):
+            gpt5_options["include"] = [include_value]
+        tools_value = gpt5_options.get("tools")
+        if tools_value is None:
+            gpt5_options["tools"] = []
+        for key, value in defaults.items():
+            if key not in gpt5_options:
+                gpt5_options[key] = value
+
     def _load_config(self) -> Dict[str, Any]:
         """設定ファイルを読み込む"""
         if not self.config_path.exists():
@@ -69,9 +120,17 @@ class LLMConfig:
             config = json.load(f)
             
         # 既存の設定にGeminiがない場合は追加
-        if "gemini" not in config.get("providers", {}):
-            config["providers"]["gemini"] = self._get_default_gemini_config()
+        providers = config.get("providers", {})
+        if "gemini" not in providers:
+            providers["gemini"] = self._get_default_gemini_config()
             self._save_config(config)
+
+        openai_cfg = providers.get("openai")
+        if openai_cfg is not None:
+            prev_options = json.dumps(openai_cfg.get("gpt5_options", {}), sort_keys=True)
+            self._ensure_gpt5_defaults(openai_cfg)
+            if json.dumps(openai_cfg.get("gpt5_options", {}), sort_keys=True) != prev_options:
+                self._save_config(config)
             
         return config
     
@@ -115,7 +174,8 @@ class LLMConfig:
                     "base_url": "https://api.openai.com/v1",
                     "temperature": 0.0,
                     "max_tokens": 4096,
-                    "timeout": 60
+                    "timeout": 60,
+                    "gpt5_options": self._get_default_gpt5_options()
                 },
                 "claude": {
                     "api_key": "",
@@ -248,13 +308,158 @@ class OpenAIClient(BaseLLMClient):
     def chat_completion(self, messages: List[Dict[str, str]], **kwargs) -> str:
         """OpenAI APIでチャット補完を実行"""
         try:
-            response = self.client.chat.completions.create(
-                model=self.config.get("model", "gpt-4o-mini"),
-                messages=messages,
-                temperature=kwargs.get("temperature", self.config.get("temperature", 0.0)),
-                max_completion_tokens=kwargs.get("max_tokens", self.config.get("max_tokens", 4096)),
-                timeout=self.config.get("timeout", 60)
-            )
+            model_name = self.config.get("model", "gpt-4o-mini")
+            if model_name.startswith("gpt-5"):
+                gpt5_opts = self.config.get("gpt5_options", {})
+
+                # Responses API を使用
+                cache_type = gpt5_opts.get("cache_control_type", "none")
+                cache_ttl = gpt5_opts.get("cache_control_ttl_seconds")
+
+                input_messages = []
+                for msg in messages:
+                    role = msg.get("role", "user")
+                    text = msg.get("content", "")
+                    # ロールに応じて Responses API の item type を選択
+                    item_type = "output_text" if role == "assistant" else "input_text"
+                    content_item = {"type": item_type, "text": text}
+                    # cache_control は“入力”のみに付与
+                    if item_type == "input_text" and cache_type and cache_type != "none":
+                        cache_control = {"type": cache_type}
+                        if cache_ttl:
+                            cache_control["ttl"] = cache_ttl
+                        content_item["cache_control"] = cache_control
+                    input_messages.append({"role": role, "content": [content_item]})
+
+                response_kwargs: Dict[str, Any] = {
+                    "model": model_name,
+                    "input": input_messages
+                }
+
+                sanitized_kwargs = dict(kwargs)
+                for deprecated in ("temperature", "top_p", "presence_penalty", "frequency_penalty"):
+                    sanitized_kwargs.pop(deprecated, None)
+
+                reasoning_cfg: Dict[str, Any] = {}
+                reasoning_effort = sanitized_kwargs.pop("reasoning_effort", gpt5_opts.get("reasoning_effort"))
+                if reasoning_effort:
+                    reasoning_cfg["effort"] = reasoning_effort
+                reasoning_summary = sanitized_kwargs.pop("reasoning_summary", gpt5_opts.get("reasoning_summary"))
+                if reasoning_summary:
+                    reasoning_cfg["summary"] = reasoning_summary
+                if reasoning_cfg:
+                    response_kwargs["reasoning"] = reasoning_cfg
+
+                text_cfg: Dict[str, Any] = {}
+                verbosity = sanitized_kwargs.pop("verbosity", gpt5_opts.get("verbosity"))
+                if not verbosity:
+                    legacy_verbosity = sanitized_kwargs.pop("text_verbosity", gpt5_opts.get("text_verbosity"))
+                    verbosity = legacy_verbosity
+                if verbosity:
+                    text_cfg["verbosity"] = verbosity
+
+                response_format = sanitized_kwargs.pop("response_format", gpt5_opts.get("response_format"))
+                if response_format:
+                    if isinstance(response_format, dict):
+                        text_cfg["format"] = response_format
+                    elif response_format != "text":
+                        text_cfg["format"] = {"type": str(response_format)}
+
+                if text_cfg:
+                    response_kwargs["text"] = text_cfg
+
+                max_output_tokens = sanitized_kwargs.pop(
+                    "max_tokens",
+                    gpt5_opts.get("max_output_tokens") or self.config.get("max_tokens", 4096)
+                )
+                if max_output_tokens:
+                    response_kwargs["max_output_tokens"] = max_output_tokens
+
+                metadata_value = sanitized_kwargs.pop("metadata", gpt5_opts.get("metadata"))
+                if isinstance(metadata_value, dict) and metadata_value:
+                    response_kwargs["metadata"] = metadata_value
+                elif metadata_value is None:
+                    sanitized_kwargs.pop("metadata", None)
+
+                store_value = sanitized_kwargs.pop("store", gpt5_opts.get("store"))
+                if store_value is not None:
+                    response_kwargs["store"] = store_value
+
+                include_value = sanitized_kwargs.pop("include", gpt5_opts.get("include"))
+                if include_value is not None:
+                    response_kwargs["include"] = include_value
+
+                background_value = sanitized_kwargs.pop("background", gpt5_opts.get("background"))
+                if background_value is not None:
+                    response_kwargs["background"] = background_value
+
+                parallel_tool_calls = sanitized_kwargs.pop("parallel_tool_calls", gpt5_opts.get("parallel_tool_calls"))
+                if parallel_tool_calls is not None:
+                    response_kwargs["parallel_tool_calls"] = parallel_tool_calls
+
+                service_tier = sanitized_kwargs.pop("service_tier", gpt5_opts.get("service_tier"))
+                if service_tier:
+                    response_kwargs["service_tier"] = service_tier
+
+                tool_choice = sanitized_kwargs.pop("tool_choice", gpt5_opts.get("tool_choice"))
+                if tool_choice:
+                    response_kwargs["tool_choice"] = tool_choice
+
+                tools_value = sanitized_kwargs.pop("tools", gpt5_opts.get("tools"))
+                if tools_value:
+                    response_kwargs["tools"] = tools_value
+
+                truncation = sanitized_kwargs.pop("truncation", gpt5_opts.get("truncation"))
+                if truncation:
+                    response_kwargs["truncation"] = truncation
+
+                user_value = sanitized_kwargs.pop("user", gpt5_opts.get("user"))
+                if user_value:
+                    response_kwargs["user"] = user_value
+
+                extra = gpt5_opts.get("extra")
+                if isinstance(extra, dict):
+                    for key, value in extra.items():
+                        if value is not None and key not in response_kwargs:
+                            response_kwargs[key] = value
+
+                for key, value in sanitized_kwargs.items():
+                    if value is not None:
+                        response_kwargs[key] = value
+
+                response = self.client.responses.create(**response_kwargs)
+                text_output = getattr(response, "output_text", None)
+                if text_output:
+                    return text_output
+                # フォールバック: content配列からテキストを抽出
+                try:
+                    outputs = []
+                    for item in getattr(response, "output", []):
+                        for content in getattr(item, "content", []):
+                            if getattr(content, "type", "") == "output_text":
+                                outputs.append(getattr(content, "text", ""))
+                            elif hasattr(content, "text"):
+                                outputs.append(content.text)
+                    if outputs:
+                        return "\n".join(outputs)
+                except Exception:
+                    pass
+                return ""
+
+            request_kwargs = {
+                "model": model_name,
+                "messages": messages,
+                "temperature": kwargs.get("temperature", self.config.get("temperature", 0.0)),
+                "max_completion_tokens": kwargs.get("max_tokens", self.config.get("max_tokens", 4096)),
+                "timeout": self.config.get("timeout", 60)
+            }
+
+            # 呼び出し元のkwargsで上書き可能にする
+            for key, value in kwargs.items():
+                if key not in ("temperature", "max_tokens"):
+                    request_kwargs[key] = value
+
+            response = self.client.chat.completions.create(**request_kwargs)
             return response.choices[0].message.content
         except Exception as e:
             raise Exception(f"OpenAI API error: {str(e)}")

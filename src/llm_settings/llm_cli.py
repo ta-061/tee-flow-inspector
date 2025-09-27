@@ -100,6 +100,187 @@ def configure_provider(config: LLMConfig, provider: str):
         except ValueError:
             print("✗ 無効な値です")
 
+    # GPT-5系の詳細パラメータ設定
+    current = config.get_provider_config(provider)
+    if provider == "openai" and current.get("model", "").startswith("gpt-5"):
+        gpt5_opts = current.get("gpt5_options", {})
+        # 古いキーをクリーンアップ
+        for legacy_key in ("text_verbosity", "temperature", "top_p", "presence_penalty", "frequency_penalty"):
+            gpt5_opts.pop(legacy_key, None)
+
+        print("\n--- GPT-5 詳細パラメータ ---")
+        print("(temperature / top_p / presence_penalty / frequency_penalty は GPT-5 では無効です)")
+
+        print(f"現在の reasoning_effort: {gpt5_opts.get('reasoning_effort', '未設定')}")
+        if input("reasoning_effort を更新しますか？ [y/N]: ").lower() == 'y':
+            effort = input("effort (minimal/low/medium/high): ").strip()
+            if effort:
+                gpt5_opts['reasoning_effort'] = effort
+
+        print(f"現在の reasoning_summary: {gpt5_opts.get('reasoning_summary')}")
+        if input("reasoning_summary を更新しますか？ [y/N]: ").lower() == 'y':
+            summary = input("summary (auto/concise/detailed/空欄で解除): ").strip()
+            gpt5_opts['reasoning_summary'] = summary or None
+
+        current_verbosity = gpt5_opts.get('verbosity', '未設定')
+        print(f"現在の verbosity: {current_verbosity}")
+        if input("verbosity を更新しますか？ [y/N]: ").lower() == 'y':
+            verbosity = input("verbosity (low/medium/high/空欄で解除): ").strip()
+            gpt5_opts['verbosity'] = verbosity or None
+
+        print(f"現在の response_format: {gpt5_opts.get('response_format', 'text')}")
+        if input("response_format を更新しますか？ [y/N]: ").lower() == 'y':
+            fmt = input("response_format (text/json_object/json_schema など。JSON文字列も可): ").strip()
+            if fmt:
+                try:
+                    gpt5_opts['response_format'] = json.loads(fmt)
+                except json.JSONDecodeError:
+                    gpt5_opts['response_format'] = fmt
+            else:
+                gpt5_opts['response_format'] = "text"
+
+        print(f"現在の cache_control_type: {gpt5_opts.get('cache_control_type', 'none')}")
+        if input("cache_control_type を更新しますか？ [y/N]: ").lower() == 'y':
+            cache_type = input("cache_control_type (none/prompt/ephemeral): ").strip() or "none"
+            gpt5_opts['cache_control_type'] = cache_type
+            if cache_type != "none":
+                raw_ttl = input("cache_control TTL 秒 (空欄で変更なし/解除): ").strip()
+                if raw_ttl:
+                    try:
+                        gpt5_opts['cache_control_ttl_seconds'] = int(raw_ttl)
+                    except ValueError:
+                        print("✗ 無効な値です")
+                else:
+                    gpt5_opts['cache_control_ttl_seconds'] = None
+            else:
+                gpt5_opts['cache_control_ttl_seconds'] = None
+
+        print(f"現在の max_output_tokens: {gpt5_opts.get('max_output_tokens')}")
+        if input("max_output_tokens を設定しますか？ [y/N]: ").lower() == 'y':
+            raw = input("max_output_tokens (空欄で解除): ").strip()
+            if raw:
+                try:
+                    gpt5_opts['max_output_tokens'] = int(raw)
+                except ValueError:
+                    print("✗ 無効な値です")
+            else:
+                gpt5_opts['max_output_tokens'] = None
+
+        print(f"現在の metadata: {gpt5_opts.get('metadata', {})}")
+        if input("metadata を編集しますか？ [y/N]: ").lower() == 'y':
+            raw = input("metadata (JSON 形式、空欄でクリア): ").strip()
+            if raw:
+                try:
+                    gpt5_opts['metadata'] = json.loads(raw)
+                except json.JSONDecodeError:
+                    print("✗ JSONの解析に失敗しました")
+            else:
+                gpt5_opts['metadata'] = {}
+
+        print(f"現在の store: {gpt5_opts.get('store')}")
+        if input("store を更新しますか？ [y/N]: ").lower() == 'y':
+            raw = input("store (true/false/空欄で解除): ").strip().lower()
+            if raw in {"true", "false"}:
+                gpt5_opts['store'] = raw == "true"
+            elif raw == "":
+                gpt5_opts['store'] = None
+            else:
+                print("✗ 無効な値です")
+
+        print(f"現在の include: {gpt5_opts.get('include', [])}")
+        if input("include を編集しますか？ (例: reasoning.encrypted_content) [y/N]: ").lower() == 'y':
+            raw = input("カンマ区切りで指定、空欄でクリア: ").strip()
+            if raw:
+                gpt5_opts['include'] = [item.strip() for item in raw.split(',') if item.strip()]
+            else:
+                gpt5_opts['include'] = []
+
+        print(f"現在の background: {gpt5_opts.get('background')}")
+        if input("background を更新しますか？ [y/N]: ").lower() == 'y':
+            raw = input("background (true/false/空欄で解除): ").strip().lower()
+            if raw in {"true", "false"}:
+                gpt5_opts['background'] = raw == "true"
+            elif raw == "":
+                gpt5_opts['background'] = None
+            else:
+                print("✗ 無効な値です")
+
+        print(f"現在の parallel_tool_calls: {gpt5_opts.get('parallel_tool_calls')}")
+        if input("parallel_tool_calls を更新しますか？ [y/N]: ").lower() == 'y':
+            raw = input("parallel_tool_calls (true/false/空欄で解除): ").strip().lower()
+            if raw in {"true", "false"}:
+                gpt5_opts['parallel_tool_calls'] = raw == "true"
+            elif raw == "":
+                gpt5_opts['parallel_tool_calls'] = None
+            else:
+                print("✗ 無効な値です")
+
+        print(f"現在の service_tier: {gpt5_opts.get('service_tier')}")
+        if input("service_tier を更新しますか？ [y/N]: ").lower() == 'y':
+            raw = input("service_tier (auto/default/flex/scale/空欄で解除): ").strip()
+            gpt5_opts['service_tier'] = raw or None
+
+        print(f"現在の tool_choice: {gpt5_opts.get('tool_choice')}")
+        if input("tool_choice を更新しますか？ [y/N]: ").lower() == 'y':
+            raw = input("tool_choice (auto/none/JSON 指定可、空欄で解除): ").strip()
+            if raw:
+                try:
+                    gpt5_opts['tool_choice'] = json.loads(raw)
+                except json.JSONDecodeError:
+                    gpt5_opts['tool_choice'] = raw
+            else:
+                gpt5_opts['tool_choice'] = None
+
+        print(f"現在の tools: {gpt5_opts.get('tools', [])}")
+        if input("tools を編集しますか？ [y/N]: ").lower() == 'y':
+            raw = input("tools (JSON配列、空欄でクリア): ").strip()
+            if raw:
+                try:
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, list):
+                        gpt5_opts['tools'] = parsed
+                    else:
+                        print("✗ JSON配列を指定してください")
+                except json.JSONDecodeError:
+                    print("✗ JSONの解析に失敗しました")
+            else:
+                gpt5_opts['tools'] = []
+
+        print(f"現在の truncation: {gpt5_opts.get('truncation')}")
+        if input("truncation を更新しますか？ [y/N]: ").lower() == 'y':
+            raw = input("truncation (auto/disabled/空欄で解除): ").strip()
+            gpt5_opts['truncation'] = raw or None
+
+        print(f"現在の user: {gpt5_opts.get('user')}")
+        if input("user を設定しますか？ [y/N]: ").lower() == 'y':
+            raw = input("user (空欄で解除): ").strip()
+            gpt5_opts['user'] = raw or None
+
+        # 任意の追加キー
+        extra = gpt5_opts.get('extra', {}) if isinstance(gpt5_opts.get('extra'), dict) else {}
+        if input("任意の追加パラメータ (extra) を編集しますか？ [y/N]: ").lower() == 'y':
+            print("キー=値 をカンマ区切りで指定 (例: instructions=Enter JSON) — 値はJSON解釈を試みます")
+            raw = input("extra: ").strip()
+            if raw:
+                try:
+                    for pair in raw.split(','):
+                        key_val = pair.strip()
+                        if not key_val:
+                            continue
+                        key, value = key_val.split('=', 1)
+                        key = key.strip()
+                        value = value.strip()
+                        try:
+                            extra[key] = json.loads(value)
+                        except json.JSONDecodeError:
+                            extra[key] = value
+                    gpt5_opts['extra'] = extra
+                except Exception:
+                    print("✗ 解析に失敗しました。フォーマットを確認してください。")
+
+        config.update_provider_config(provider, gpt5_options=gpt5_opts)
+        print("✓ GPT-5詳細パラメータを更新しました")
+
 
 def test_connection(provider: str = None):
     """接続テスト"""
