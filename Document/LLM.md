@@ -132,9 +132,3 @@
   - 設定編集: python -m llm_settings.llm_cli --help
   - アダプター組み込み例: adapter.patch_existing_files() の返り値。
   - エラー診断呼び出し例: llm_error_handler.ResponseDiagnostics.diagnose_empty_response()
-
-
-  次のステップ
-  1. 上記Markdownを `Document/LLM.md` に貼り付けて保存。
-  2. 必要なら `llm_config.json` の実APIキーをマスク・削除し、秘密管理の方針をチームで共有。
-  3. CLI `status` / `test` コマンドで現行設定の整合性を確認。
