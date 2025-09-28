@@ -1,95 +1,114 @@
-Based on the complete taint analysis above, we output a final determination of whether the final function in this chain is vulnerable..
+You are a deterministic taint analyst for OP‑TEE TAs. Produce the final decision (END) for the whole chain using all prior START/MIDDLE results (propagation, sanitizers, structural risks). Evaluate each target sink line INDEPENDENTLY.
 
-DECISION RULES (short; unchanged)
-- Vulnerable ONLY if untrusted REE data actually reaches a dangerous sink AND sanitization/bounds checks are insufficient.
-- Non-sinks: memory alloc/free (e.g., TEE_Malloc/TEE_Free) are NOT sinks. Random bytes from TEE_GenerateRandom are NOT sensitive.
-- Crypto APIs (TEE_AsymmetricEncrypt/Decrypt, TEE_AE*, TEE_Cipher*) are POLICY-EXCLUDED as sinks for "unencrypted_output". If they are the last call, return "no" unless there is a subsequent unencrypted copy to REE (e.g., snprintf/TEE_MemMove into a REE memref).
-- Prefer concrete code evidence (file:line). Use "unknown" when unavailable.
+TARGET SINK INFO (host‑provided)
+- sink_function: {sink_function}
+- target_sink_lines: {target_sink_lines}   // array of candidate sink line numbers (e.g., [64,67,101,102,109,112])
+Consider ONLY these lines as external sink calls for line‑level evaluation. Structure‑driven issues without an external sink call on the same line must be reported under `structural_risks`.
 
-LINE-LEVEL DETERMINATION
-- Evaluate **each sink-call line independently** (e.g., 110/215/235/241). Do NOT treat the whole function as uniformly vulnerable.
-- A sanitizer/check **applies only from its program point forward**; a post-check does not retroactively sanitize earlier lines.
-- A line is *vulnerable* iff its *own* preconditions (taint → sink, insufficient checks at/above the line) hold. Otherwise, it is *safe* and MUST NOT be listed.
+DEFAULT POLICY HINTS (soft, not absolute)
+- A line is vulnerable iff (tainted → dangerous sink at that line) AND (sanitization up to that program point is insufficient).
+- Alloc/free are NOT sinks. Random bytes are NON‑sensitive by default, unless context indicates secrecy. Crypto APIs alone are not sinks for “unencrypted_output”; if plaintext is later copied to REE, evaluate that later line.
+- When uncertain, do not force “vulnerable” or “safe”; (a) explain briefly, (b) prefer listing a structural risk or using "not_applicable", and (c) capture residual risks where useful.
 
-STRICT OUTPUT CONTRACT — EXACT LINES (no prose, no code fences)
-Line 1 (REQUIRED):
-{"vulnerability_found":"yes"|"no"}
+CLASSIFICATION (rules)
+- For any field named `rule` or `rule_id`, use only rule identifiers that appear in the host‑provided RULE CLASSIFICATION HINTS’s `rule_id` list (from the system prompt). If none applies, use `"other"`.
 
-Line 2 (REQUIRED): details JSON
-If "yes", use:
+OUTPUT (STRICT)
+- Emit exactly ONE JSON object. No prose. No code fences. Never omit required keys. Use empty arrays or `"unknown"` where needed.
+
+ALLOWED ENUMS
+- evaluated_sink_lines[*].status: "vulnerable" | "safe" | "not_applicable"
+- severity: "low" | "medium" | "high" | "critical"
+- confidence_level: "low" | "medium" | "high"
+
+SCHEMA (END, single JSON)
 {
-  "vulnerability_type": "CWE-XXX",
-  "severity": "low|medium|high|critical",
-  "taint_flow_summary": {
-    "source": "<brief>",
-    "propagation_path": ["A -> B @ <file>:<line>"],   // NO '.' entries; if none, use "unknown"
-    "sink": "<brief>"
+  "phase": "end",
+  "sink_targets": {
+    "function": "{sink_function|unknown}",
+    "lines": {target_sink_lines}
   },
-  "exploitation_analysis": {
-    "preconditions": ["..."],
-    "attack_scenario": "<short>",
-    "impact": "<short>"
-  },
-  "missing_mitigations": [
-    {"type":"bounds_check|type_validation|access_control|encryption|range_check|mem_access_check",
-     "location":"function:line|unknown",
-     "recommendation":"<specific>"}
-  ],
-  "confidence_factors": {
-    "positive_indicators": ["..."],
-    "negative_indicators": ["..."],
-    "confidence_level": "high|medium|low"
-  },
-  "decision_rationale": "<why this IS a vulnerability>",
-  "vulnerable_line_count": <int>,                //count of vulnerable lines
-  "vulnerable_lines": [                          //list ONLY vulnerable lines (safe lines excluded)
+  "evaluated_sink_lines": [
     {
-      "file":"<path>|unknown",
-      "line":<int>|0,
-      "function":"<enclosing_fn>|unknown",
-      "sink_function":"<callee or '=' for direct write>|unknown",
-      "rule_id":"unencrypted_output|weak_input_validation|shared_memory_overwrite|other",
-      "why":"<one-sentence, line-specific reason>"
+      "line": <int|0>,
+      "function": "<enclosing_fn|unknown>",
+      "sink_function": "<callee|'='|'array_write'|unknown>",
+      "status": "vulnerable|safe|not_applicable",
+      "why": "<one‑sentence, line‑specific>",
+      "rule_id": "<{RULE_IDS}|other>"
     }
-    // ... one object per vulnerable line
-  ]
-}
+    // one object per target sink line
+  ],
+  "vulnerability_decision": { "found": true|false },
 
-If "no", use:
-{
-  "why_no_vulnerability": "<one-sentence summary>",
+  // Required when found=true
+  "vulnerability_details": {
+    "vulnerability_type": "CWE‑XXX",
+    "severity": "low|medium|high|critical",
+    "taint_flow_summary": {
+      "source": "<brief>",
+      "propagation_path": ["A -> B @ <file>:<line>", "..."],
+      "sink": "<brief>"
+    },
+    "exploitation_analysis": {
+      "preconditions": ["..."],
+      "attack_scenario": "<short>",
+      "impact": "<short>"
+    },
+    "missing_mitigations": [
+      {"type":"bounds_check|type_validation|access_control|encryption|range_check|mem_access_check",
+       "location":"function:line|unknown",
+       "recommendation":"<specific>"}
+    ],
+    "confidence_factors": {
+      "positive_indicators": ["..."],
+      "negative_indicators": ["..."],
+      "confidence_level": "low|medium|high"
+    },
+    "decision_rationale": "<why this IS a vulnerability>",
+    "vulnerable_line_count": <int>,
+    "vulnerable_lines": [
+      {
+        "file":"<path>|unknown",
+        "line":<int>|0,
+        "function":"<fn|unknown>",
+        "sink_function":"<callee|'='|'array_write'|unknown>",
+        "rule_id":"<{RULE_IDS}|other>",
+        "why":"<one‑sentence, line‑specific>"
+      }
+      // multiple allowed
+    ]
+  },
+
+  // Suggested when found=false
+  "why_no_vulnerability": "<one‑sentence>",
   "effective_sanitizers": [
     {"type":"bounds_check|type_validation|access_control|range_check|mem_access_check",
      "location":"function:line|unknown",
-     "evidence":"<short excerpt or reason>"}
+     "evidence":"<short excerpt>"}
   ],
   "argument_safety": [
-    {"arg":"<name or param ref>", "why_safe":"<e.g., length capped by min(size, dst_cap)>", "evidence":"file:line|unknown"}
+    {"arg":"<name or param ref>", "why_safe":"<brief>", "evidence":"file:line|unknown"}
   ],
-  "residual_risks": ["<edge case if any, or empty>"],
+  "residual_risks": ["<edge case or empty>"],
   "confidence_factors": {
-    "positive_indicators": ["<what increased confidence>"],
-    "negative_indicators": ["<what might reduce confidence>"],
-    "confidence_level": "high|medium|low"
+    "positive_indicators": ["..."],
+    "negative_indicators": ["..."],
+    "confidence_level": "low|medium|high"
   },
-  "decision_rationale": "<why this ISN'T a vulnerability (include crypto-API exclusion when applicable)>"
-}
+  "decision_rationale": "<why this ISN'T a vulnerability>",
 
-Line 3 (REQUIRED): EXACT "structural_risks" block.
-- List ONLY non-external-call (structure/semantics-driven) issues that **did not** reach a final dangerous sink, e.g.:
-  - tainted loop bounds indexing a local/TEE buffer,
-  - pointer/offset arithmetic leading to potential OOB,
-  - direct assignment writes (e.g., buf[i] = x) governed by tainted values,
-  - param_types vs access mismatch (no external sink call on the line).
-- DO NOT include external sink calls like memcpy/TEE_MemMove/snprintf here (those belong only in details JSON if vulnerable).
-{"structural_risks":[
-  {
-    "file":"<path>|unknown",
-    "line":<int>|0,
-    "function":"<current_or_related_fn>",
-    "sink_function":"<'='|array_write|unknown>",         // use '=' for direct writes; never an external function here
-    "rule_matches":{"rule_id":["<known_rule_id or 'other'>"],"others":[]},
-    "why":"<one-line reason>",
-    "code_excerpt":"<short optional snippet>"
-  }
-]}
+  // Structure‑driven issues that did NOT reach an external sink on that same line.
+  "structural_risks": [
+    {
+      "file":"<path>|unknown",
+      "line":<int>|0,
+      "function":"<current_or_related_fn>",
+      "sink_function":"<'='|array_write|unknown>",   // NEVER an external function here
+      "rule_matches":{"rule_id":["<r{RULE_IDS}|other>"],"others":[]},
+      "why":"<one‑line reason>",
+      "code_excerpt":"<short optional>"
+    }
+    // zero or more
+  ]
+}

@@ -132,89 +132,63 @@ class ResponseParser:
         # START/MIDDLEフェーズ: taint_analysisとstructural_risksの部分マージ
         if phase in [AnalysisPhase.START, AnalysisPhase.MIDDLE]:
             try:
-                # リトライレスポンスから必要な部分を抽出
-                lines = self._extract_json_lines(retry_response, 2)
-                
-                # 不足フィールドに応じて適切な行を処理
-                missing = original_result.missing_critical
-                
-                # taint_analysisが不足している場合
-                if any(field in ["function", "tainted_vars", "propagation"] for field in missing):
-                    if len(lines) > 0:
-                        taint = self._parse_json_safely(lines[0])
-                        if taint:
-                            # 既存のtaint_analysisとマージ
-                            if "taint_analysis" not in preserved_data:
-                                preserved_data["taint_analysis"] = {}
-                            preserved_data["taint_analysis"].update(taint)
-                
-                # structural_risksが不足している場合（通常は不足しないが念のため）
-                if "structural_risks" not in preserved_data or preserved_data["structural_risks"] is None:
-                    if len(lines) > 1:
-                        risks = self._parse_json_safely(lines[1])
-                        if risks:
-                            if isinstance(risks, dict) and "structural_risks" in risks:
-                                preserved_data["structural_risks"] = risks["structural_risks"]
-                            elif isinstance(risks, list):
-                                preserved_data["structural_risks"] = risks
-                    else:
-                        preserved_data["structural_risks"] = []
-                
-                # 成功判定
+                parsed_retry = self._parse_json_safely(self._normalize_llm_response(retry_response))
+                if not isinstance(parsed_retry, dict):
+                    raise ValueError("Retry response is not a JSON object")
+
+                # taint_analysis をマージ
+                if "taint_analysis" in parsed_retry:
+                    preserved_data.setdefault("taint_analysis", {})
+                    preserved_data["taint_analysis"].update(parsed_retry.get("taint_analysis", {}))
+
+                # structural_risks をマージ
+                if "structural_risks" in parsed_retry:
+                    preserved_data["structural_risks"] = parsed_retry.get("structural_risks", [])
+
+                # phase を更新（あれば）
+                if "phase" in parsed_retry:
+                    preserved_data["phase"] = parsed_retry["phase"]
+
                 new_missing = self._validate_critical_fields_smart(preserved_data, phase)
                 if not new_missing:
                     self.stats["successful_parses"] += 1
                     return ParseResult(success=True, data=preserved_data)
-                
+
             except Exception as e:
                 if self.debug:
                     print(f"[MERGE ERROR] Failed to merge START/MIDDLE retry: {e}")
-            
+
             # マージに失敗した場合は全体を再パース
             return self.parse_response(retry_response, phase)
         
         # ENDフェーズ: 部分的なマージを行う
-        
-        # リトライレスポンスから必要な部分だけを抽出
         try:
-            # 単一のJSONオブジェクトとして返される場合
-            partial_data = self._parse_json_safely(retry_response)
-            
-            if not partial_data:
-                # 複数行形式の場合も試す
-                lines = self._extract_json_lines(retry_response, 3)
-                if lines:
-                    partial_data = {}
-                    for line in lines:
-                        json_obj = self._parse_json_safely(line)
-                        if json_obj:
-                            partial_data.update(json_obj)
-            
-            if partial_data:
-                # vulnerable_linesが含まれている場合
-                if "vulnerable_lines" in partial_data:
-                    if "vulnerability_details" not in preserved_data:
-                        preserved_data["vulnerability_details"] = {}
-                    preserved_data["vulnerability_details"]["vulnerable_lines"] = partial_data["vulnerable_lines"]
-                    
-                    # vulnerable_line_countも更新
-                    preserved_data["vulnerability_details"]["vulnerable_line_count"] = len(partial_data["vulnerable_lines"])
-                
-                # その他の不足フィールドも更新
-                for field in ["vulnerability_type", "severity", "missing_mitigations"]:
-                    if field in partial_data:
-                        if "vulnerability_details" not in preserved_data:
-                            preserved_data["vulnerability_details"] = {}
-                        preserved_data["vulnerability_details"][field] = partial_data[field]
-                
-                # 元の判定結果を保持（重要！）
-                if preserved_data.get("vulnerability_decision", {}).get("found") is True:
-                    # vulnerability_foundがyesだった場合は維持
-                    pass  # すでにTrueなので変更不要
-                
+            partial_data = self._parse_json_safely(self._normalize_llm_response(retry_response))
+            if not isinstance(partial_data, dict):
+                raise ValueError("Retry response is not a JSON object")
+
+            # vulnerability_decision
+            if "vulnerability_decision" in partial_data:
+                preserved_data["vulnerability_decision"] = partial_data["vulnerability_decision"]
+
+            # vulnerability_details
+            if "vulnerability_details" in partial_data:
+                preserved_data.setdefault("vulnerability_details", {})
+                preserved_data["vulnerability_details"].update(partial_data["vulnerability_details"])
+
+            # evaluated_sink_lines, structural_risks, sink_targets
+            if "evaluated_sink_lines" in partial_data:
+                preserved_data["evaluated_sink_lines"] = partial_data["evaluated_sink_lines"]
+            if "structural_risks" in partial_data:
+                preserved_data["structural_risks"] = partial_data["structural_risks"]
+            if "sink_targets" in partial_data:
+                preserved_data["sink_targets"] = partial_data["sink_targets"]
+
+            new_missing = self._validate_critical_fields_smart(preserved_data, phase)
+            if not new_missing:
                 self.stats["successful_parses"] += 1
                 return ParseResult(success=True, data=preserved_data)
-            
+
         except Exception as e:
             if self.debug:
                 print(f"[MERGE ERROR] Failed to merge retry result: {e}")
@@ -283,46 +257,27 @@ class ResponseParser:
             "raw_response": response
         }
         
-        # Line 1: Taint analysis
+        # 単一JSON形式を優先的に解析
+        parsed = self._parse_json_safely(response.strip())
+        if isinstance(parsed, dict):
+            result["phase"] = parsed.get("phase", phase.value)
+            result["taint_analysis"] = parsed.get("taint_analysis", {})
+            result["structural_risks"] = parsed.get("structural_risks", [])
+            result["raw_json"] = parsed
+            return result
+
+        # フォールバック: 旧2行形式や複数JSONが混ざる場合
         if len(lines) > 0:
             taint = self._parse_json_safely(lines[0])
-            if taint:
+            if isinstance(taint, dict):
                 result["taint_analysis"] = taint
-                if self.debug:
-                    print(f"[PARSER] Taint analysis keys: {list(taint.keys())}")
-        
-        # Line 2: Structural risks  
         if len(lines) > 1:
             risks = self._parse_json_safely(lines[1])
-            if self.debug:
-                print(f"[PARSER] Line 2 parsed type: {type(risks)}")
-                if risks:
-                    print(f"[PARSER] Line 2 keys: {list(risks.keys()) if isinstance(risks, dict) else 'LIST'}")
-            
-            if risks:
-                # "structural_risks"キーがあるか確認
-                if isinstance(risks, dict) and "structural_risks" in risks:
-                    result["structural_risks"] = risks["structural_risks"]
-                    if self.debug:
-                        print(f"[PARSER] Found {len(result['structural_risks'])} structural risks in dict")
-                # リストの場合も考慮
-                elif isinstance(risks, list):
-                    result["structural_risks"] = risks
-                    if self.debug:
-                        print(f"[PARSER] Found {len(result['structural_risks'])} structural risks as list")
-                else:
-                    if self.debug:
-                        print(f"[PARSER] WARNING: Line 2 has unexpected format: {risks}")
-        else:
-            # 2行目が見つからない場合、空のstructural_risksを設定
-            if self.debug:
-                print(f"[PARSER] WARNING: No second line found for structural_risks, setting empty array")
-            result["structural_risks"] = []
-        
-        # 最終確認
-        if self.debug:
-            print(f"[PARSER] Final result has {len(result['structural_risks'])} structural_risks")
-        
+            if isinstance(risks, dict) and "structural_risks" in risks:
+                result["structural_risks"] = risks["structural_risks"]
+            elif isinstance(risks, list):
+                result["structural_risks"] = risks
+
         return result
     
     def _parse_end_response(self, response: str) -> Dict:
@@ -334,10 +289,45 @@ class ResponseParser:
             "vulnerability_decision": {},
             "vulnerability_details": {},
             "structural_risks": [],
+            "evaluated_sink_lines": [],
+            "sink_targets": {},
             "raw_response": response
         }
         
-        # Line 1: Decision
+        # 単一JSON形式を優先的に解析
+        parsed = self._parse_json_safely(response.strip())
+        if isinstance(parsed, dict):
+            result["raw_json"] = parsed
+            result["vulnerability_decision"] = parsed.get("vulnerability_decision", {})
+            if "found" not in result["vulnerability_decision"] and "vulnerability_found" in parsed:
+                found_flag = parsed.get("vulnerability_found")
+                if isinstance(found_flag, str):
+                    found = found_flag.lower() == "yes"
+                else:
+                    found = bool(found_flag)
+                result["vulnerability_decision"] = {"found": found, "raw": parsed.get("vulnerability_decision", {})}
+            result.setdefault("vulnerability_decision", {}).setdefault("raw", parsed.get("vulnerability_decision", {}))
+            result["vulnerability_details"] = parsed.get("vulnerability_details", {})
+            result["evaluated_sink_lines"] = parsed.get("evaluated_sink_lines", [])
+            result["sink_targets"] = parsed.get("sink_targets", {})
+            result["structural_risks"] = parsed.get("structural_risks", [])
+
+            # 追加の安全策
+            is_vuln = result["vulnerability_decision"].get("found")
+            details = result["vulnerability_details"]
+            if is_vuln and isinstance(details, dict):
+                details.setdefault("severity", "medium")
+                details.setdefault("missing_mitigations", [])
+            if not is_vuln and isinstance(details, dict):
+                if "why_no_vulnerability" not in details and "decision_rationale" not in details:
+                    details["why_no_vulnerability"] = (
+                        self._extract_explanation_from_response(response)
+                        or "No vulnerability found based on analysis"
+                    )
+                    details["decision_rationale"] = "Taint analysis did not reveal exploitable path to dangerous sink"
+            return result
+
+        # フォールバック: 旧3行形式
         if len(lines) > 0:
             decision = self._parse_json_safely(lines[0])
             if decision:
@@ -345,30 +335,15 @@ class ResponseParser:
                     "found": decision.get("vulnerability_found") == "yes",
                     "raw": decision
                 }
-        
-        # Line 2: Details
         if len(lines) > 1:
             details = self._parse_json_safely(lines[1])
             if details:
                 result["vulnerability_details"] = details
-                # Apply safe defaults
-                if "severity" not in details and result["vulnerability_decision"].get("found"):
-                    details["severity"] = "medium"
-                if "missing_mitigations" not in details and result["vulnerability_decision"].get("found"):
-                    details["missing_mitigations"] = []
-                
-                # For "no" cases, add default explanations if missing
-                if not result["vulnerability_decision"].get("found"):
-                    if "why_no_vulnerability" not in details and "decision_rationale" not in details:
-                        details["why_no_vulnerability"] = self._extract_explanation_from_response(response) or "No vulnerability found based on analysis"
-                        details["decision_rationale"] = "Taint analysis did not reveal exploitable path to dangerous sink"
-        
-        # Line 3: Risks
         if len(lines) > 2:
             risks = self._parse_json_safely(lines[2])
             if risks and "structural_risks" in risks:
                 result["structural_risks"] = risks["structural_risks"]
-        
+
         return result
     
     def _extract_json_lines(self, response: str, count: int) -> List[str]:
@@ -527,23 +502,27 @@ class ResponseParser:
             
             # 不足フィールドのみを要求する具体的なプロンプト
             if "vulnerable_lines" in missing and is_vuln:
-                return """Based on your previous vulnerability detection, provide ONLY the missing vulnerable_lines field:
-{"vulnerable_lines": [{"file": "<path>", "line": <number>, "function": "<name>", "sink_function": "<sink>", "why": "<reason>"}]}
+                return """Based on your previous vulnerability detection, provide ONLY the missing vulnerable_lines field embedded in the schema:
+{"vulnerability_details": {"vulnerable_lines": [{"file": "<path>", "line": <number>, "function": "<name>", "sink_function": "<sink>", "why": "<reason>"}]}}
 Return ONLY this JSON object."""
-            
+
             elif "vulnerability_type" in missing and is_vuln:
-                return """Based on your previous vulnerability detection, provide ONLY the missing vulnerability_type:
-{"vulnerability_type": "CWE-XXX"}
+                return """Based on your previous vulnerability detection, provide ONLY the missing vulnerability_type embedded in vulnerability_details:
+{"vulnerability_details": {"vulnerability_type": "CWE-XXX"}}
 Common types: CWE-200 (Information Exposure), CWE-787 (Out-of-bounds Write), CWE-20 (Input Validation)"""
-            
+
             elif "why_no_vulnerability" in missing and not is_vuln:
-                return """Please provide a brief explanation:
-{"why_no_vulnerability": "<one-sentence explanation>"}"""
+                return """Please provide a brief explanation embedded in vulnerability_details:
+{"vulnerability_details": {"why_no_vulnerability": "<one-sentence explanation>"}}"""
         
         else:  # START/MIDDLE
-            base_prompt = """IMPORTANT: Output EXACTLY 2 lines of JSON (no prefixes, no formatting):
-Line 1: Complete taint analysis JSON
-Line 2: {"structural_risks":[...]} or {"structural_risks":[]}
+            base_prompt = """IMPORTANT: Output EXACTLY ONE JSON object matching the documented schema.
+Example:
+{
+  "phase": "start",
+  "taint_analysis": {"function":"...","tainted_vars":[...],"propagation":[...],"sanitizers":[...],"taint_blocked":false},
+  "structural_risks": []
+}
 
 """
             if "tainted_vars" in missing:
@@ -561,14 +540,9 @@ Line 2: {"structural_risks":[...]} or {"structural_risks":[]}
     def _generate_format_correction_prompt(self, phase: AnalysisPhase) -> str:
         """Format error correction prompt"""
         if phase == AnalysisPhase.END:
-            return """Output EXACTLY 3 lines of valid JSON (no prefixes like "Line 1:"):
-{"vulnerability_found":"yes" or "no"}
-{detailed JSON with vulnerability details}
-{"structural_risks":[...]}"""
+            return """Output EXACTLY ONE JSON object following the documented END schema. No prose, no prefixes."""
         else:
-            return """Output EXACTLY 2 lines of valid JSON (no prefixes like "Line 1:"):
-{"function":"...","tainted_vars":[...],"propagation":[...],"sinks":[...],"evidence":[...],"rule_matches":{...}}
-{"structural_risks":[...] or []}"""
+            return """Output EXACTLY ONE JSON object following the documented START/MIDDLE schema. No prose, no prefixes."""
     
     def _parse_json_safely(self, text: str) -> Optional[Dict]:
         """Safe JSON parsing"""

@@ -79,12 +79,19 @@ def _setup_hybrid_with_rag(rules_path: Path) -> Tuple[str, Dict[str, Any]]:
         diting_rules = _load_diting_rules(rules_path)
         diting_rules_json = json.dumps(diting_rules, ensure_ascii=False, separators=(',', ':'))
         
+        # ルールIDを抽出
+        rule_ids = [
+            r.get('rule_id') for r in diting_rules.get('detection_rules', [])
+            if r.get('rule_id')
+        ]
+        
         # ルールヒントブロックを生成
         rule_hints = build_rule_hints_block_from_codeql(rules_path)
         
         # PromptManagerに設定
         _prompt_manager.set_diting_rules_json(diting_rules_json)
         _prompt_manager.set_rule_hints_block(rule_hints)
+        _prompt_manager.set_rule_ids(rule_ids)
         
         # システムプロンプトを取得
         system_prompt = _prompt_manager.get_system_prompt()
@@ -95,7 +102,7 @@ def _setup_hybrid_with_rag(rules_path: Path) -> Tuple[str, Dict[str, Any]]:
             "rag_enabled": True,
             "rag_available": is_rag_available(),
             "diting_rules_count": len(diting_rules.get('detection_rules', [])),
-            "rule_ids": [r.get('rule_id', '') for r in diting_rules.get('detection_rules', [])],
+            "rule_ids": rule_ids,
             "rule_hints": rule_hints,
             "rules_json_size": len(diting_rules_json),
             "prompt_dir": str(_prompt_manager.current_dir)
@@ -120,12 +127,19 @@ def _setup_hybrid_no_rag(rules_path: Path) -> Tuple[str, Dict[str, Any]]:
         diting_rules = _load_diting_rules(rules_path)
         diting_rules_json = json.dumps(diting_rules, ensure_ascii=False, separators=(',', ':'))
         
+        # ルールIDを抽出
+        rule_ids = [
+            r.get('rule_id') for r in diting_rules.get('detection_rules', [])
+            if r.get('rule_id')
+        ]
+        
         # ルールヒントブロックを生成
         rule_hints = build_rule_hints_block_from_codeql(rules_path)
         
         # PromptManagerに設定
         _prompt_manager.set_diting_rules_json(diting_rules_json)
         _prompt_manager.set_rule_hints_block(rule_hints)
+        _prompt_manager.set_rule_ids(rule_ids)
         
         # システムプロンプトを取得
         system_prompt = _prompt_manager.get_system_prompt()
@@ -136,7 +150,7 @@ def _setup_hybrid_no_rag(rules_path: Path) -> Tuple[str, Dict[str, Any]]:
             "rag_enabled": False,
             "rag_available": False,
             "diting_rules_count": len(diting_rules.get('detection_rules', [])),
-            "rule_ids": [r.get('rule_id', '') for r in diting_rules.get('detection_rules', [])],
+            "rule_ids": rule_ids,
             "rule_hints": rule_hints,
             "rules_json_size": len(diting_rules_json),
             "prompt_dir": str(_prompt_manager.current_dir)
@@ -165,6 +179,7 @@ def _setup_llm_only_with_rag(rules_path: Path) -> Tuple[str, Dict[str, Any]]:
         
         # DITINGルールは空（LLM-onlyモードなので）
         _prompt_manager.set_diting_rules_json("")
+        _prompt_manager.set_rule_ids([])
         
         # システムプロンプトを取得
         system_prompt = _prompt_manager.get_system_prompt()
@@ -202,6 +217,7 @@ def _setup_llm_only_no_rag(rules_path: Path) -> Tuple[str, Dict[str, Any]]:
         
         # DITINGルールは空（LLM-onlyモードなので）
         _prompt_manager.set_diting_rules_json("")
+        _prompt_manager.set_rule_ids([])
         
         # システムプロンプトを取得
         system_prompt = _prompt_manager.get_system_prompt()
@@ -330,6 +346,7 @@ class PromptManager:
         # DITINGルールとヒントブロック
         self._diting_rules_json = ""
         self._rule_hints_block = ""
+        self._rule_ids: List[str] = []
         
         # 現在のディレクトリパス
         rag_subdir = "with_rag" if use_rag else "no_rag"
@@ -380,6 +397,23 @@ class PromptManager:
         self._rule_hints_block = text
         if text:
             print(f"[INFO] Rule hints block set ({len(text)} chars)")
+
+    def set_rule_ids(self, rule_ids: Optional[List[str]]):
+        """RULE_IDSプレースホルダー用のリストを設定"""
+        self._rule_ids = []
+        if rule_ids:
+            for rid in rule_ids:
+                if not rid:
+                    continue
+                rid = str(rid).strip()
+                if rid and rid not in self._rule_ids:
+                    self._rule_ids.append(rid)
+        if self._rule_ids:
+            print(f"[INFO] RULE_IDS set: {', '.join(self._rule_ids)}")
+
+    def get_rule_ids_placeholder(self) -> str:
+        """RULE_IDSプレースホルダー用文字列を取得"""
+        return _format_rule_ids(self._rule_ids)
     
     def load_prompt(self, filename: str) -> str:
         """
@@ -472,8 +506,21 @@ def _fill_template(template: str, **values) -> str:
     for key, value in values.items():
         placeholder = f"{{{key}}}"
         if placeholder in result:
-            result = result.replace(placeholder, str(value) if value is not None else "")
-    
+            if isinstance(value, (list, dict)):
+                replacement = json.dumps(value, ensure_ascii=False)
+            else:
+                replacement = str(value) if value is not None else ""
+            result = result.replace(placeholder, replacement)
+
+    # RULE_IDSプレースホルダーが残っていれば補完
+    if "{RULE_IDS}" in result:
+        rule_ids_value = values.get("RULE_IDS")
+        if rule_ids_value is None and _prompt_manager is not None:
+            rule_ids_value = _prompt_manager.get_rule_ids_placeholder()
+        if rule_ids_value is None:
+            rule_ids_value = _format_rule_ids(DEFAULT_RULE_IDS)
+        result = result.replace("{RULE_IDS}", str(rule_ids_value))
+
     return result
 
 
@@ -483,6 +530,27 @@ def _fill_template(template: str, **values) -> str:
 
 # グローバルインスタンス（デフォルト: hybrid/no_rag）
 _prompt_manager = None
+
+DEFAULT_RULE_IDS = [
+    "unencrypted_output",
+    "weak_input_validation",
+    "shared_memory_overwrite"
+]
+
+
+def _format_rule_ids(rule_ids: Optional[List[str]]) -> str:
+    """RULE_IDSプレースホルダー用の文字列を生成"""
+    cleaned: List[str] = []
+    if rule_ids:
+        for rid in rule_ids:
+            if not rid:
+                continue
+            rid = str(rid).strip()
+            if rid and rid not in cleaned:
+                cleaned.append(rid)
+    if not cleaned:
+        cleaned = DEFAULT_RULE_IDS
+    return "|".join(cleaned)
 
 
 def get_start_prompt(source_function: str, param_name: str, code: str, 
@@ -540,13 +608,34 @@ def get_middle_prompt(
     )
 
 
-def get_end_prompt() -> str:
+def get_end_prompt(
+    sink_function: str = "",
+    target_params: Optional[Any] = None,
+    target_sink_lines: Optional[Any] = None
+) -> str:
     """エンドプロンプトを生成"""
     global _prompt_manager
     if _prompt_manager is None:
         _prompt_manager = PromptManager(mode="hybrid", use_rag=False)
     
-    return _prompt_manager.load_prompt("taint_end.txt")
+    template = _prompt_manager.load_prompt("taint_end.txt")
+
+    sink_lines = target_sink_lines
+    if sink_lines is None:
+        sink_lines = []
+    elif isinstance(sink_lines, (int, str)):
+        sink_lines = [sink_lines]
+
+    params_value = target_params
+    if params_value is None:
+        params_value = []
+
+    return _fill_template(
+        template,
+        sink_function=sink_function or "unknown",
+        target_params=params_value,
+        target_sink_lines=sink_lines
+    )
 
 
 def set_analysis_mode(mode: str, use_rag: Optional[bool] = None):

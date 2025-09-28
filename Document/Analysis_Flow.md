@@ -1,266 +1,139 @@
-# フェーズ5: LLMベースのテイント解析システム
+# フェーズ5: `src/analyze_vulnerabilities` 実装ガイド
 
 ## 概要
 
-フェーズ5は、LLM（Large Language Model）を活用してTEE（Trusted Execution Environment）のソースコードに対するテイント解析を実行し、脆弱性を検出するシステムです。統合パーサーにより効率的な解析を実現し、チェック機能により高精度な脆弱性判定を行います。
+`src/analyze_vulnerabilities` は、TEE（Trusted Execution Environment）向けに設計された LLM 主導のテイント解析パイプラインです。フェーズ 1/2 で抽出したデータフローを入力として受け取り、LLM へのプロンプト生成・応答解析・最終判定・レポート生成までを一貫して行います。2025 年 9 月時点での実装では、Responses API/GPT-5 系モデルを前提に「単一 JSON 応答」を取り扱うアーキテクチャへ刷新されています。
 
 ### 主な特徴
-- **ハイブリッド解析**: LLM単体、DITING単体、またはハイブリッドモードでの解析が可能
-- **プレフィックスキャッシュ**: 解析済みの関数チェーンを再利用して高速化
-- **構造的リスク検出**: シンクに到達しない構造的な脆弱性も検出
-- **統合レポート**: 同一行の複数の問題を統合して報告
 
-## システムアーキテクチャ
+- **単一 JSON プロンプト**: START / MIDDLE / END すべての LLM プロンプトが 1 つの JSON を返すよう統一。冗長な改行制御や 2 行・3 行フォーマットは廃止済み。
+- **ルール ID の自動挿入**: `prompts` 層で CodeQL ルールから `RULE_IDS` を抽出し、プロンプト内に埋め込むことで LLM の出力分類を安定化。
+- **シンク行情報の挿入**: END プロンプトでは `sink_function` と `target_sink_lines` を明示的に埋め込み、行ごとの判定を JSON 構造で受け取る設計に変更。
+- **Responses API 対応パーサー**: `ResponseParser` が単一 JSON を直接パースし、足りないフィールドのみを個別リトライする仕組みに更新。
+- **会話キャッシュと再利用**: フロー単位で LLM 応答を保存し、未解析部分だけを追加で問い合わせるプレフィックスキャッシュを採用。
 
-```mermaid
-graph TB
-    A[入力ファイル] --> B[Prompt Manager]
-    B --> C[LLM Client]
-    C --> D[Response Parser]
-    D --> E[Flow Analyzer]
-    E --> F[Cache Manager]
-    F --> E
-    E --> G[Vulnerability Decision]
-    G --> H[JSON Reporter]
-    H --> I[Output Files]
-```
-
-## ディレクトリ構造
+## ディレクトリ構成
 
 ```
-/workspace/src/analyze_vulnerabilities/
-├── taint_analyzer.py           # メインエントリポイント
+src/analyze_vulnerabilities/
+├── taint_analyzer.py          # CLI エントリポイント
 ├── core/
-│   ├── engine.py               # 解析エンジン
-│   └── flow_analyzer.py        # フロー解析器
+│   ├── engine.py              # フローのバッチ解析制御
+│   └── flow_analyzer.py       # 単一チェーンの解析ロジック
 ├── parsing/
-│   └── response_parser.py      # LLMレスポンス解析
+│   └── response_parser.py     # LLM 応答の正規化・検証・再試行サポート
 ├── prompts/
-│   ├── code_extractor.py       # コード抽出
-│   └── prompt_manager.py       # プロンプト管理
+│   ├── code_extractor.py      # 呼び出しコンテキスト付きコード抽出（>>> を複数付与）
+│   └── prompts.py             # プロンプト生成・RULE_IDS 注入
 ├── llm/
-│   ├── openai_client.py        # OpenAI API
-│   └── conversation.py         # 会話コンテキスト管理
+│   └── conversation.py        # 会話履歴・トークン管理
 ├── cache/
-│   └── function_cache.py       # プレフィックスキャッシュ
-└── output/
-    ├── json_reporter.py        # JSON形式レポート生成
-    └── conversation_logger.py  # 会話履歴記録
+│   └── function_cache.py      # プレフィックスキャッシュ管理
+├── output/
+│   ├── conversation_logger.py # プロンプト/応答ログ
+│   └── json_reporter.py       # ta_vulnerabilities.json 生成
+└── optimization/（任意）      # TokenTrackingClient 等（存在する場合）
 ```
 
-## 主要機能
+## 解析フロー
 
-### 1. テイント解析
-- REE（Rich Execution Environment）から入力されるデータの追跡
-- 関数間のデータフロー解析
-- シンク関数への到達可能性判定
+1. **入力**: `taint_analyzer.py` が `--flows`/`--phase12` の JSON を読み込み、解析対象チェーンを組み立てる。
+2. **コード抽出 (`prompts/code_extractor.py`)**: 各関数について、呼び出し元での全ての呼び出し箇所を前後 2 行の文脈付きで抽出し、`
+   >>>` マーカーを付与した状態で LLM に提示する。
+3. **プロンプト生成 (`prompts/prompts.py`)**
+   - START / MIDDLE / END それぞれに合わせたテンプレートをロード。
+   - CodeQL ルールから抽出した `RULE_IDS` を `{RULE_IDS}` プレースホルダーへ注入。
+   - END プロンプトでは `sink_function`, `target_params`, `target_sink_lines` を確定値で埋め込み、行別判定を促す。
+4. **LLM 呼び出し (`core/flow_analyzer.py`)**
+   - 会話コンテキストを保持しつつ GPT-5 Responses API を呼び出す。リトライ時は完全履歴を添えて再要求。
+5. **応答解析 (`parsing/response_parser.py`)**
+   - `phase` に応じた必須フィールド（START/MIDDLE: `taint_analysis` 内の `function`, `tainted_vars`, `propagation`; END: `vulnerability_decision`, `evaluated_sink_lines` 等）を検証。
+   - 不足フィールドのみを追補する再試行プロンプトを自動生成。
+6. **最終判定**
+   - END 応答に含まれる `evaluated_sink_lines` と `vulnerability_decision` を統合し、脆弱な行があれば詳細 (`vulnerability_details`) を整備。
+   - `structural_risks` は START/MIDDLE で検出したものと END のものを合算。
+7. **出力 (`output/json_reporter.py`)**
+   - 行単位での脆弱性と構造的リスクを統合し、`ta_vulnerabilities.json` にまとめて保存。
+   - 解析統計／トークン使用量（TokenTrackingClient 使用時）も同時に出力。
 
-### 2. 脆弱性検出
-- **CWE-200**: 情報漏洩（Unencrypted Output）
-- **CWE-787**: バッファオーバーフロー（Out-of-bounds Write）
-- **CWE-20**: 入力検証不備（Improper Input Validation）
+## LLM プロンプトと応答スキーマ
 
-### 3. 構造的リスク検出
-- テイントされたループ境界
-- ポインタ演算によるリスク
-- サイズ計算の問題
-
-## 実行方法
-
-### 基本コマンド
-
-```bash
-python3 /workspace/src/analyze_vulnerabilities/taint_analyzer.py \
-  --flows <候補フローJSON> \
-  --phase12 <フェーズ1/2データJSON> \
-  --output <出力ファイルパス> \
-  [オプション]
-```
-
-### オプション
-
-| オプション | 説明 | デフォルト |
-|---------|------|----------|
-| `--mode` | 解析モード (llm/diting/hybrid) | hybrid |
-| `--rag` | RAG（Retrieval-Augmented Generation）を有効化 | 無効 |
-| `--no-cache` | キャッシュを無効化 | 有効 |
-| `--verbose` | 詳細ログ出力 | 無効 |
-| `--llm-provider` | LLMプロバイダー (openai/anthropic) | openai |
-
-### 実行例
-
-```bash
-# ハイブリッドモードで解析（デフォルト）
-python3 taint_analyzer.py \
-  --flows ta_candidate_flows.json \
-  --phase12 ta_phase12.json \
-  --output ta_vulnerabilities.json \
-  --verbose
-
-# LLMのみで解析
-python3 taint_analyzer.py \
-  --flows ta_candidate_flows.json \
-  --phase12 ta_phase12.json \
-  --output ta_vulnerabilities.json \
-  --mode llm
-
-# キャッシュをクリアして実行
-python3 taint_analyzer.py \
-  --flows ta_candidate_flows.json \
-  --phase12 ta_phase12.json \
-  --output ta_vulnerabilities.json \
-  --no-cache
-```
-
-## 各コア機能の詳細
-
-### 1. フロー解析プロセス
-
-```mermaid
-flowchart TD
-    Start[フロー解析開始] --> CheckCache[キャッシュチェック]
-    CheckCache -->|ヒット| RestoreContext[コンテキスト復元]
-    CheckCache -->|ミス| InitContext[コンテキスト初期化]
-    RestoreContext --> AnalyzeRemaining[残り関数を解析]
-    InitContext --> AnalyzeAll[全関数を解析]
-    AnalyzeAll --> SaveCache[キャッシュ保存]
-    AnalyzeRemaining --> SaveCache
-    SaveCache --> FinalDecision[最終判定]
-    FinalDecision --> BuildResult[結果構築]
-    BuildResult --> End[解析完了]
-```
-
-### 2. 関数解析プロセス
-
-```mermaid
-flowchart TD
-    Start[関数解析開始] --> ExtractCode[コード抽出]
-    ExtractCode --> GeneratePrompt[プロンプト生成]
-    GeneratePrompt --> CallLLM[LLM呼び出し]
-    CallLLM --> ParseResponse[レスポンス解析]
-    ParseResponse -->|成功| UpdateTaint[テイント状態更新]
-    ParseResponse -->|失敗| RetryPrompt[リトライプロンプト生成]
-    RetryPrompt --> CallLLM
-    UpdateTaint --> CheckStructural[構造的リスク確認]
-    CheckStructural --> SaveAnalysis[解析結果保存]
-    SaveAnalysis --> End[関数解析完了]
-```
-
-### 3. レスポンス解析プロセス
-
-```mermaid
-flowchart TD
-    Start[レスポンス受信] --> Normalize[正規化処理]
-    Normalize --> ExtractJSON[JSON抽出]
-    ExtractJSON -->|単一行| ParseSingle[単一行解析]
-    ExtractJSON -->|複数行| ParseMulti[複数行解析]
-    ParseSingle --> ValidateFields[必須フィールド検証]
-    ParseMulti --> ValidateFields
-    ValidateFields -->|完全| Success[解析成功]
-    ValidateFields -->|不足| CheckCritical[重要度チェック]
-    CheckCritical -->|重要| RequestRetry[リトライ要求]
-    CheckCritical -->|非重要| Success
-    Success --> End[解析完了]
-```
-
-### 4. 脆弱性判定プロセス
-
-```mermaid
-flowchart TD
-    Start[判定開始] --> CollectTaint[テイント情報収集]
-    CollectTaint --> CheckSink[シンク到達確認]
-    CheckSink -->|到達| CheckMitigation[緩和策確認]
-    CheckSink -->|未到達| CheckStructural[構造的リスク確認]
-    CheckMitigation -->|なし| VulnFound[脆弱性検出]
-    CheckMitigation -->|あり| SafeResult[安全と判定]
-    CheckStructural -->|あり| RiskFound[リスク検出]
-    CheckStructural -->|なし| SafeResult
-    VulnFound --> GenerateDetails[詳細情報生成]
-    RiskFound --> GenerateDetails
-    GenerateDetails --> End[判定完了]
-```
-
-### 5. キャッシュ管理プロセス
-
-```mermaid
-flowchart TD
-    Start[キャッシュ処理] --> GenerateKey[キー生成]
-    GenerateKey --> SearchPrefix[プレフィックス検索]
-    SearchPrefix -->|発見| LoadData[データ読み込み]
-    SearchPrefix -->|なし| ReturnEmpty[空を返す]
-    LoadData --> ValidateData[データ検証]
-    ValidateData -->|有効| ReturnCached[キャッシュ返却]
-    ValidateData -->|無効| ReturnEmpty
-    ReturnCached --> End[処理完了]
-    ReturnEmpty --> End
-```
-
-## 出力形式
-
-### ta_vulnerabilities.json
+### START / MIDDLE 共通 JSON
 
 ```json
 {
-  "metadata": {
-    "analysis_date": "2025-09-17T14:49:50",
-    "mode": "hybrid",
-    "llm_provider": "openai"
+  "phase": "start|middle",
+  "taint_analysis": {
+    "function": "...",
+    "tainted_vars": ["..."],
+    "propagation": [{"lhs": "...", "rhs": "...", "site": "file:line"}],
+    "sanitizers": [{"kind": "bounds_check", "site": "file:line", "evidence": "..."}],
+    "taint_blocked": false
   },
-  "statistics": {
-    "total_flows_analyzed": 3,
-    "vulnerabilities_found": 1,
-    "structural_risks_found": 4,
-    "execution_time_seconds": 333.67
-  },
-  "vulnerabilities": [
-    {
-      "vulnerability_id": "VULN-0001",
-      "file": "test.c",
-      "line": 64,
-      "vulnerability_types": ["CWE-200"],
-      "severity": "high",
-      "descriptions": ["..."]
-    }
-  ],
   "structural_risks": [
     {
-      "finding_id": "RISK-0001",
-      "file": "test.c",
-      "line": 115,
-      "rules": ["weak_input_validation"],
-      "descriptions": ["..."]
+      "file": "...",
+      "line": 0,
+      "function": "...",
+      "rule": "unencrypted_output|weak_input_validation|shared_memory_overwrite|other",
+      "why": "短い理由",
+      "sink_function": "=|array_write|外部関数名|unknown",
+      "rule_matches": {"rule_id": ["..."], "others": ["..."]},
+      "code_excerpt": "..."
     }
   ]
 }
 ```
 
-## トラブルシューティング
+### END JSON
 
-### LLMレスポンスが不安定な場合
-- `--no-cache`オプションでキャッシュをクリア
-- `--verbose`で詳細ログを確認
-- temperature設定を0に調整
+```json
+{
+  "phase": "end",
+  "sink_targets": {"function": "TEE_MemMove", "lines": [64, 67]},
+  "evaluated_sink_lines": [
+    {"line": 64, "function": "test", "sink_function": "TEE_MemMove", "status": "safe", "why": "len sanitized", "rule_id": "weak_input_validation"}
+  ],
+  "vulnerability_decision": {"found": false},
+  "vulnerability_details": {
+    "why_no_vulnerability": "...",
+    "effective_sanitizers": [...],
+    "argument_safety": [...],
+    "residual_risks": [],
+    "confidence_factors": {"positive_indicators": ["..."], "negative_indicators": [], "confidence_level": "medium"},
+    "decision_rationale": "..."
+  },
+  "structural_risks": []
+}
+```
 
-### structural_risksが検出されない場合
-- プロンプトファイルの確認
-- レスポンスパーサーのデバッグモード有効化
-- 会話履歴の確認（conversations.jsonl）
+## キャッシュとリトライの挙動
 
-### パフォーマンスが遅い場合
-- キャッシュが有効か確認
-- バッチ処理の検討
-- APIレート制限の確認
+- **プレフィックスキャッシュ (`cache/function_cache.py`)**: フローの先頭から解析済み関数を保存し、同じ冒頭を持つチェーンが現れた際に会話履歴と解析結果を再利用。
+- **リトライハンドリング**: `LLMRetryHandler` がレスポンス解析結果を参照し、欠落フィールドのみを埋める補助プロンプトを送信。成功すれば再解析せずに統合。
 
-## 開発者向け情報
+## 実行例
 
-### 新しい脆弱性パターンの追加
+```bash
+python3 src/analyze_vulnerabilities/taint_analyzer.py \
+  --flows benchmark/random/ta/results/ta_candidate_flows.json \
+  --phase12 benchmark/random/ta/results/ta_phase12.json \
+  --output benchmark/random/ta/results/ta_vulnerabilities.json \
+  --verbose
+```
 
-1. `codeql_rules.json`に新しいルールを追加
-2. プロンプトテンプレートを更新
-3. パーサーの検証ルールを追加
+- `--no-rag` で RAG を無効化。
+- `--provider claude` のようにプロバイダーを切り替えると `UnifiedLLMClient` が該当プロバイダー設定にスイッチ。
+- `--max-retries 5` で LLM リトライ回数を制御。
 
-### LLMプロバイダーの追加
+## sink 特定との連携
 
-1. `llm/`ディレクトリに新しいクライアントを実装
-2. `LLMClientInterface`を継承
-3. `prompt_manager.py`で設定を追加
+フェーズ 5 で使用する `{RULE_IDS}` や `{sink_function}` は、フェーズ 3（`src/identify_sinks`）で収集されたシンク候補情報が基礎となります。`code_extractor.py` の呼び出し行ハイライティングや、単一 JSON 応答を扱う `ResponseParser` のリファクタリングにより、フェーズ 3 → フェーズ 5 間のデータ整合性が保たれるようになっています。
+
+## 参考
+
+- `Document/Phase3_SinkDetection.md`: フェーズ 3 のシンク抽出設計
+- `src/identify_sinks/identify_sinks.py`: シンク分類の最新実装（単一 JSON 出力）
+- `README.md`: プロジェクト全体のセットアップや実行手順
+
+このドキュメントは 2025-09-28 時点の実装内容に基づいています。コード変更時は本ファイルも併せて更新してください。

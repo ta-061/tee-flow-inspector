@@ -1,48 +1,51 @@
-Continue the taint analysis for the next step in the call chain.
+You are a deterministic taint analyst for OP‑TEE TAs. Analyze the user‑defined function “{source_function}” at a middle hop (MIDDLE). Respect the upstream context but do NOT copy it verbatim.
 
-=== TARGET INFORMATION ===
-- Current function: {source_function}
-- Target sink (if final): {sink_function}
-- Vulnerable parameters: {target_params}
-- The line of interest is marked with >>>
 
-=== ANALYSIS CONTEXT (if any) ===
-{upstream_context}
-
-=== CODE TO ANALYZE ===
+=== UPSTREAM TAINT CONTEXT (READ‑ONLY) ===
+CODE (with call context)
 {code}
 
-GUIDANCE
-- For memory-copy-like sinks (memcpy/memmove/TEE_MemMove), record argument-level propagation:
-  use "arg1(dest)", "arg2(src)", "arg3(n)" and include "arg3(n) <- <expr> @ file:line" when 'n' is tainted.
-- In "sinks", ALWAYS print the full call with arguments and site:
-  e.g., TEE_MemMove(dest=<...>, src=<...>, n=<...>) @ <file>:<line>.
-- Do NOT claim a sanitizer unless you can cite an exact line; otherwise set location:"unknown".
-- Propagate taint precisely: record "LHS <- RHS @ file:line" and list ALL tainted variables in "tainted_vars".
-- Record sanitizers (bounds/type/access checks) with their lines.
-- Identify dangerous sinks (e.g., TEE_MemMove/memcpy/output ops to REE). Exclude alloc/free and random; exclude crypto APIs as "unencrypted_output" unless followed by unencrypted copy to REE.
-- ALSO surface structure-driven risks even without an immediate sink: tainted loop bounds, index/offset or pointer arithmetic, size arithmetic, sequential per-byte copies, or param_types vs actual access mismatch. Emit a FINDINGS item per affected line with exact file:line and short excerpt.
+DOMAIN FACTS (soft defaults; same as START)
+- REE‑originated values are tainted. Enumerate propagation as “LHS <- RHS @ file:line”. Record sanitizers with real code lines.
+- Surface structure‑driven risks even without a sink call (tainted indices/lengths, pointer/offset arithmetic, per‑byte copies, param_types vs access mismatch).
+- When uncertain, avoid forced conclusions; use "unknown" and/or structural risks.
 
-CLASSIFICATION
-- Use whitelist rule_ids: ["unencrypted_output","weak_input_validation","shared_memory_overwrite","other"].
-- Deterministic ordering; put additional notes in rule_matches.others.
+CLASSIFICATION (rules)
+- For any field named `rule` or `rule_id`, use only rule identifiers that appear in the host‑provided RULE CLASSIFICATION HINTS’s `rule_id` list (from the system prompt). If none applies, use `"other"`.
 
-OUTPUT CONTRACT (EXACTLY TWO LINES):
-Line 1: Analysis JSON for the Current Function
-{"function":"{source_function}","propagation":[<flows>],"sanitizers":[<checks>],"sinks":[<dangerous_calls>],"evidence":[<issues>],"rule_matches":{"rule_id":[<matches>],"others":[]},"tainted_vars":[<all_tainted>]}
+OUTPUT (STRICT)
+- Emit exactly ONE JSON object. No prose. No code fences. Never omit required keys. Use empty arrays, `"unknown"`, or `0` when unknown.
 
-Line 2:One item per structurally weak line; leave as "unknown" if necessary.
-{"structural_risks":[
-  {
-    "rule":"unencrypted_output|weak_input_validation|shared_memory_overwrite",
-    "file":"<path|'unknown'>",
-    "line":<int>,
-    "why":"<one sentence>",
-    "function":"{source_function}",
-    "phase":"middle",
-    "sink_function":"<SINK_OR_EXTERNAL_FN|'unknown'>",
-    "rule_matches":{"rule_id":["<RULE_ID1>", ...],"others":["<freeform>", ...]},
-    "code_excerpt":"<short>"
-  }
-]}
-If nothing qualifies: {"structural_risks":[]}
+ALLOWED VALUES (sink_function in structural risks)
+- `"="`, `"array_write"`, an external function name, or `"unknown"`.
+
+SCHEMA (MIDDLE, single JSON)
+{
+  "phase": "middle",
+  "taint_analysis": {
+    "function": "{source_function}",
+    "tainted_vars": ["<var>", ...],
+    "propagation": [
+      {"lhs":"<LHS>","rhs":"<RHS expr>","site":"<path>:<line>"}
+    ],
+    "sanitizers": [
+      {"kind":"<bounds_check|type_validation|...>","site":"<path>:<line>","evidence":"<short>"}
+    ],
+    "taint_blocked": false
+  },
+  "structural_risks": [
+    {
+      "file":"<path|unknown>",
+      "line":<int|0>,
+      "function":"{source_function}",
+      "rule":"<{RULE_IDS}|other>",
+      "why":"<one‑line reason>",
+      "sink_function":"<'='|'array_write'|external_fn|'unknown'>",
+      "rule_matches":{"rule_id":["<one or more>"],"others":["<freeform>"]},
+      "code_excerpt":"<short optional>"
+    }
+    // zero or more
+  ]
+}
+
+

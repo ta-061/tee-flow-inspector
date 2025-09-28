@@ -4,7 +4,7 @@
 関数チェーンの解析と脆弱性判定
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from ..parsing.response_parser import AnalysisPhase, ParseResult
 from ..llm.conversation import ConversationContext
 from ..prompts import get_start_prompt, get_middle_prompt, get_end_prompt
@@ -357,7 +357,23 @@ class FlowAnalyzer:
                             chain: List[str], vd: Dict,
                             conversation: ConversationContext) -> Dict:
         """最終的な脆弱性判定（全履歴付き）"""
-        end_prompt = get_end_prompt()
+        sink_lines = vd.get("line")
+        if isinstance(sink_lines, (int, str)):
+            sink_lines_list: List[Any] = [sink_lines]
+        elif sink_lines is None:
+            sink_lines_list = []
+        else:
+            sink_lines_list = sink_lines
+
+        target_params = vd.get("param_indices") or []
+        if not target_params and vd.get("param_index") is not None:
+            target_params = [vd.get("param_index")]
+
+        end_prompt = get_end_prompt(
+            sink_function=vd.get("sink", "unknown"),
+            target_params=target_params,
+            target_sink_lines=sink_lines_list
+        )
         
         if self.verbose:
             print(f"\n[FINAL DECISION] Preparing to analyze vulnerability for chain with {len(chain)} functions")

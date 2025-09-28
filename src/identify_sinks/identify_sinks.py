@@ -11,7 +11,7 @@ import re
 import argparse
 import time  # 時間計測用に追加
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # LLMエラー処理モジュールをインポート
@@ -145,6 +145,61 @@ def extract_called_functions(code: str) -> list[str]:
     return list(set(re.findall(pattern, code)))
 
 
+RULE_ID_NORMALIZATION = {
+    "uo": "unencrypted_output",
+    "unencrypted_output": "unencrypted_output",
+    "weak_input_validation": "weak_input_validation",
+    "wiv": "weak_input_validation",
+    "shared_memory_overwrite": "shared_memory_overwrite",
+    "smo": "shared_memory_overwrite",
+    "other": "other"
+}
+
+ALLOWED_CONFIDENCE = {"high", "medium", "low"}
+
+
+def _extract_json_payload(response: str) -> Optional[Dict[str, Any]]:
+    """応答文字列から最初のJSONオブジェクトを抽出"""
+    if not response:
+        return None
+
+    candidate = response.strip()
+    candidate = re.sub(r'^```(?:json)?\s*', '', candidate)
+    candidate = re.sub(r'```\s*$', '', candidate)
+
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        pass
+
+    match = re.search(r'\{.*\}', response, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return None
+
+    return None
+
+
+def _normalize_rule_id(value: Any) -> str:
+    if isinstance(value, list) and value:
+        # 新プロンプトでは配列で返す想定のため最初の値を利用
+        value = value[0]
+
+    if not isinstance(value, str):
+        return "other"
+
+    normalized = RULE_ID_NORMALIZATION.get(value.strip().lower())
+    return normalized or "other"
+
+
+def _normalize_confidence(value: Any) -> str:
+    if isinstance(value, str) and value.lower() in ALLOWED_CONFIDENCE:
+        return value.lower()
+    return "medium"
+
+
 def analyze_external_function_as_sink(client, func_name: str, log_file: Path, 
                                      use_rag: bool = True, project_name: str = "",
                                      retry_handler: LLMRetryHandler = None) -> tuple[list[dict], float]:
@@ -204,75 +259,60 @@ def analyze_external_function_as_sink(client, func_name: str, log_file: Path,
     if not resp:
         return [], time.time() - start_time
     
-    sinks = []
-    confidence = "medium"  # デフォルト値
-    
-    # まずSINKS_JSON形式を試す
-    json_match = re.search(r'SINKS_JSON\s*=\s*({.*?})\s*(?:Block 2|PAREN_LIST|$)', resp, re.DOTALL)
-    if json_match:
-        try:
-            # JSON文字列を取得してクリーンアップ
-            json_str = json_match.group(1)
-            # コメントや余分な改行を削除
-            json_str = re.sub(r'//.*$', '', json_str, flags=re.MULTILINE)
-            json_str = re.sub(r'/\*.*?\*/', '', json_str, flags=re.DOTALL)
-            
-            json_data = json.loads(json_str)
-            
-            # confidence を取得
-            confidence = json_data.get("confidence", "medium")
-            
-            # sinks配列から情報を取得
-            if "sinks" in json_data and isinstance(json_data["sinks"], list):
-                for sink in json_data["sinks"]:
-                    # rule_idの処理（配列の場合は最初の要素、文字列の場合はそのまま）
-                    rule_id = sink.get("rule_id", "other")
-                    if isinstance(rule_id, list) and rule_id:
-                        rule_id = rule_id[0]
-                    
-                    # rule_idの正規化（UO|WIV|SMO|other形式をフルネームに変換）
-                    rule_id_map = {
-                        "UO": "unencrypted_output",
-                        "WIV": "weak_input_validation",
-                        "SMO": "shared_memory_overwrite",
-                        "other": "other"
-                    }
-                    rule_id = rule_id_map.get(rule_id, rule_id)
-                    
-                    sinks.append({
-                        "kind": "function",
-                        "name": sink.get("name", func_name),
-                        "param_index": sink.get("param_index", 0),
-                        "rule_id": rule_id,
-                        "reason": sink.get("reason", ""),
-                        "confidence": confidence
-                    })
-                
-                # JSON解析成功
-                print(f"  → JSON format parsed: {len(sinks)} sinks found (confidence: {confidence})")
-                elapsed_time = time.time() - start_time
-                return sinks, elapsed_time
-                
-        except (json.JSONDecodeError, KeyError) as e:
-            print(f"[WARN] Failed to parse SINKS_JSON for {func_name}: {e}")
-            print(f"[INFO] Falling back to PAREN_LIST format...")
-    
-    # JSONが失敗または存在しない場合、PAREN_LIST形式を試す
-    if "PAREN_LIST=none" in resp:
-        print(f"  → No sinks identified (PAREN_LIST=none)")
+    sinks: List[Dict[str, Any]] = []
+    confidence = "medium"
+
+    parsed = _extract_json_payload(resp)
+    if parsed:
+        if parsed.get("function") and parsed["function"] != func_name:
+            print(f"[WARN] Response function mismatch: expected {func_name}, got {parsed.get('function')}")
+
+        confidence = _normalize_confidence(parsed.get("confidence"))
+
+        sink_entries = parsed.get("sinks", [])
+        if isinstance(sink_entries, list):
+            for sink in sink_entries:
+                if not isinstance(sink, dict):
+                    continue
+                param_index = sink.get("param_index")
+                if not isinstance(param_index, int):
+                    continue
+
+                reason = sink.get("reason", "")
+                if isinstance(reason, str):
+                    reason = reason.strip()
+                else:
+                    reason = ""
+
+                rule_id = _normalize_rule_id(sink.get("rule_id"))
+
+                sinks.append({
+                    "kind": "function",
+                    "name": sink.get("name", func_name),
+                    "param_index": param_index,
+                    "rule_id": rule_id,
+                    "reason": reason,
+                    "confidence": confidence
+                })
+
+        non_sinks = parsed.get("non_sinks", [])
+        if non_sinks:
+            print(f"  → Non-sink parameters noted: {non_sinks}")
+
+        print(f"  → JSON parsed: {len(sinks)} sinks found (confidence: {confidence})")
         elapsed_time = time.time() - start_time
-        return [], elapsed_time
-    
-    # レスポンスをクリーニング
+        return sinks, elapsed_time
+
+    # JSONとしてパースできない場合は互換のため旧形式を簡易サポート
+    print("[WARN] Failed to parse JSON sink response; falling back to legacy parser")
+
     clean = re.sub(r"^```(?:json)?\s*|\s*```$", "", resp.strip(), flags=re.MULTILINE)
-    
-    # パターンマッチングでシンク情報を抽出（PAREN_LIST形式）
     pattern = re.compile(
         r"\(\s*function:\s*([A-Za-z_][A-Za-z0-9_]*)\s*;\s*"
         r"param_index:\s*(\d+)\s*;\s*"
         r"reason:\s*([^)]*?)\s*\)"
     )
-    
+
     matches = pattern.findall(clean)
     for fn, idx, reason in matches:
         if fn == func_name:
@@ -280,16 +320,16 @@ def analyze_external_function_as_sink(client, func_name: str, log_file: Path,
                 "kind": "function",
                 "name": fn,
                 "param_index": int(idx),
-                "rule_id": "other",  # PAREN_LIST形式にはrule_idがないのでデフォルト値
+                "rule_id": "other",
                 "reason": reason,
-                "confidence": "low"  # PAREN_LIST形式の場合は信頼度を低めに設定
+                "confidence": "low"
             })
-    
+
     if sinks:
-        print(f"  → PAREN_LIST format parsed: {len(sinks)} sinks found")
+        print(f"  → Legacy format parsed: {len(sinks)} sinks found")
     else:
-        print(f"  → No sinks found in response")
-    
+        print("  → No sinks found in response")
+
     elapsed_time = time.time() - start_time
     return sinks, elapsed_time
 

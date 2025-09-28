@@ -385,270 +385,44 @@ graph TB
     style SaveResults fill:#c8e6c9
 ```
 
-# Phase 5: テイント解析と脆弱性検査
-
-## 1. システム全体フロー
+## Phase 5: LLMテイント解析
 
 ```mermaid
-flowchart TD
-    Start[開始] --> LoadConfig[設定ファイル読込]
-    LoadConfig --> ParseArgs[コマンドライン引数解析]
-    ParseArgs --> LoadInputs[入力ファイル読込]
-    LoadInputs --> LoadFlows[ta_candidate_flows.json読込]
-    LoadFlows --> LoadPhase12[ta_phase12.json読込]
-    LoadPhase12 --> InitLLM[LLMクライアント初期化]
-    InitLLM --> SelectProvider[プロバイダー選択]
-    SelectProvider --> InitEngine[解析エンジン初期化]
-    InitEngine --> InitCache[キャッシュ初期化]
-    InitCache --> InitLogger[ロガー初期化]
-    InitLogger --> ProcessFlows[フロー処理開始]
-    
-    ProcessFlows --> NextFlow[次のフロー取得]
-    NextFlow -->|あり| AnalyzeFlow[単一フロー解析]
-    NextFlow -->|なし| MergeResults[結果統合]
-    
-    AnalyzeFlow --> CacheCheck[キャッシュ確認]
-    CacheCheck -->|完全ヒット| LoadCached[キャッシュ読込]
-    CacheCheck -->|部分ヒット| RestorePartial[部分復元]
-    CacheCheck -->|ミス| StartFresh[新規開始]
-    
-    LoadCached --> NextFlow
-    RestorePartial --> AnalyzeRemaining[残り解析]
-    StartFresh --> AnalyzeAll[全関数解析]
-    AnalyzeRemaining --> SaveCache[キャッシュ保存]
-    AnalyzeAll --> SaveCache
-    SaveCache --> NextFlow
-    
-    MergeResults --> ConsolidateVulns[脆弱性統合]
-    ConsolidateVulns --> ConsolidateRisks[リスク統合]
-    ConsolidateRisks --> GenerateStats[統計生成]
-    GenerateStats --> CreateReport[レポート作成]
-    CreateReport --> SaveJSON[JSON保存]
-    SaveJSON --> SaveLogs[ログ保存]
-    SaveLogs --> End[終了]
+graph LR
+    start_start -- flows / phase12 --> load_inputs
+    load_inputs -- code extractor --> extract_code
+    extract_code -- call sites marked >>> --> build_prompts
+
+    build_prompts -- RULE_IDS & sink metadata --> prompt_start
+    build_prompts -- RULE_IDS & sink metadata --> prompt_middle
+    build_prompts -- RULE_IDS & sink metadata --> prompt_end
+
+    prompt_start -- LLM request --> llm_start
+    prompt_middle -- per function --> llm_middle
+    prompt_end -- LLM request --> llm_end
+
+    llm_start -- JSON response --> parse_start
+    llm_middle -- JSON response --> parse_middle
+    llm_end -- JSON response --> parse_end
+
+    parse_start -- update taint state --> flow_state
+    parse_middle -- update taint state --> flow_state
+    flow_state -- collect structural risks --> risks_pool
+
+    parse_end -- evaluated sink lines / decision --> final_decision
+    final_decision -- merge risks --> combine_results
+    risks_pool -- merge --> combine_results
+
+    combine_results -- ta_vulnerabilities.json --> output_json
+    combine_results -- prompts_and_responses.txt --> output_logs
 ```
 
-## 2. 各機能の詳細なフロー
-
-### 2.1 単一フロー解析処理
-
-```mermaid
-flowchart TD
-    StartFlow[フロー解析開始] --> ExtractChain[関数チェーン抽出]
-    ExtractChain --> ExtractVD[脆弱性記述子抽出]
-    ExtractVD --> InitConversation[会話コンテキスト初期化]
-    InitConversation --> CheckPrefix[プレフィックス確認]
-    
-    CheckPrefix --> CalcLength[キャッシュ長計算]
-    CalcLength --> LoadCachedAnalyses[キャッシュ済解析読込]
-    LoadCachedAnalyses --> RestoreExchanges[会話履歴復元]
-    RestoreExchanges --> RestoreTaint[テイント状態復元]
-    RestoreTaint --> SetPosition[解析位置設定]
-    
-    SetPosition --> NextFunction[次の関数取得]
-    NextFunction -->|あり| DeterminePhase[フェーズ判定]
-    NextFunction -->|なし| FinalDecision[最終判定]
-    
-    DeterminePhase -->|position=0| PhaseStart[STARTフェーズ]
-    DeterminePhase -->|position>0| PhaseMiddle[MIDDLEフェーズ]
-    
-    PhaseStart --> ExtractCode[関数コード抽出]
-    PhaseMiddle --> ExtractWithContext[呼出元付コード抽出]
-    
-    ExtractCode --> GeneratePrompt[プロンプト生成]
-    ExtractWithContext --> GeneratePrompt
-    
-    GeneratePrompt --> AddTaintContext[テイントコンテキスト追加]
-    AddTaintContext --> AddSinkInfo[シンク情報追加]
-    AddSinkInfo --> CallLLM[LLM呼び出し]
-    
-    CallLLM --> ParseResponse[レスポンス解析]
-    ParseResponse -->|成功| ExtractTaint[テイント情報抽出]
-    ParseResponse -->|失敗| CheckRetryCount[リトライ回数確認]
-    
-    CheckRetryCount -->|上限未満| GenerateRetryPrompt[リトライプロンプト生成]
-    CheckRetryCount -->|上限到達| UsePartialResult[部分結果使用]
-    GenerateRetryPrompt --> CallLLM
-    
-    ExtractTaint --> ExtractRisks[構造的リスク抽出]
-    ExtractRisks --> UpdateState[状態更新]
-    UsePartialResult --> UpdateState
-    UpdateState --> SaveIntermediate[中間結果保存]
-    SaveIntermediate --> NextFunction
-    
-    FinalDecision --> BuildFullHistory[全履歴構築]
-    BuildFullHistory --> GenerateEndPrompt[終了プロンプト生成]
-    GenerateEndPrompt --> CallFinalLLM[最終LLM呼び出し]
-    CallFinalLLM --> ParseFinalResponse[最終レスポンス解析]
-    ParseFinalResponse --> ExtractDecision[判定抽出]
-    ExtractDecision --> ExtractDetails[詳細抽出]
-    ExtractDetails --> BuildResult[結果構築]
-    BuildResult --> EndFlow[フロー解析終了]
-```
-
-### 2.2 LLMレスポンス解析処理
-
-```mermaid
-flowchart TD
-    StartParse[解析開始] --> CheckPhase[フェーズ確認]
-    CheckPhase -->|START/MIDDLE| Parse2Line[2行形式解析]
-    CheckPhase -->|END| Parse3Line[3行形式解析]
-    
-    Parse2Line --> NormalizeResponse[レスポンス正規化]
-    Parse3Line --> NormalizeResponse
-    
-    NormalizeResponse --> RemovePrefixes[プレフィックス除去]
-    RemovePrefixes --> RemoveCodeBlocks[コードブロック除去]
-    RemoveCodeBlocks --> SplitLines[行分割]
-    
-    SplitLines --> ExtractSingleLine[単一行JSON抽出]
-    ExtractSingleLine -->|不足| ExtractMultiLine[複数行JSON抽出]
-    ExtractSingleLine -->|十分| ValidateJSON[JSON検証]
-    
-    ExtractMultiLine --> TrackBraces[中括弧追跡]
-    TrackBraces --> BuildJSON[JSONオブジェクト構築]
-    BuildJSON --> CompactJSON[1行に圧縮]
-    CompactJSON --> ValidateJSON
-    
-    ValidateJSON --> ParseLine1[1行目解析]
-    ParseLine1 --> ExtractFunction[関数名抽出]
-    ExtractFunction --> ExtractTaintedVars[テイント変数抽出]
-    ExtractTaintedVars --> ExtractPropagation[伝播情報抽出]
-    ExtractPropagation --> ExtractSinks[シンク抽出]
-    
-    ExtractSinks --> ParseLine2[2行目解析]
-    ParseLine2 --> CheckStructuralRisks[構造的リスク確認]
-    CheckStructuralRisks -->|dictタイプ| ExtractFromDict[辞書から抽出]
-    CheckStructuralRisks -->|listタイプ| UseAsList[リストとして使用]
-    CheckStructuralRisks -->|なし| SetEmptyRisks[空配列設定]
-    
-    ExtractFromDict --> ValidateFields[必須フィールド検証]
-    UseAsList --> ValidateFields
-    SetEmptyRisks --> ValidateFields
-    
-    ValidateFields -->|完全| SuccessParse[解析成功]
-    ValidateFields -->|不足| CheckCriticality[重要度確認]
-    
-    CheckCriticality -->|重要| RequestRetry[リトライ要求]
-    CheckCriticality -->|非重要| AcceptPartial[部分受入]
-    
-    RequestRetry --> GenerateMissingPrompt[不足プロンプト生成]
-    AcceptPartial --> SuccessParse
-    GenerateMissingPrompt --> EndParse[解析終了]
-    SuccessParse --> EndParse
-```
-
-### 2.3 キャッシュ管理処理
-
-```mermaid
-flowchart TD
-    StartCache[キャッシュ処理開始] --> GenerateKey[キー生成]
-    GenerateKey --> HashChain[チェーンハッシュ化]
-    HashChain --> AddVDInfo[VD情報追加]
-    AddVDInfo --> CreateFullKey[完全キー作成]
-    
-    CreateFullKey --> SearchExact[完全一致検索]
-    SearchExact -->|ヒット| LoadExact[完全データ読込]
-    SearchExact -->|ミス| SearchPrefix[プレフィックス検索]
-    
-    SearchPrefix --> SortByLength[長さ順ソート]
-    SortByLength --> FindLongest[最長一致検索]
-    FindLongest -->|発見| LoadPartial[部分データ読込]
-    FindLongest -->|なし| ReturnEmpty[空返却]
-    
-    LoadExact --> ValidateExpiry[有効期限確認]
-    LoadPartial --> ValidateExpiry
-    
-    ValidateExpiry -->|有効| DeserializeData[データ復元]
-    ValidateExpiry -->|期限切れ| InvalidateCache[キャッシュ無効化]
-    InvalidateCache --> ReturnEmpty
-    
-    DeserializeData --> RestoreAnalyses[解析結果復元]
-    RestoreAnalyses --> RestoreConversation[会話状態復元]
-    RestoreConversation --> RestoreTaintState[テイント状態復元]
-    RestoreTaintState --> RestoreFindings[findings復元]
-    RestoreFindings --> ReturnCached[キャッシュ返却]
-    
-    ReturnEmpty --> EndCache[キャッシュ処理終了]
-    ReturnCached --> EndCache
-```
-
-### 2.4 脆弱性統合処理
-
-```mermaid
-flowchart TD
-    StartConsolidate[統合開始] --> GroupByLocation[位置でグループ化]
-    GroupByLocation --> ExtractFile[ファイル名抽出]
-    ExtractFile --> ExtractLine[行番号抽出]
-    ExtractLine --> CreateKey[統合キー作成]
-    
-    CreateKey --> CheckExisting[既存エントリ確認]
-    CheckExisting -->|新規| CreateNewEntry[新規エントリ作成]
-    CheckExisting -->|既存| MergeEntry[エントリマージ]
-    
-    CreateNewEntry --> InitArrayFields[配列フィールド初期化]
-    InitArrayFields --> SetPrimaryValues[主要値設定]
-    SetPrimaryValues --> AddToMap[マップに追加]
-    
-    MergeEntry --> MergeFunctions[関数名マージ]
-    MergeFunctions --> MergeSinkFunctions[シンク関数マージ]
-    MergeSinkFunctions --> MergeVulnTypes[脆弱性タイプマージ]
-    MergeVulnTypes --> MergeRuleIDs[ルールIDマージ]
-    MergeRuleIDs --> MergeDescriptions[説明マージ]
-    MergeDescriptions --> MergeChains[チェーンマージ]
-    MergeChains --> UpdateSeverity[重要度更新]
-    UpdateSeverity --> UpdateConfidence[信頼度更新]
-    UpdateConfidence --> AddToMap
-    
-    AddToMap --> NextVuln[次の脆弱性]
-    NextVuln -->|あり| GroupByLocation
-    NextVuln -->|なし| SortResults[結果ソート]
-    
-    SortResults --> AssignIDs[ID割当]
-    AssignIDs --> CalculateStats[統計計算]
-    CalculateStats --> AddConsolidationInfo[統合情報追加]
-    AddConsolidationInfo --> EndConsolidate[統合終了]
-```
-
-### 2.5 構造的リスク検出処理
-
-```mermaid
-flowchart TD
-    StartRisk[リスク検出開始] --> CheckLoopBounds[ループ境界確認]
-    CheckLoopBounds --> IsTaintedBound[テイント境界判定]
-    IsTaintedBound -->|yes| RecordLoopRisk[ループリスク記録]
-    IsTaintedBound -->|no| CheckArrayAccess[配列アクセス確認]
-    
-    RecordLoopRisk --> CheckArrayAccess
-    CheckArrayAccess --> IsTaintedIndex[テイントインデックス判定]
-    IsTaintedIndex -->|yes| RecordArrayRisk[配列リスク記録]
-    IsTaintedIndex -->|no| CheckPointerArith[ポインタ演算確認]
-    
-    RecordArrayRisk --> CheckPointerArith
-    CheckPointerArith --> IsTaintedOffset[テイントオフセット判定]
-    IsTaintedOffset -->|yes| RecordPointerRisk[ポインタリスク記録]
-    IsTaintedOffset -->|no| CheckSizeCalc[サイズ計算確認]
-    
-    RecordPointerRisk --> CheckSizeCalc
-    CheckSizeCalc --> IsTaintedSize[テイントサイズ判定]
-    IsTaintedSize -->|yes| RecordSizeRisk[サイズリスク記録]
-    IsTaintedSize -->|no| CheckDirectWrite[直接書込確認]
-    
-    RecordSizeRisk --> CheckDirectWrite
-    CheckDirectWrite --> IsTaintedDest[テイント先判定]
-    IsTaintedDest -->|yes| RecordWriteRisk[書込リスク記録]
-    IsTaintedDest -->|no| CheckParamMismatch[パラメータ不一致確認]
-    
-    RecordWriteRisk --> CheckParamMismatch
-    CheckParamMismatch --> IsTypeMismatch[型不一致判定]
-    IsTypeMismatch -->|yes| RecordMismatchRisk[不一致リスク記録]
-    IsTypeMismatch -->|no| CompileRisks[リスク編集]
-    
-    RecordMismatchRisk --> CompileRisks
-    CompileRisks --> AssignRiskIDs[リスクID割当]
-    AssignRiskIDs --> EndRisk[リスク検出終了]
-```
-
+- \`extract_code\`: \`prompts/code_extractor.py\` が関数本体と全呼び出し箇所を抽出し、該当行に >>> を付与します。
+- \`build_prompts\`: \`prompts/prompts.py\` が START/MIDDLE/END 用テンプレートに RULE_IDS と sink 情報 (\`target_sink_lines\`, \`target_params\`, \`sink_function\`) を注入します。
+- \`llm_*\`: GPT-5 Responses API を呼び出し、単一 JSON 応答を受け取ります。
+- \`parse_*\`: \`parsing/response_parser.py\` が JSON を検証し、欠落フィールドがあれば必要部分のみ再試行します。
+- \`final_decision\`: \`core/flow_analyzer.py\` が END 応答から行別判定と脆弱性詳細を生成し、構造的リスクと統合します。
+- \`combine_results\`: \`output/json_reporter.py\` が最終 JSON (\`ta_vulnerabilities.json\`) とログを保存します。
 ## Phase 6: HTMLレポート生成
 
 ### 処理フロー

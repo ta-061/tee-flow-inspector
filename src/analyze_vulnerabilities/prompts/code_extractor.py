@@ -49,9 +49,9 @@ class CodeExtractor:
         # 呼び出し位置を検出
         call_context = ""
         if caller_func and caller_func in self.user_functions:
-            call_info = self._find_function_call(caller_func, func_name)
-            if call_info:
-                call_context = self._format_call_context(call_info, caller_func)
+            call_infos = self._find_function_calls(caller_func, func_name)
+            if call_infos:
+                call_context = self._format_call_contexts(call_infos, caller_func)
         
         # 通常の関数コード抽出
         if func_name in self.user_functions:
@@ -106,17 +106,17 @@ class CodeExtractor:
         """
         return self.extract_function_code_with_context(func_name, None, vd)
     
-    def _find_function_call(self, caller_func_name: str, callee_func_name: str) -> Optional[Dict]:
-        """
-        caller_func内でcallee_funcを呼び出している位置を検出
-        """
+    def _find_function_calls(self, caller_func_name: str, callee_func_name: str) -> List[Dict]:
+        """caller_func内でcallee_funcを呼び出している位置をすべて検出"""
+        results: List[Dict] = []
+
         caller = self.user_functions[caller_func_name]
         file_path = Path(caller["file"])
         if not file_path.is_absolute():
             file_path = self.project_root / file_path
         
         if not file_path.exists():
-            return None
+            return results
         
         lines = file_path.read_text(encoding="utf-8").splitlines()
         start = caller["line"] - 1
@@ -133,48 +133,50 @@ class CodeExtractor:
             line = lines[i]
             for pattern in patterns:
                 if re.search(pattern, line):
-                    return {
+                    results.append({
                         "file": caller["file"],
                         "line": i + 1,
                         "caller": caller_func_name,
-                        "line_content": line.strip()
-                    }
-        
-        return None
+                        "line_content": line.rstrip("\n")
+                    })
+                    break
+
+        return results
     
-    def _format_call_context(self, call_info: Dict, caller_func: str) -> str:
-        """
-        呼び出しコンテキストをフォーマット
-        """
-        file_path = Path(call_info["file"])
+    def _format_call_contexts(self, call_infos: List[Dict], caller_func: str) -> str:
+        """複数の呼び出しコンテキストをフォーマット"""
+        if not call_infos:
+            return ""
+
+        file_path = Path(call_infos[0]["file"])
         if not file_path.is_absolute():
             file_path = self.project_root / file_path
-        
+
         if not file_path.exists():
-            return f"=== CALL CONTEXT ===\nCalled from {caller_func} at line {call_info['line']}"
-        
+            lines_str = ", ".join(str(info["line"]) for info in call_infos)
+            return f"=== CALL CONTEXT ===\nCalled from {caller_func} at lines [{lines_str}]"
+
         lines = file_path.read_text(encoding="utf-8").splitlines()
-        call_line = call_info["line"] - 1
-        
-        # コンテキスト範囲（前後2行）
-        start = max(0, call_line - 2)
-        end = min(len(lines), call_line + 3)
-        
+        line_numbers = sorted({info["line"] for info in call_infos})
+
         context_lines = [
-            f"=== CALL CONTEXT ===",
-            f"Called from {caller_func} at line {call_info['line']}:"
+            "=== CALL CONTEXT ===",
+            f"Called from {caller_func} at lines {line_numbers}:"
         ]
-        
-        for i in range(start, end):
-            # コメントを除去
-            clean_line = self._strip_comments(lines[i])
-            # 呼び出し行には>>>を付ける
-            prefix = ">>> " if i == call_line else "    "
-            line_num = i + 1
-            context_lines.append(f"{line_num}: {prefix}{clean_line}")
-        
+
+        for idx, info in enumerate(call_infos, start=1):
+            call_line = info["line"] - 1
+            start = max(0, call_line - 2)
+            end = min(len(lines), call_line + 3)
+
+            context_lines.append(f"-- Call #{idx} at line {info['line']} --")
+            for i in range(start, end):
+                clean_line = self._strip_comments(lines[i])
+                prefix = ">>> " if i == call_line else "    "
+                context_lines.append(f"{i + 1}: {prefix}{clean_line}")
+
         return "\n".join(context_lines)
-    
+
     @lru_cache(maxsize=128)
     def _extract_raw_code(self, func_tuple: tuple) -> Tuple[List[str], int]:
         """
