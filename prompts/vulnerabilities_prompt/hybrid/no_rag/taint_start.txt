@@ -8,6 +8,9 @@ DOMAIN FACTS (soft defaults; do not overfit)
 - Structural risks must be surfaced even if no external sink call is present yet (e.g., tainted loop bounds/index/size arithmetic, pointer/offset arithmetic, per‑byte copies like buf[i]=x, param_types vs actual access mismatch).
 - TEE_Malloc/Free are NOT sinks. Random bytes from TEE_GenerateRandom are NON‑sensitive by default, unless names/comments/context indicate secrecy. Crypto APIs are excluded for “unencrypted_output” unless there is a later non‑crypto copy into REE buffers.
 - When uncertain, do NOT force a conclusion; prefer "unknown" fields and/or a structural risk with a one‑line why.
+- **Explicit structural patterning (record as risks):**
+    - **Per‑byte/loop copies** (e.g., `dst[i] = src[i]`) and **direct array writes** must be emitted in `structural_risks` with `rule: "weak_input_validation"` and `sink_function: "array_write"` if **i/length** depends on **tainted REE input** and no bounds checks are evident at or before the write line.
+    - For memcpy/memmove‑like **user wrappers** (e.g., helper functions calling `TEE_MemMove`), still record the callee line if reachable and annotate destination provenance (`REE‑visible|TEE‑private|unknown`).
 
 CLASSIFICATION (rules)
 - For any field named `rule` or `rule_id`, use only rule identifiers that appear in the host‑provided RULE CLASSIFICATION HINTS’s `rule_id` list (from the system prompt). If none applies, use `"other"`. Do not invent new rule names.

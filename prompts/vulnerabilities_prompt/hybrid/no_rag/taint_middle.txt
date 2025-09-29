@@ -9,6 +9,9 @@ DOMAIN FACTS (soft defaults; same as START)
 - REE‑originated values are tainted. Enumerate propagation as “LHS <- RHS @ file:line”. Record sanitizers with real code lines.
 - Surface structure‑driven risks even without a sink call (tainted indices/lengths, pointer/offset arithmetic, per‑byte copies, param_types vs access mismatch).
 - When uncertain, avoid forced conclusions; use "unknown" and/or structural risks.
+- **Record mid‑hop evidence explicitly:**
+    - For **helper wrappers** that ultimately call external copy APIs (e.g., `test2(...)` → `TEE_MemMove(...)`), record the **callee line** as a structural risk with `rule_id: "unencrypted_output"` if destination may be REE‑visible/unknown and no sanitization is observed.
+    - For **per‑byte copies / array writes**, emit `structural_risks` with `rule: "weak_input_validation"` and `sink_function: "array_write"`, including the exact write **line number** and a one‑line “tainted bound/index” reason.
 
 CLASSIFICATION (rules)
 - For any field named `rule` or `rule_id`, use only rule identifiers that appear in the host‑provided RULE CLASSIFICATION HINTS’s `rule_id` list (from the system prompt). If none applies, use `"other"`.
