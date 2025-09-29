@@ -1,0 +1,929 @@
+{
+  "analysis_date": "2025-09-29T02:47:17.386313",
+  "analysis_time_seconds": 85.7577612400055,
+  "analysis_time_formatted": "1.4 minutes",
+  "llm_provider": "openai",
+  "analysis_mode": "hybrid",
+  "rag_enabled": false,
+  "statistics": {
+    "total_flows_analyzed": 3,
+    "flows_with_vulnerabilities": 3,
+    "total_vulnerability_lines": 6,
+    "total_structural_risk_lines": 10,
+    "total_detections_before_consolidation": 24,
+    "total_lines_after_consolidation": 16,
+    "consolidation_rate": "33.3%",
+    "severity_distribution": {
+      "critical": 0,
+      "high": 1,
+      "medium": 5,
+      "low": 0
+    },
+    "cwe_distribution": {
+      "CWE-200": 1,
+      "Information disclosure via unencrypted memory copy": 1,
+      "Information disclosure via unencrypted data movement": 4
+    },
+    "rule_distribution": {
+      "unencrypted_output": 8,
+      "weak_input_validation": 3,
+      "other": 7
+    },
+    "execution_time_seconds": 85.7577612400055,
+    "llm_calls": 10,
+    "cache_hits": 2,
+    "cache_partial_hits": 2,
+    "cache_misses": 1,
+    "cache_hit_rate": "66.7%",
+    "token_usage": {},
+    "retries": 0,
+    "retry_successes": 0
+  },
+  "total_vulnerability_lines": 6,
+  "vulnerabilities": [
+    {
+      "vulnerability_id": "VULN-0001",
+      "file": "/workspace/benchmark/random/ta/random_example_ta.c",
+      "line": 64,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "medium",
+      "confidence_level": "medium",
+      "primary_vulnerability_type": "CWE-200",
+      "functions": [
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "CWE-200"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "Direct copy of tainted input into destination without sanitization"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "random_number_generate",
+          "test",
+          "test2",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "src tainted (REE-originated) from prior parameters",
+          "propagation_path": [
+            "src -> dst @ /workspace/benchmark/random/ta/random_example_ta.c:64"
+          ],
+          "sink": "dst receives unfiltered tainted data via TEE_MemMove"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            " tainted data copied to REE-visible memory without sanitization"
+          ],
+          "attack_scenario": "tainted content copied into a destination buffer reachable by REE-visible space",
+          "impact": "information disclosure or data corruption depending on destination semantics"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "encryption_at_rest_or_transfer",
+          "location": "test2:64",
+          "recommendation": "avoid copying tainted data to REE-visible buffers without sealing"
+        }
+      ],
+      "decision_rationales": [
+        "Direct tainted data movement into a potentially REE-visible region without sanitization constitutes a definite unencrypted copy at the sink line"
+      ],
+      "severity_distribution": {
+        "medium": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0002",
+      "file": "/workspace/benchmark/random/ta/random_example_ta.c",
+      "line": 67,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "Information disclosure via unencrypted memory copy",
+      "functions": [
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "Information disclosure via unencrypted memory copy"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "Taunted source into REE-visible memory without sanitization"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "random_number_generate",
+          "test",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "src tainted from REE input in test context",
+          "propagation_path": [
+            "src (test call) -> strlen(src) + 1 length -> TEE_MemMove(dest, src, ...)"
+          ],
+          "sink": "dest buffer (REE-visible) via TEE_MemMove"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "dest is REE-visible and has enough space for strlen(src) + 1",
+            "src contains sensitive/secret data (unspecified)"
+          ],
+          "attack_scenario": "Leaking contents of src into dest that is accessible from REE",
+          "impact": "Possible disclosure of secret-like REE data to REE-visible memory"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "encryption_or_sanitization",
+          "location": "test function line 67",
+          "recommendation": "Ensure data copied to REE-visible buffers is encrypted or redact sensitive content before copy"
+        },
+        {
+          "type": "bounds_check",
+          "location": "test function line 67",
+          "recommendation": "Validate length against dest capacity before copying"
+        }
+      ],
+      "decision_rationales": [
+        "The sole target sink at line 67 copies tainted data into a destination without any sanitization or encryption step, constituting an unencrypted output risk."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0003",
+      "file": "/workspace/benchmark/random/ta/random_example_ta.c",
+      "line": 101,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "medium",
+      "confidence_level": "medium",
+      "primary_vulnerability_type": "Information disclosure via unencrypted data movement",
+      "functions": [
+        "random_number_generate"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "Information disclosure via unencrypted data movement"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "TAINTED data moved into REE-visible buffer without encryption/sanitization"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "random_number_generate",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-originated values (param buffers) tainted by parameter passing",
+          "propagation_path": [
+            "buf <- TEE_GenerateRandom(...)",
+            "params[0].memref.buffer <- buf  @ line 101",
+            "params[2].memref.buffer <- buf  @ line 102",
+            "params[2].memref.buffer <- key  @ line 109",
+            "params[2].memref.buffer <- &secret_like @ line 112"
+          ],
+          "sink": "TEE_MemMove into REE-visible buffers"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "TA accesses input parameters tainted from REE",
+            "Generated data or secrets are copied into REE-visible buffers"
+          ],
+          "attack_scenario": "Attacker gaining read access to REE-visible buffers reveals random bytes or secrets through subsequent REE interactions",
+          "impact": "Potential leakage of random data or secret-like data to the REE; broader trust boundary erosion"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "encryption or in-place sanitization before copy",
+          "location": "random_number_generate: lines 101-112",
+          "recommendation": "Ensure buffers destined for REE are zeroed or encrypted, or avoid copying sensitive-like data to REE-visible memory"
+        },
+        {
+          "type": "bounds/consistency checks",
+          "location": "related to param sizes",
+          "recommendation": "Validate memref.size against actual allocations before Copy"
+        }
+      ],
+      "decision_rationales": [
+        "Each identified sink line moves data into REE-visible memory without a sanitization step; taint originates from REE inputs and/or generated data, satisfying unencrypted output pattern for multiple lines."
+      ],
+      "severity_distribution": {
+        "medium": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0004",
+      "file": "/workspace/benchmark/random/ta/random_example_ta.c",
+      "line": 102,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "medium",
+      "confidence_level": "medium",
+      "primary_vulnerability_type": "Information disclosure via unencrypted data movement",
+      "functions": [
+        "random_number_generate"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "Information disclosure via unencrypted data movement"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "TAINTED data moved into REE-visible buffer from same source as line 101"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "random_number_generate",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-originated values (param buffers) tainted by parameter passing",
+          "propagation_path": [
+            "buf <- TEE_GenerateRandom(...)",
+            "params[0].memref.buffer <- buf  @ line 101",
+            "params[2].memref.buffer <- buf  @ line 102",
+            "params[2].memref.buffer <- key  @ line 109",
+            "params[2].memref.buffer <- &secret_like @ line 112"
+          ],
+          "sink": "TEE_MemMove into REE-visible buffers"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "TA accesses input parameters tainted from REE",
+            "Generated data or secrets are copied into REE-visible buffers"
+          ],
+          "attack_scenario": "Attacker gaining read access to REE-visible buffers reveals random bytes or secrets through subsequent REE interactions",
+          "impact": "Potential leakage of random data or secret-like data to the REE; broader trust boundary erosion"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "encryption or in-place sanitization before copy",
+          "location": "random_number_generate: lines 101-112",
+          "recommendation": "Ensure buffers destined for REE are zeroed or encrypted, or avoid copying sensitive-like data to REE-visible memory"
+        },
+        {
+          "type": "bounds/consistency checks",
+          "location": "related to param sizes",
+          "recommendation": "Validate memref.size against actual allocations before Copy"
+        }
+      ],
+      "decision_rationales": [
+        "Each identified sink line moves data into REE-visible memory without a sanitization step; taint originates from REE inputs and/or generated data, satisfying unencrypted output pattern for multiple lines."
+      ],
+      "severity_distribution": {
+        "medium": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0005",
+      "file": "/workspace/benchmark/random/ta/random_example_ta.c",
+      "line": 109,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "medium",
+      "confidence_level": "medium",
+      "primary_vulnerability_type": "Information disclosure via unencrypted data movement",
+      "functions": [
+        "random_number_generate"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "Information disclosure via unencrypted data movement"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "Copying a secret-like key into a REE-visible buffer"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "random_number_generate",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-originated values (param buffers) tainted by parameter passing",
+          "propagation_path": [
+            "buf <- TEE_GenerateRandom(...)",
+            "params[0].memref.buffer <- buf  @ line 101",
+            "params[2].memref.buffer <- buf  @ line 102",
+            "params[2].memref.buffer <- key  @ line 109",
+            "params[2].memref.buffer <- &secret_like @ line 112"
+          ],
+          "sink": "TEE_MemMove into REE-visible buffers"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "TA accesses input parameters tainted from REE",
+            "Generated data or secrets are copied into REE-visible buffers"
+          ],
+          "attack_scenario": "Attacker gaining read access to REE-visible buffers reveals random bytes or secrets through subsequent REE interactions",
+          "impact": "Potential leakage of random data or secret-like data to the REE; broader trust boundary erosion"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "encryption or in-place sanitization before copy",
+          "location": "random_number_generate: lines 101-112",
+          "recommendation": "Ensure buffers destined for REE are zeroed or encrypted, or avoid copying sensitive-like data to REE-visible memory"
+        },
+        {
+          "type": "bounds/consistency checks",
+          "location": "related to param sizes",
+          "recommendation": "Validate memref.size against actual allocations before Copy"
+        }
+      ],
+      "decision_rationales": [
+        "Each identified sink line moves data into REE-visible memory without a sanitization step; taint originates from REE inputs and/or generated data, satisfying unencrypted output pattern for multiple lines."
+      ],
+      "severity_distribution": {
+        "medium": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0006",
+      "file": "/workspace/benchmark/random/ta/random_example_ta.c",
+      "line": 112,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "medium",
+      "confidence_level": "medium",
+      "primary_vulnerability_type": "Information disclosure via unencrypted data movement",
+      "functions": [
+        "random_number_generate"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "Information disclosure via unencrypted data movement"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "Copying a 32-bit secret_like value into a REE-visible buffer"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "random_number_generate",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-originated values (param buffers) tainted by parameter passing",
+          "propagation_path": [
+            "buf <- TEE_GenerateRandom(...)",
+            "params[0].memref.buffer <- buf  @ line 101",
+            "params[2].memref.buffer <- buf  @ line 102",
+            "params[2].memref.buffer <- key  @ line 109",
+            "params[2].memref.buffer <- &secret_like @ line 112"
+          ],
+          "sink": "TEE_MemMove into REE-visible buffers"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "TA accesses input parameters tainted from REE",
+            "Generated data or secrets are copied into REE-visible buffers"
+          ],
+          "attack_scenario": "Attacker gaining read access to REE-visible buffers reveals random bytes or secrets through subsequent REE interactions",
+          "impact": "Potential leakage of random data or secret-like data to the REE; broader trust boundary erosion"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "encryption or in-place sanitization before copy",
+          "location": "random_number_generate: lines 101-112",
+          "recommendation": "Ensure buffers destined for REE are zeroed or encrypted, or avoid copying sensitive-like data to REE-visible memory"
+        },
+        {
+          "type": "bounds/consistency checks",
+          "location": "related to param sizes",
+          "recommendation": "Validate memref.size against actual allocations before Copy"
+        }
+      ],
+      "decision_rationales": [
+        "Each identified sink line moves data into REE-visible memory without a sanitization step; taint originates from REE inputs and/or generated data, satisfying unencrypted output pattern for multiple lines."
+      ],
+      "severity_distribution": {
+        "medium": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    }
+  ],
+  "total_finding_lines": 10,
+  "structural_risks": [
+    {
+      "finding_id": "RISK-0001",
+      "file": "/workspace/benchmark/random/ta/random_example_ta.c",
+      "line": 64,
+      "consolidated": true,
+      "detection_count": 3,
+      "primary_rule": "unencrypted_output",
+      "functions": [
+        "test2",
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "external_fn",
+        "unknown",
+        "array_write",
+        "'unknown'"
+      ],
+      "rules": [
+        "unencrypted_output",
+        "weak_input_validation",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Copying tainted data from src to dst via a memory move; potential REE-visible leakage",
+        "Copying tainted data into a destination via a memory move; potential REE-visible leakage",
+        "Move length n derived from tainted input; potential bounds/index issue if not validated",
+        "External copy of tainted data without explicit bounds/checks in this line"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(dst, src, n);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "unencrypted_output",
+          "weak_input_validation"
+        ],
+        "others": []
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1,
+        "weak_input_validation": 1,
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0002",
+      "file": "/workspace/benchmark/random/ta/random_example_ta.c",
+      "line": 67,
+      "consolidated": true,
+      "detection_count": 3,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "test",
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "array_write",
+        "TEE_MemMove",
+        "external_fn",
+        "unknown"
+      ],
+      "rules": [
+        "weak_input_validation",
+        "unencrypted_output",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Per-byte copy from tainted input into destination using strlen(src)+1 length, potential bounds/index issue",
+        "Copying tainted data into a destination via a memory move; potential REE-visible leakage",
+        "Per-byte copy from tainted input with length derived from strlen(src)+1; potential bounds/taint propagation issues",
+        "Per-byte copy from tainted source with variable length; potential bounds risk",
+        "Copy could leak tainted data to REE-visible memory without encryption"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(dest, src, strlen(src) + 1);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation",
+          "unencrypted_output"
+        ],
+        "others": []
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1,
+        "weak_input_validation": 1,
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0003",
+      "file": "/workspace/benchmark/random/ta/random_example_ta.c",
+      "line": 68,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "unencrypted_output",
+      "functions": [
+        "test"
+      ],
+      "sink_functions": [
+        "external_fn"
+      ],
+      "rules": [
+        "unencrypted_output"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Destination/source involved in second call to test2 which may copy tainted data into REE-visible buffers"
+      ],
+      "code_excerpts": [
+        "test2(dest, src, strlen(src) + 1);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "unencrypted_output"
+        ],
+        "others": []
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0004",
+      "file": "/workspace/benchmark/random/ta/random_example_ta.c",
+      "line": 70,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "unencrypted_output",
+      "functions": [
+        "test"
+      ],
+      "sink_functions": [
+        "external_fn"
+      ],
+      "rules": [
+        "unencrypted_output"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Copy of tainted source into destination via test2 with sizeof(val) = 4; potential leakage"
+      ],
+      "code_excerpts": [
+        "test2(dest, &val, sizeof(val));"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "unencrypted_output"
+        ],
+        "others": []
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0005",
+      "file": "/workspace/benchmark/random/ta/random_example_ta.c",
+      "line": 101,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "unencrypted_output",
+      "functions": [
+        "random_number_generate",
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "unknown",
+        "external_fn",
+        "TEE_MemMove"
+      ],
+      "rules": [
+        "unencrypted_output",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Copying generated data into a REE-visible buffer without explicit encryption/annotation",
+        "Copying random buffer to REE-visible memory; potential leakage of internal data",
+        "Copying tainted/generated data into a REE-visible buffer without explicit encryption/annotation",
+        "Copy into REE-visible memory without sanitization"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "unencrypted_output"
+        ],
+        "others": []
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1,
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0006",
+      "file": "/workspace/benchmark/random/ta/random_example_ta.c",
+      "line": 102,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "unencrypted_output",
+      "functions": [
+        "random_number_generate",
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "unknown",
+        "external_fn",
+        "TEE_MemMove"
+      ],
+      "rules": [
+        "unencrypted_output",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Copying generated data into a second REE-visible buffer without explicit encryption/annotation",
+        "Copying generated/random data to REE-visible memory; potential leakage",
+        "Copying generated data into a REE-visible buffer without explicit encryption/annotation",
+        "Copy into REE-visible memory without sanitization"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(params[2].memref.buffer, buf, params[2].memref.size);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "unencrypted_output"
+        ],
+        "others": []
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1,
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0007",
+      "file": "/workspace/benchmark/random/ta/random_example_ta.c",
+      "line": 109,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "unencrypted_output",
+      "functions": [
+        "random_number_generate",
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "unknown",
+        "external_fn",
+        "TEE_MemMove"
+      ],
+      "rules": [
+        "unencrypted_output",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Copying a private key into a REE-visible buffer",
+        "Copying key data into a REE-visible buffer; potential leakage of secret-like data",
+        "Copy of secret-like key into REE-visible buffer"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(params[2].memref.buffer, key, params[2].memref.size);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "unencrypted_output"
+        ],
+        "others": []
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1,
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0008",
+      "file": "/workspace/benchmark/random/ta/random_example_ta.c",
+      "line": 112,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "unencrypted_output",
+      "functions": [
+        "random_number_generate",
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "unknown",
+        "external_fn",
+        "TEE_MemMove"
+      ],
+      "rules": [
+        "unencrypted_output",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Copying a constant into a REE-visible buffer (potential leakage of secret-like data)",
+        "Copying a 4-byte secret_like value into REE-visible memory",
+        "Copying a secret_like value into a REE-visible buffer",
+        "Copy of secret_like into REE-visible buffer"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(params[2].memref.buffer, &secret_like, sizeof(secret_like));"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "unencrypted_output"
+        ],
+        "others": []
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1,
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0009",
+      "file": "/workspace/benchmark/random/ta/random_example_ta.c",
+      "line": 115,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "random_number_generate"
+      ],
+      "sink_functions": [
+        "array_write"
+      ],
+      "rules": [
+        "weak_input_validation"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Per-byte copy from tainted input using a tainted length; potential bounds issue into local stack array"
+      ],
+      "code_excerpts": [
+        "str_ov[i] = (char)p2[i];"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation"
+        ],
+        "others": []
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0010",
+      "file": "/workspace/benchmark/random/ta/random_example_ta.c",
+      "line": 131,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TA_InvokeCommandEntryPoint"
+      ],
+      "sink_functions": [
+        "unknown"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "cmd_id tainted input determines control flow; no bounds checks on cmd_id before switch"
+      ],
+      "code_excerpts": [
+        "return random_number_generate(param_types, params);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": []
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    }
+  ]
+}

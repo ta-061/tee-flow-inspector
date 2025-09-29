@@ -30,7 +30,6 @@
 
 #include <random_ta.h>
 #include <string.h>
-void test(char *dest, char *src);
 TEE_Result TA_CreateEntryPoint(void)
 {
 	return TEE_SUCCESS;
@@ -61,17 +60,24 @@ void TA_CloseSessionEntryPoint(void __maybe_unused *sess_ctx)
 {
 	(void)&sess_ctx;
 }
-void test(char *dest, char *src){
-	TEE_MemMove(dest, src, strlen(src));
+static void test2(void *dst, const void *src, size_t n) {
+  TEE_MemMove(dst, src, n); //←ここはDITINGでは不検出　暗号化不備での出力
+}
+static void test(char *dest, char *src) {
+	TEE_MemMove(dest, src, strlen(src) + 1);
+	test2(dest, src, strlen(src) + 1);
+  	uint32_t val = 2;
+  	test2(dest, &val, sizeof(val));
 }
 
 static TEE_Result random_number_generate(uint32_t param_types,
 	TEE_Param params[4])
 {
 	uint32_t exp_param_types =
-				TEE_PARAM_TYPES(TEE_PARAM_TYPE_MEMREF_OUTPUT,
-						TEE_PARAM_TYPE_NONE,
-						TEE_PARAM_TYPE_NONE,
+				TEE_PARAM_TYPES(
+						TEE_PARAM_TYPE_MEMREF_OUTPUT,
+						TEE_PARAM_TYPE_MEMREF_OUTPUT,
+						TEE_PARAM_TYPE_MEMREF_OUTPUT,
 						TEE_PARAM_TYPE_NONE);
 	void *buf = NULL;
 
@@ -92,13 +98,24 @@ static TEE_Result random_number_generate(uint32_t param_types,
 	 * @ randomBufferLen : Byte length of requested random data
 	 */
 	TEE_GenerateRandom(buf, params[0].memref.size);
-	TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size);
-	TEE_Free(buf);
+	TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size); //←ここはDITING検出可能だった
+	TEE_MemMove(params[2].memref.buffer, buf, params[2].memref.size); //←ここはDITING検出可能だった
 
-	// char key[] = "my_secret_key";
-	// char *str = TEE_Malloc(strlen(key)+1, 0);
-	// test(str, key);
-	// test(params[1].memref.buffer, key);
+
+	char key[] = "THIS_IS_A_VERY_SECRET_KEY";
+	char *dyn = TEE_Malloc(strlen(key) + 1, 0);
+	test(dyn,key);
+	test((char *)params[1].memref.buffer,key);
+	TEE_MemMove(params[2].memref.buffer, key, params[2].memref.size);
+
+	uint32_t secret_like=0xDEADBEEF;
+	TEE_MemMove(params[2].memref.buffer, &secret_like, sizeof(secret_like)); //←ここはDITING検出可能だった
+	char str_ov[1024] = {0};
+	const uint8_t *p2 = (const uint8_t *)params[2].memref.buffer;
+	for(uint32_t i = 0; i < params[2].memref.size; i++) {
+		str_ov[i] = (char)p2[i]; //←ここはDITINGでは不検出　手書きコピーによるオーバーフローの危険性
+	}
+	TEE_Free(buf);
 
 	return TEE_SUCCESS;
 }

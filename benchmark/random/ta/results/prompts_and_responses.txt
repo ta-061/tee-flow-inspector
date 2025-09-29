@@ -1,0 +1,382 @@
+# External Function: DMSG
+## Prompt:
+You are a deterministic TEE sink classifier for OP-TEE TAs.
+
+GOAL
+Given an external API function "DMSG", decide whether any of its parameters can serve as sinks if tainted data reaches them, strictly under these partitioning-related patterns (whitelist):
+- "unencrypted_output" (UO): data written to Normal World–visible buffers without encryption.
+- "weak_input_validation" (WIV): size/length/pointer parameters that can lead to OOB/corruption if not properly checked.
+- "shared_memory_overwrite" (SMO): operations that may write into shared (REE-controlled) memory or use it unsafely.
+
+TEE POLICY (must follow; align with Phase 5 system)
+- Alloc/free (e.g., TEE_Malloc/TEE_Free) are NOT sinks.
+- Random bytes from TEE_GenerateRandom are NON-sensitive and do not make a sink.
+- Crypto APIs (TEE_*Cipher*, TEE_AE*, TEE_Asymmetric*) are EXCLUDED as sinks for "unencrypted_output"; only a subsequent unencrypted copy into a Normal World buffer (e.g., snprintf/TEE_MemMove into a memref) can be UO.
+- Debug prints/macros TRACE_* / trace_printf are excluded as sinks.
+
+SINK CANDIDATE HINTS (non-exhaustive, policy-compliant)
+- Memory/output copies: memcpy, memmove, strcpy/strncpy, snprintf, vsnprintf, TEE_MemMove, TEE_MemFill, TEE_WriteObjectData
+- Object/storage writes may be sinks if they end up REE-visible.
+- Prefer the destination (param_index 0) and the length (param_index 2) as primary risk carriers for copy APIs.
+
+CLASSIFICATION & FIELDS
+- Use rule_id ONLY from: ["unencrypted_output","weak_input_validation","shared_memory_overwrite","other"].
+- Parameter indices are 0-based (dest=0, src=1, size=2 for memcpy-like).
+- Reasons must be short and specific (<= 20 words).
+
+STRICT OUTPUT — EXACTLY ONE BLOCK (pure JSON, no prose, no code fences)
+{
+  "function":"DMSG",
+  "sinks":[
+    {"name":"DMSG","param_index":INT,"rule_id":["UO|WIV|SMO|other"],"reason":"..."}
+  ],
+  "non_sinks":["alloc/free/random/crypto-only if applicable"],
+  "confidence":"high|medium|low"
+}
+
+Notes:
+- If no sink parameters identified: produce `"sinks":[]`.
+- Never list TEE_Malloc/TEE_Free/TEE_GenerateRandom/TRACE_* as sinks (enforce the policy above).
+## Response:
+{
+  "function":"DMSG",
+  "sinks":[],
+  "non_sinks":["alloc/free (TEE_Malloc/TEE_Free) not sinks","TEE_GenerateRandom non-sensitive","crypto APIs excluded for UO","TRACE_* / trace_printf excluded"],
+  "confidence":"low"
+}
+
+# External Function: IMSG
+## Prompt:
+You are a deterministic TEE sink classifier for OP-TEE TAs.
+
+GOAL
+Given an external API function "IMSG", decide whether any of its parameters can serve as sinks if tainted data reaches them, strictly under these partitioning-related patterns (whitelist):
+- "unencrypted_output" (UO): data written to Normal World–visible buffers without encryption.
+- "weak_input_validation" (WIV): size/length/pointer parameters that can lead to OOB/corruption if not properly checked.
+- "shared_memory_overwrite" (SMO): operations that may write into shared (REE-controlled) memory or use it unsafely.
+
+TEE POLICY (must follow; align with Phase 5 system)
+- Alloc/free (e.g., TEE_Malloc/TEE_Free) are NOT sinks.
+- Random bytes from TEE_GenerateRandom are NON-sensitive and do not make a sink.
+- Crypto APIs (TEE_*Cipher*, TEE_AE*, TEE_Asymmetric*) are EXCLUDED as sinks for "unencrypted_output"; only a subsequent unencrypted copy into a Normal World buffer (e.g., snprintf/TEE_MemMove into a memref) can be UO.
+- Debug prints/macros TRACE_* / trace_printf are excluded as sinks.
+
+SINK CANDIDATE HINTS (non-exhaustive, policy-compliant)
+- Memory/output copies: memcpy, memmove, strcpy/strncpy, snprintf, vsnprintf, TEE_MemMove, TEE_MemFill, TEE_WriteObjectData
+- Object/storage writes may be sinks if they end up REE-visible.
+- Prefer the destination (param_index 0) and the length (param_index 2) as primary risk carriers for copy APIs.
+
+CLASSIFICATION & FIELDS
+- Use rule_id ONLY from: ["unencrypted_output","weak_input_validation","shared_memory_overwrite","other"].
+- Parameter indices are 0-based (dest=0, src=1, size=2 for memcpy-like).
+- Reasons must be short and specific (<= 20 words).
+
+STRICT OUTPUT — EXACTLY ONE BLOCK (pure JSON, no prose, no code fences)
+{
+  "function":"IMSG",
+  "sinks":[
+    {"name":"IMSG","param_index":INT,"rule_id":["UO|WIV|SMO|other"],"reason":"..."}
+  ],
+  "non_sinks":["alloc/free/random/crypto-only if applicable"],
+  "confidence":"high|medium|low"
+}
+
+Notes:
+- If no sink parameters identified: produce `"sinks":[]`.
+- Never list TEE_Malloc/TEE_Free/TEE_GenerateRandom/TRACE_* as sinks (enforce the policy above).
+## Response:
+{
+  "function":"IMSG",
+  "sinks":[
+  ],
+  "non_sinks":["alloc/free","random","crypto-only if applicable"],
+  "confidence":"low"
+}
+
+# External Function: TEE_Free
+## Prompt:
+You are a deterministic TEE sink classifier for OP-TEE TAs.
+
+GOAL
+Given an external API function "TEE_Free", decide whether any of its parameters can serve as sinks if tainted data reaches them, strictly under these partitioning-related patterns (whitelist):
+- "unencrypted_output" (UO): data written to Normal World–visible buffers without encryption.
+- "weak_input_validation" (WIV): size/length/pointer parameters that can lead to OOB/corruption if not properly checked.
+- "shared_memory_overwrite" (SMO): operations that may write into shared (REE-controlled) memory or use it unsafely.
+
+TEE POLICY (must follow; align with Phase 5 system)
+- Alloc/free (e.g., TEE_Malloc/TEE_Free) are NOT sinks.
+- Random bytes from TEE_GenerateRandom are NON-sensitive and do not make a sink.
+- Crypto APIs (TEE_*Cipher*, TEE_AE*, TEE_Asymmetric*) are EXCLUDED as sinks for "unencrypted_output"; only a subsequent unencrypted copy into a Normal World buffer (e.g., snprintf/TEE_MemMove into a memref) can be UO.
+- Debug prints/macros TRACE_* / trace_printf are excluded as sinks.
+
+SINK CANDIDATE HINTS (non-exhaustive, policy-compliant)
+- Memory/output copies: memcpy, memmove, strcpy/strncpy, snprintf, vsnprintf, TEE_MemMove, TEE_MemFill, TEE_WriteObjectData
+- Object/storage writes may be sinks if they end up REE-visible.
+- Prefer the destination (param_index 0) and the length (param_index 2) as primary risk carriers for copy APIs.
+
+CLASSIFICATION & FIELDS
+- Use rule_id ONLY from: ["unencrypted_output","weak_input_validation","shared_memory_overwrite","other"].
+- Parameter indices are 0-based (dest=0, src=1, size=2 for memcpy-like).
+- Reasons must be short and specific (<= 20 words).
+
+STRICT OUTPUT — EXACTLY ONE BLOCK (pure JSON, no prose, no code fences)
+{
+  "function":"TEE_Free",
+  "sinks":[
+    {"name":"TEE_Free","param_index":INT,"rule_id":["UO|WIV|SMO|other"],"reason":"..."}
+  ],
+  "non_sinks":["alloc/free/random/crypto-only if applicable"],
+  "confidence":"high|medium|low"
+}
+
+Notes:
+- If no sink parameters identified: produce `"sinks":[]`.
+- Never list TEE_Malloc/TEE_Free/TEE_GenerateRandom/TRACE_* as sinks (enforce the policy above).
+## Response:
+{
+  "function":"TEE_Free",
+  "sinks":[],
+  "non_sinks":["alloc/free","random","crypto-only (excluded)","debug prints excluded"],
+  "confidence":"high"
+}
+
+# External Function: TEE_GenerateRandom
+## Prompt:
+You are a deterministic TEE sink classifier for OP-TEE TAs.
+
+GOAL
+Given an external API function "TEE_GenerateRandom", decide whether any of its parameters can serve as sinks if tainted data reaches them, strictly under these partitioning-related patterns (whitelist):
+- "unencrypted_output" (UO): data written to Normal World–visible buffers without encryption.
+- "weak_input_validation" (WIV): size/length/pointer parameters that can lead to OOB/corruption if not properly checked.
+- "shared_memory_overwrite" (SMO): operations that may write into shared (REE-controlled) memory or use it unsafely.
+
+TEE POLICY (must follow; align with Phase 5 system)
+- Alloc/free (e.g., TEE_Malloc/TEE_Free) are NOT sinks.
+- Random bytes from TEE_GenerateRandom are NON-sensitive and do not make a sink.
+- Crypto APIs (TEE_*Cipher*, TEE_AE*, TEE_Asymmetric*) are EXCLUDED as sinks for "unencrypted_output"; only a subsequent unencrypted copy into a Normal World buffer (e.g., snprintf/TEE_MemMove into a memref) can be UO.
+- Debug prints/macros TRACE_* / trace_printf are excluded as sinks.
+
+SINK CANDIDATE HINTS (non-exhaustive, policy-compliant)
+- Memory/output copies: memcpy, memmove, strcpy/strncpy, snprintf, vsnprintf, TEE_MemMove, TEE_MemFill, TEE_WriteObjectData
+- Object/storage writes may be sinks if they end up REE-visible.
+- Prefer the destination (param_index 0) and the length (param_index 2) as primary risk carriers for copy APIs.
+
+CLASSIFICATION & FIELDS
+- Use rule_id ONLY from: ["unencrypted_output","weak_input_validation","shared_memory_overwrite","other"].
+- Parameter indices are 0-based (dest=0, src=1, size=2 for memcpy-like).
+- Reasons must be short and specific (<= 20 words).
+
+STRICT OUTPUT — EXACTLY ONE BLOCK (pure JSON, no prose, no code fences)
+{
+  "function":"TEE_GenerateRandom",
+  "sinks":[
+    {"name":"TEE_GenerateRandom","param_index":INT,"rule_id":["UO|WIV|SMO|other"],"reason":"..."}
+  ],
+  "non_sinks":["alloc/free/random/crypto-only if applicable"],
+  "confidence":"high|medium|low"
+}
+
+Notes:
+- If no sink parameters identified: produce `"sinks":[]`.
+- Never list TEE_Malloc/TEE_Free/TEE_GenerateRandom/TRACE_* as sinks (enforce the policy above).
+## Response:
+{
+  "function":"TEE_GenerateRandom",
+  "sinks":[],
+  "non_sinks":["alloc/free not sinks","random data from this API is non-sensitive","crypto APIs excluded as sinks","debug prints excluded"],
+  "confidence":"high"
+}
+
+# External Function: TEE_Malloc
+## Prompt:
+You are a deterministic TEE sink classifier for OP-TEE TAs.
+
+GOAL
+Given an external API function "TEE_Malloc", decide whether any of its parameters can serve as sinks if tainted data reaches them, strictly under these partitioning-related patterns (whitelist):
+- "unencrypted_output" (UO): data written to Normal World–visible buffers without encryption.
+- "weak_input_validation" (WIV): size/length/pointer parameters that can lead to OOB/corruption if not properly checked.
+- "shared_memory_overwrite" (SMO): operations that may write into shared (REE-controlled) memory or use it unsafely.
+
+TEE POLICY (must follow; align with Phase 5 system)
+- Alloc/free (e.g., TEE_Malloc/TEE_Free) are NOT sinks.
+- Random bytes from TEE_GenerateRandom are NON-sensitive and do not make a sink.
+- Crypto APIs (TEE_*Cipher*, TEE_AE*, TEE_Asymmetric*) are EXCLUDED as sinks for "unencrypted_output"; only a subsequent unencrypted copy into a Normal World buffer (e.g., snprintf/TEE_MemMove into a memref) can be UO.
+- Debug prints/macros TRACE_* / trace_printf are excluded as sinks.
+
+SINK CANDIDATE HINTS (non-exhaustive, policy-compliant)
+- Memory/output copies: memcpy, memmove, strcpy/strncpy, snprintf, vsnprintf, TEE_MemMove, TEE_MemFill, TEE_WriteObjectData
+- Object/storage writes may be sinks if they end up REE-visible.
+- Prefer the destination (param_index 0) and the length (param_index 2) as primary risk carriers for copy APIs.
+
+CLASSIFICATION & FIELDS
+- Use rule_id ONLY from: ["unencrypted_output","weak_input_validation","shared_memory_overwrite","other"].
+- Parameter indices are 0-based (dest=0, src=1, size=2 for memcpy-like).
+- Reasons must be short and specific (<= 20 words).
+
+STRICT OUTPUT — EXACTLY ONE BLOCK (pure JSON, no prose, no code fences)
+{
+  "function":"TEE_Malloc",
+  "sinks":[
+    {"name":"TEE_Malloc","param_index":INT,"rule_id":["UO|WIV|SMO|other"],"reason":"..."}
+  ],
+  "non_sinks":["alloc/free/random/crypto-only if applicable"],
+  "confidence":"high|medium|low"
+}
+
+Notes:
+- If no sink parameters identified: produce `"sinks":[]`.
+- Never list TEE_Malloc/TEE_Free/TEE_GenerateRandom/TRACE_* as sinks (enforce the policy above).
+## Response:
+{
+  "function":"TEE_Malloc",
+  "sinks":[
+  ],
+  "non_sinks":["alloc/free","TEE_GenerateRandom","crypto APIs are excluded as sinks","TRACE_* are excluded as sinks"],
+  "confidence":"high"
+}
+
+# External Function: TEE_MemMove
+## Prompt:
+You are a deterministic TEE sink classifier for OP-TEE TAs.
+
+GOAL
+Given an external API function "TEE_MemMove", decide whether any of its parameters can serve as sinks if tainted data reaches them, strictly under these partitioning-related patterns (whitelist):
+- "unencrypted_output" (UO): data written to Normal World–visible buffers without encryption.
+- "weak_input_validation" (WIV): size/length/pointer parameters that can lead to OOB/corruption if not properly checked.
+- "shared_memory_overwrite" (SMO): operations that may write into shared (REE-controlled) memory or use it unsafely.
+
+TEE POLICY (must follow; align with Phase 5 system)
+- Alloc/free (e.g., TEE_Malloc/TEE_Free) are NOT sinks.
+- Random bytes from TEE_GenerateRandom are NON-sensitive and do not make a sink.
+- Crypto APIs (TEE_*Cipher*, TEE_AE*, TEE_Asymmetric*) are EXCLUDED as sinks for "unencrypted_output"; only a subsequent unencrypted copy into a Normal World buffer (e.g., snprintf/TEE_MemMove into a memref) can be UO.
+- Debug prints/macros TRACE_* / trace_printf are excluded as sinks.
+
+SINK CANDIDATE HINTS (non-exhaustive, policy-compliant)
+- Memory/output copies: memcpy, memmove, strcpy/strncpy, snprintf, vsnprintf, TEE_MemMove, TEE_MemFill, TEE_WriteObjectData
+- Object/storage writes may be sinks if they end up REE-visible.
+- Prefer the destination (param_index 0) and the length (param_index 2) as primary risk carriers for copy APIs.
+
+CLASSIFICATION & FIELDS
+- Use rule_id ONLY from: ["unencrypted_output","weak_input_validation","shared_memory_overwrite","other"].
+- Parameter indices are 0-based (dest=0, src=1, size=2 for memcpy-like).
+- Reasons must be short and specific (<= 20 words).
+
+STRICT OUTPUT — EXACTLY ONE BLOCK (pure JSON, no prose, no code fences)
+{
+  "function":"TEE_MemMove",
+  "sinks":[
+    {"name":"TEE_MemMove","param_index":INT,"rule_id":["UO|WIV|SMO|other"],"reason":"..."}
+  ],
+  "non_sinks":["alloc/free/random/crypto-only if applicable"],
+  "confidence":"high|medium|low"
+}
+
+Notes:
+- If no sink parameters identified: produce `"sinks":[]`.
+- Never list TEE_Malloc/TEE_Free/TEE_GenerateRandom/TRACE_* as sinks (enforce the policy above).
+## Response:
+{
+  "function":"TEE_MemMove",
+  "sinks":[
+    {"name":"TEE_MemMove","param_index":0,"rule_id":["unencrypted_output"],"reason":"Dest buffer may be visible in Normal World as unencrypted output"},
+    {"name":"TEE_MemMove","param_index":2,"rule_id":["weak_input_validation"],"reason":"Size may cause OOB/corruption if not properly checked"}
+  ],
+  "non_sinks":["alloc/free (e.g., TEE_Malloc/TEE_Free)","TEE_GenerateRandom","crypto APIs (TEE_*Cipher*, TEE_AE*, TEE_Asymmetric*)","debug prints/TRACE_*"],
+  "confidence":"high"
+}
+
+# External Function: TEE_PARAM_TYPES
+## Prompt:
+You are a deterministic TEE sink classifier for OP-TEE TAs.
+
+GOAL
+Given an external API function "TEE_PARAM_TYPES", decide whether any of its parameters can serve as sinks if tainted data reaches them, strictly under these partitioning-related patterns (whitelist):
+- "unencrypted_output" (UO): data written to Normal World–visible buffers without encryption.
+- "weak_input_validation" (WIV): size/length/pointer parameters that can lead to OOB/corruption if not properly checked.
+- "shared_memory_overwrite" (SMO): operations that may write into shared (REE-controlled) memory or use it unsafely.
+
+TEE POLICY (must follow; align with Phase 5 system)
+- Alloc/free (e.g., TEE_Malloc/TEE_Free) are NOT sinks.
+- Random bytes from TEE_GenerateRandom are NON-sensitive and do not make a sink.
+- Crypto APIs (TEE_*Cipher*, TEE_AE*, TEE_Asymmetric*) are EXCLUDED as sinks for "unencrypted_output"; only a subsequent unencrypted copy into a Normal World buffer (e.g., snprintf/TEE_MemMove into a memref) can be UO.
+- Debug prints/macros TRACE_* / trace_printf are excluded as sinks.
+
+SINK CANDIDATE HINTS (non-exhaustive, policy-compliant)
+- Memory/output copies: memcpy, memmove, strcpy/strncpy, snprintf, vsnprintf, TEE_MemMove, TEE_MemFill, TEE_WriteObjectData
+- Object/storage writes may be sinks if they end up REE-visible.
+- Prefer the destination (param_index 0) and the length (param_index 2) as primary risk carriers for copy APIs.
+
+CLASSIFICATION & FIELDS
+- Use rule_id ONLY from: ["unencrypted_output","weak_input_validation","shared_memory_overwrite","other"].
+- Parameter indices are 0-based (dest=0, src=1, size=2 for memcpy-like).
+- Reasons must be short and specific (<= 20 words).
+
+STRICT OUTPUT — EXACTLY ONE BLOCK (pure JSON, no prose, no code fences)
+{
+  "function":"TEE_PARAM_TYPES",
+  "sinks":[
+    {"name":"TEE_PARAM_TYPES","param_index":INT,"rule_id":["UO|WIV|SMO|other"],"reason":"..."}
+  ],
+  "non_sinks":["alloc/free/random/crypto-only if applicable"],
+  "confidence":"high|medium|low"
+}
+
+Notes:
+- If no sink parameters identified: produce `"sinks":[]`.
+- Never list TEE_Malloc/TEE_Free/TEE_GenerateRandom/TRACE_* as sinks (enforce the policy above).
+## Response:
+{
+  "function":"TEE_PARAM_TYPES",
+  "sinks":[
+  ],
+  "non_sinks":["alloc/free","random/crypto-only not applicable","debug prints excluded"],
+  "confidence":"high"
+}
+
+# External Function: strlen
+## Prompt:
+You are a deterministic TEE sink classifier for OP-TEE TAs.
+
+GOAL
+Given an external API function "strlen", decide whether any of its parameters can serve as sinks if tainted data reaches them, strictly under these partitioning-related patterns (whitelist):
+- "unencrypted_output" (UO): data written to Normal World–visible buffers without encryption.
+- "weak_input_validation" (WIV): size/length/pointer parameters that can lead to OOB/corruption if not properly checked.
+- "shared_memory_overwrite" (SMO): operations that may write into shared (REE-controlled) memory or use it unsafely.
+
+TEE POLICY (must follow; align with Phase 5 system)
+- Alloc/free (e.g., TEE_Malloc/TEE_Free) are NOT sinks.
+- Random bytes from TEE_GenerateRandom are NON-sensitive and do not make a sink.
+- Crypto APIs (TEE_*Cipher*, TEE_AE*, TEE_Asymmetric*) are EXCLUDED as sinks for "unencrypted_output"; only a subsequent unencrypted copy into a Normal World buffer (e.g., snprintf/TEE_MemMove into a memref) can be UO.
+- Debug prints/macros TRACE_* / trace_printf are excluded as sinks.
+
+SINK CANDIDATE HINTS (non-exhaustive, policy-compliant)
+- Memory/output copies: memcpy, memmove, strcpy/strncpy, snprintf, vsnprintf, TEE_MemMove, TEE_MemFill, TEE_WriteObjectData
+- Object/storage writes may be sinks if they end up REE-visible.
+- Prefer the destination (param_index 0) and the length (param_index 2) as primary risk carriers for copy APIs.
+
+CLASSIFICATION & FIELDS
+- Use rule_id ONLY from: ["unencrypted_output","weak_input_validation","shared_memory_overwrite","other"].
+- Parameter indices are 0-based (dest=0, src=1, size=2 for memcpy-like).
+- Reasons must be short and specific (<= 20 words).
+
+STRICT OUTPUT — EXACTLY ONE BLOCK (pure JSON, no prose, no code fences)
+{
+  "function":"strlen",
+  "sinks":[
+    {"name":"strlen","param_index":INT,"rule_id":["UO|WIV|SMO|other"],"reason":"..."}
+  ],
+  "non_sinks":["alloc/free/random/crypto-only if applicable"],
+  "confidence":"high|medium|low"
+}
+
+Notes:
+- If no sink parameters identified: produce `"sinks":[]`.
+- Never list TEE_Malloc/TEE_Free/TEE_GenerateRandom/TRACE_* as sinks (enforce the policy above).
+## Response:
+{
+  "function":"strlen",
+  "sinks":[ ],
+  "non_sinks":["alloc/free","random bytes from TEE_GenerateRandom","crypto APIs (excluded for UO)","TRACE_* / trace_printf are excluded"],
+  "confidence":"high"
+}
+
