@@ -8,18 +8,44 @@ DOMAIN FACTS (soft defaults; do not overfit)
 - Structural risks must be surfaced even if no external sink call is present yet (e.g., tainted loop bounds/index/size arithmetic, pointer/offset arithmetic, per‑byte copies like buf[i]=x, param_types vs actual access mismatch).
 - TEE_Malloc/Free are NOT sinks. Random bytes from TEE_GenerateRandom are NON‑sensitive by default, unless names/comments/context indicate secrecy. Crypto APIs are excluded for “unencrypted_output” unless there is a later non‑crypto copy into REE buffers.
 - When uncertain, do NOT force a conclusion; prefer "unknown" fields and/or a structural risk with a one‑line why.
-- **Explicit structural patterning (record as risks):**
-    - **Per‑byte/loop copies** (e.g., `dst[i] = src[i]`) and **direct array writes** must be emitted in `structural_risks` with `rule: "weak_input_validation"` and `sink_function: "array_write"` if **i/length** depends on **tainted REE input** and no bounds checks are evident at or before the write line.
-    - For memcpy/memmove‑like **user wrappers** (e.g., helper functions calling `TEE_MemMove`), still record the callee line if reachable and annotate destination provenance (`REE‑visible|TEE‑private|unknown`).
+- MEMREF_OUTPUT by itself is an output channel to REE; do NOT treat it as “unencrypted_output” without additional evidence of sensitivity or policy violation.
+
+[FACT EMISSION — ALIAS & SENSITIVITY (REQUIRED)]
+- Emit "=" structural_risk facts for:
+  (a) alias/call-site bindings (e.g., p = params[i].memref.buffer; foo(p)), recording the origin region of the pointer (REE-visible / TEE-private / unknown), and
+  (b) sensitivity promotions inferred from names/comments/usage (key/secret/passwd/token/credential/iv/nonce/seed/session).
+- Prefer "unknown" over guessing for regions/sizes, but still emit the fact with a one‑line why.
+
+TAGGING REQUIREMENTS (must be populated consistently)
+- Whenever you emit a structural risk, add stable tags into `rule_matches.others` (in this fixed order):
+  1) `flow_dir:TA->REE|REE->TA|unknown`
+  2) `src_region:REE-visible|TEE-private|unknown`
+  3) `dst_region:REE-visible|TEE-private|unknown`
+  4) `sensitivity_label:secret|key|credential|private|random|public|unknown`
+  5) `size_triplet:copy_len=?,src_sz=?,dst_sz=?` (expressions allowed)
 
 CLASSIFICATION (rules)
-- For any field named `rule` or `rule_id`, use only rule identifiers that appear in the host‑provided RULE CLASSIFICATION HINTS’s `rule_id` list (from the system prompt). If none applies, use `"other"`. Do not invent new rule names.
+- For any field named `rule` or `rule_id`, use only rule identifiers that appear in the host-provided RULE CLASSIFICATION HINTS’s `rule_id` list (from the system prompt). If none applies, use "other". Do not invent new rule names.
 
 OUTPUT (STRICT)
-- Emit exactly ONE JSON object. No prose. No code fences. Never omit required keys. Use empty arrays, `"unknown"`, or `0` when unknown.
+- Emit exactly ONE JSON object. No prose/no fences. Never omit required keys. Use [] / "unknown" / 0 (as schema requires).
+- Ensure `rule_matches.others` contains the 5 tags above in the exact order for every structural risk.
 
 ALLOWED VALUES (sink_function in structural risks)
-- `"="`, `"array_write"`, an external function name, or `"unknown"`.
+- "=", "array_write", "<exact callee name>" (e.g., "TEE_MemMove"), or "unknown". The literal placeholder "external_fn" is forbidden.
+
+When assigning sensitivity_label:
+- Use name/comment/usage cues (key, secret, passwd, token, credential, iv, nonce, seed, session).
+- If promoted to sensitive, add a one-line why in the structural risk (e.g., "variable name contains 'key' and used in cipher init").
+
+Always surface structural risks for (capture even without external sinks):
+- Param type mismatch or aliasing: e.g., p = params[i].memref.buffer; foo(p)  // origin remains REE-visible.
+- Input-driven loop bounds or size arithmetic even if not directly used as an index.
+- In-place writes into REE-visible buffers using REE-tainted indices/offsets (candidate for `shared_memory_overwrite` at later steps).
+
+Examples of why:
+- "tainted length from REE used to bound copy without check"
+- "alias of shared buffer passed into helper without bounds"
 
 SCHEMA (START, single JSON)
 {
@@ -42,8 +68,8 @@ SCHEMA (START, single JSON)
       "function":"{source_function}",
       "rule":"<{RULE_IDS}|other>",
       "why":"<one‑line reason>",
-      "sink_function":"<'='|'array_write'|external_fn|'unknown'>",
-      "rule_matches":{"rule_id":["<one or more>"],"others":["<freeform>"]},
+      "sink_function":"<'='|'array_write'|<callee>|'unknown'>",
+      "rule_matches":{"rule_id":["<one or more>"],"others":["<flow_dir:...>","<src_region:...>","<dst_region:...>","<sensitivity_label:...>","<size_triplet:...>"]},
       "code_excerpt":"<short optional>"
     }
     // zero or more

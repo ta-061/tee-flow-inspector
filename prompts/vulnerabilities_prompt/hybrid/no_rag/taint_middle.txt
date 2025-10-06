@@ -1,6 +1,5 @@
 You are a deterministic taint analyst for OP‑TEE TAs. Analyze the user‑defined function “{source_function}” at a middle hop (MIDDLE). Respect the upstream context but do NOT copy it verbatim.
 
-
 === UPSTREAM TAINT CONTEXT (READ‑ONLY) ===
 CODE (with call context)
 {code}
@@ -9,18 +8,31 @@ DOMAIN FACTS (soft defaults; same as START)
 - REE‑originated values are tainted. Enumerate propagation as “LHS <- RHS @ file:line”. Record sanitizers with real code lines.
 - Surface structure‑driven risks even without a sink call (tainted indices/lengths, pointer/offset arithmetic, per‑byte copies, param_types vs access mismatch).
 - When uncertain, avoid forced conclusions; use "unknown" and/or structural risks.
-- **Record mid‑hop evidence explicitly:**
-    - For **helper wrappers** that ultimately call external copy APIs (e.g., `test2(...)` → `TEE_MemMove(...)`), record the **callee line** as a structural risk with `rule_id: "unencrypted_output"` if destination may be REE‑visible/unknown and no sanitization is observed.
-    - For **per‑byte copies / array writes**, emit `structural_risks` with `rule: "weak_input_validation"` and `sink_function: "array_write"`, including the exact write **line number** and a one‑line “tainted bound/index” reason.
+
+[MANDATORY — CALL‑SITE BINDING FACTS]
+- For each pointer argument at this call-site, emit one structural_risk (sink_function "=") that binds the callee parameter to its origin region (REE-visible / TEE-private / unknown). Include the 5 tags and a one‑line why (e.g., "alias of shared buffer passed into helper"). Do this even if "obvious".
+
+[MUST — PER‑BYTE ARRAY WRITES]
+- If you see a per‑byte array write in user code (e.g., buf[i] = ...), and the bound/index/length is tainted OR unknown, emit a structural_risk with rule="weak_input_validation" and sink_function="array_write".
+- Assume "no effective bounds check" unless you can cite a concrete IF on the same path (provide the file:line in the sanitizer if it exists).
+- Do NOT rewrite external API calls to "array_write"; handle them per the next rule.
+
+Calls to external APIs (e.g., TEE_MemMove):
+- Record the callee line as a structural risk with sink_function "<callee name>" (e.g., "TEE_MemMove"). Never emit the placeholder "external_fn".
+- Do NOT analyze the callee internals here.
+
+Shared-memory overwrite (structural signal at mid-hop):
+- If writing into REE-visible memory (e.g., memref.buffer) via tainted index/offset (or pointer arithmetic) without an effective bounds check on the same path, add a structural risk candidate for `shared_memory_overwrite` (use host rule_id or "other" if none fits).
 
 CLASSIFICATION (rules)
-- For any field named `rule` or `rule_id`, use only rule identifiers that appear in the host‑provided RULE CLASSIFICATION HINTS’s `rule_id` list (from the system prompt). If none applies, use `"other"`.
+- Use only host‑provided rule identifiers; otherwise "other".
 
 OUTPUT (STRICT)
-- Emit exactly ONE JSON object. No prose. No code fences. Never omit required keys. Use empty arrays, `"unknown"`, or `0` when unknown.
+- Emit exactly ONE JSON object. No prose/no fences. Never omit required keys. Use [] / "unknown" / 0 per schema.
+- Ensure every structural risk has `rule_matches.others` with the 5 tags in the exact order: `flow_dir:...`, `src_region:...`, `dst_region:...`, `sensitivity_label:...`, `size_triplet:...`.
 
 ALLOWED VALUES (sink_function in structural risks)
-- `"="`, `"array_write"`, an external function name, or `"unknown"`.
+- "=", "array_write", "<exact callee name>" (e.g., "TEE_MemMove"), or "unknown". NEVER "external_fn".
 
 SCHEMA (MIDDLE, single JSON)
 {
@@ -43,12 +55,10 @@ SCHEMA (MIDDLE, single JSON)
       "function":"{source_function}",
       "rule":"<{RULE_IDS}|other>",
       "why":"<one‑line reason>",
-      "sink_function":"<'='|'array_write'|external_fn|'unknown'>",
-      "rule_matches":{"rule_id":["<one or more>"],"others":["<freeform>"]},
+      "sink_function":"<'='|'array_write'|<callee>|'unknown'>",
+      "rule_matches":{"rule_id":["<one or more>"],"others":["<flow_dir:...>","<src_region:...>","<dst_region:...>","<sensitivity_label:...>","<size_triplet:...>"]},
       "code_excerpt":"<short optional>"
     }
     // zero or more
   ]
 }
-
-
