@@ -5,6 +5,7 @@
 """
 
 import json
+import re
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from datetime import datetime
@@ -14,8 +15,15 @@ class JSONReporter:
     解析結果をJSON形式でレポート
     """
     
-    def __init__(self, pretty_print: bool = True):
+    def __init__(self, pretty_print: bool = True, phase12_data: Dict = None):
         self.pretty_print = pretty_print
+        # ユーザ定義関数のリストを保持
+        self.user_functions = set()
+        self.project_root = None
+        if phase12_data:
+            for func in phase12_data.get("user_defined_functions", []):
+                self.user_functions.add(func["name"])
+            self.project_root = Path(phase12_data.get("project_root", ""))
     
     def generate_report(self, 
                        vulnerabilities: List[Dict],
@@ -67,13 +75,14 @@ class JSONReporter:
         """
         同一ファイル・同一行の脆弱性を統合
         複数のルールや詳細情報を配列として保持
+        ユーザ定義関数の呼び出し箇所は除外する
         """
         consolidated = {}
-        
+
         for vuln in vulnerabilities:
             details = vuln.get("vulnerability_details", {})
             vulnerable_lines = details.get("vulnerable_lines", [])
-            
+
             # vulnerable_linesが空の場合、vd情報から1つ作成
             if not vulnerable_lines and vuln.get("is_vulnerable"):
                 vd = vuln.get("vd", {})
@@ -85,9 +94,12 @@ class JSONReporter:
                     "why": details.get("decision_rationale", "Vulnerability detected"),
                     "rule_id": "other"
                 }]
-            
+
             # 各行について統合処理
             for line_info in vulnerable_lines:
+                # ユーザ定義関数の呼び出し箇所をスキップ
+                if self._is_user_function_call(line_info, vuln):
+                    continue
                 # 統合キー: ファイルと行番号
                 key = (
                     line_info.get("file", "unknown"),
@@ -223,12 +235,17 @@ class JSONReporter:
         """
         同一ファイル・同一行のstructural_risksを統合
         複数のルールや詳細情報を配列として保持
+        ユーザ定義関数の呼び出し箇所は除外する
         """
         consolidated = {}
-        
+
         for finding in findings:
             # 空のfindingはスキップ
             if not finding or not finding.get("line"):
+                continue
+
+            # ユーザ定義関数の呼び出し箇所をスキップ
+            if self._is_user_function_call_finding(finding):
                 continue
             
             # 統合キー: ファイルと行番号
@@ -394,6 +411,102 @@ class JSONReporter:
             "retry_successes": base_stats.get("retry_successes", 0)
         }
     
+    def _is_user_function_call(self, line_info: Dict, vuln: Dict) -> bool:
+        """
+        指定された行がユーザ定義関数の呼び出しかどうかを判定
+        実際のソースコードを読み取って判定する
+
+        Args:
+            line_info: 脆弱な行の情報
+            vuln: 脆弱性情報全体
+
+        Returns:
+            True: ユーザ定義関数の呼び出し箇所（除外すべき）
+            False: それ以外（保持すべき）
+        """
+        file_path = line_info.get("file", "")
+        line_number = line_info.get("line", 0)
+
+        # ファイルパスまたは行番号が不明な場合は保持
+        if not file_path or not line_number:
+            return False
+
+        # 実際のソースコードから判定
+        return self._check_source_line_for_user_function_call(file_path, line_number)
+
+    def _is_user_function_call_finding(self, finding: Dict) -> bool:
+        """
+        findingがユーザ定義関数の呼び出しかどうかを判定
+        実際のソースコードを読み取って判定する
+
+        Args:
+            finding: structural_riskの情報
+
+        Returns:
+            True: ユーザ定義関数の呼び出し箇所（除外すべき）
+            False: それ以外（保持すべき）
+        """
+        file_path = finding.get("file", "")
+        line_number = finding.get("line", 0)
+
+        # ファイルパスまたは行番号が不明な場合は保持
+        if not file_path or not line_number:
+            return False
+
+        # 実際のソースコードから判定
+        return self._check_source_line_for_user_function_call(file_path, line_number)
+
+    def _check_source_line_for_user_function_call(self, file_path: str, line_number: int) -> bool:
+        """
+        指定されたファイルの行にユーザ定義関数の呼び出しがあるかチェック
+
+        Args:
+            file_path: ソースファイルのパス
+            line_number: 行番号（1始まり）
+
+        Returns:
+            True: ユーザ定義関数の呼び出しがある
+            False: ない、またはファイルが読めない
+        """
+        if not self.project_root or not self.user_functions:
+            return False
+
+        # ファイルパスを解決
+        path = Path(file_path)
+        if not path.is_absolute():
+            path = self.project_root / path
+
+        if not path.exists():
+            return False
+
+        try:
+            # ファイルを読み取り
+            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = f.readlines()
+
+            # 行番号は1始まりなので、インデックスに変換
+            if line_number < 1 or line_number > len(lines):
+                return False
+
+            line_content = lines[line_number - 1]
+
+            # コメントを削除
+            line_content = re.sub(r'//.*', '', line_content)
+            line_content = re.sub(r'/\*.*?\*/', '', line_content)
+
+            # 各ユーザ定義関数の呼び出しパターンをチェック
+            for func_name in self.user_functions:
+                # 関数呼び出しパターン: func_name(
+                pattern = rf'\b{re.escape(func_name)}\s*\('
+                if re.search(pattern, line_content):
+                    return True
+
+            return False
+
+        except Exception:
+            # ファイル読み取りエラーの場合は保持（安全側に倒す）
+            return False
+
     def _format_time(self, seconds: float) -> str:
         """秒数を人間が読みやすい形式に変換"""
         if seconds < 60:

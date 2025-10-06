@@ -56,7 +56,7 @@ class TaintAnalysisEngine:
         self.code_extractor = CodeExtractor(phase12_data)
         self.parser = ResponseParser(debug=verbose)
         self.cache = FunctionCache() if use_cache else None
-        self.reporter = JSONReporter(pretty_print=True)
+        self.reporter = JSONReporter(pretty_print=True, phase12_data=phase12_data)
         
         # 会話ロガーの初期化
         self.conversation_logger = None
