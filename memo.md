@@ -20,6 +20,11 @@ python3 ./src/main.py \
   -p benchmark/Lenet5_in_OPTEE \
   --verbose 2>&1 | tee log2.txt
 
+python3 ./src/main.py \
+  -p benchmark/bad-partitioning \
+  -p benchmark/basicAlg_use \
+  --verbose 2>&1 | tee log3.txt
+
 
 python3 ./src/main.py \
   -p benchmark/acipher \
@@ -62,6 +67,20 @@ for results_dir in */ta/results; do
     echo "⚠️  $src が見つかりません"
   fi
 done
+
+mkdir -p ta_vulnerabilities_HTML
+for results_dir in */ta/results; do
+  proj="${results_dir%%/*}"
+  src="$results_dir/ta_vulnerability_report.html"
+  dst="ta_vulnerabilities_HTML/${proj}_vulnerability_report.html"
+  if [ -f "$src" ]; then
+    cp "$src" "$dst"
+    echo "✔️  $dst を作成しました"
+  else
+    echo "⚠️  $src が見つかりません"
+  fi
+done
+
 
 
 
