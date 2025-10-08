@@ -298,7 +298,17 @@ class ResponseParser:
         parsed = self._parse_json_safely(response.strip())
         if isinstance(parsed, dict):
             result["raw_json"] = parsed
-            result["vulnerability_decision"] = parsed.get("vulnerability_decision", {})
+
+            # vulnerability_decisionの正規化
+            vuln_decision = parsed.get("vulnerability_decision", {})
+            if isinstance(vuln_decision, dict):
+                result["vulnerability_decision"] = vuln_decision
+            elif isinstance(vuln_decision, bool):
+                # ブール値の場合は辞書に変換
+                result["vulnerability_decision"] = {"found": vuln_decision}
+            else:
+                result["vulnerability_decision"] = {}
+
             if "found" not in result["vulnerability_decision"] and "vulnerability_found" in parsed:
                 found_flag = parsed.get("vulnerability_found")
                 if isinstance(found_flag, str):
@@ -461,10 +471,12 @@ class ResponseParser:
                         if field not in details:
                             missing.append(field)
                 else:
-                    # For non-vulnerabilities, be more lenient
+                    # For non-vulnerabilities: per schema, explanation fields should be at TOP level
                     explanation_fields = ["why_no_vulnerability", "decision_rationale"]
-                    has_explanation = any(field in details for field in explanation_fields)
-                    
+
+                    # Check at top level (per prompt schema: "// Suggested when found=false")
+                    has_explanation = any(field in data for field in explanation_fields)
+
                     if not has_explanation:
                         # Check if we can extract explanation from raw response
                         if "raw_response" in data:

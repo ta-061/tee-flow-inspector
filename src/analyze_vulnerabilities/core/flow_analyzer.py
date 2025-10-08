@@ -526,11 +526,15 @@ Code (first 300 chars): {code[:300]}...
             self.cache.set(key, result)
     
     def _build_result(self, flow_idx: int, chain: List[str], vd: Dict,
-                     chain_analyses: List[Dict], 
+                     chain_analyses: List[Dict],
                      vulnerability_decision: Dict) -> Dict:
         """結果構築"""
         decision = vulnerability_decision.get("vulnerability_decision", {})
-        details = vulnerability_decision.get("vulnerability_details", {})
+        details = vulnerability_decision.get("vulnerability_details")
+
+        # detailsがNoneの場合は空の辞書に設定
+        if details is None:
+            details = {}
         
         # structural_risks収集
         all_structural_risks = []
