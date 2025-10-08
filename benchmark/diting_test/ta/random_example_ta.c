@@ -64,7 +64,7 @@ static void test2(void *dst, const void *src, size_t n) {
   TEE_MemMove(dst, src, n); //←ここはDITINGでは不検出　暗号化不備での出力
 }
 static void test(char *dest, char *src) {
-	TEE_MemMove(dest, src, strlen(src) + 1); //←ここはDITINGでは不検出　暗号化不備での出力
+	TEE_MemMove(dest, src, strlen(src) + 1);
 	test2(dest, src, strlen(src) + 1);
   	uint32_t val = 2;
   	test2(dest, &val, sizeof(val));
@@ -106,6 +106,7 @@ static TEE_Result random_number_generate(uint32_t param_types,
 	char *dyn = TEE_Malloc(strlen(key) + 1, 0);
 	test(dyn,key);
 	test((char *)params[1].memref.buffer,key);
+	TEE_MemMove(params[2].memref.buffer, key, params[2].memref.size);
 
 	uint32_t secret_like=0xDEADBEEF;
 	TEE_MemMove(params[2].memref.buffer, &secret_like, sizeof(secret_like)); //←ここはDITING検出可能だった
