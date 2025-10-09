@@ -41,126 +41,141 @@ class FlowAnalyzer:
         """
         chain = flow["chains"]["function_chain"]
         vd = flow["vd"]
-        
+
         if self.verbose:
             print(f"\n{'='*60}")
             print(f"[FLOW {flow_idx}] Starting analysis")
             print(f"  Chain: {' → '.join(chain)}")
             print(f"  Sink: {vd.get('sink')} (param {vd.get('param_index')})")
-        
+
         # 会話ロガー開始
         if self.conversation_logger:
             self.conversation_logger.start_flow(flow_idx, chain, vd)
 
-        # 接頭辞キャッシュをチェック（get_longest_prefix_matchを使用）
-        cached_length = 0
-        cached_analyses = []
-        cached_conversation = None
-        cached_data = None
+        try:
+            # 接頭辞キャッシュをチェック（get_longest_prefix_matchを使用）
+            cached_length = 0
+            cached_analyses = []
+            cached_conversation = None
+            cached_data = None
 
-        if self.cache:
-            cached_length, cached_data = self.cache.get_longest_prefix_match(chain)
-
-        if cached_data:
-            cached_analyses = cached_data.get("chain_analyses", [])
-            cached_conversation = cached_data.get("conversation_state", {})
-
-            if cached_length == len(chain):
-                self.stats["cache_hits"] += 1
-                if self.verbose:
-                    print(f"  [CACHE HIT] Complete flow cached")
-                if "result" in cached_data:
-                    cached_result = cached_data["result"]
-                    if self.conversation_logger:
-                        self._log_cached_flow(cached_result)
-                    return cached_result
-            elif cached_length > 0:
-                self.stats["cache_hits"] += 1
-                self.stats["cache_partial_hits"] += 1
-                if self.verbose:
-                    cached_funcs = " → ".join(chain[:cached_length])
-                    print(f"  [CACHE HIT] Reusing {cached_length}/{len(chain)} functions")
-                    print(f"    Cached: {cached_funcs}")
-        elif self.cache:
-            self.stats["cache_misses"] += 1
-            if self.verbose:
-                print(f"  [CACHE MISS] No cached data found")
-        
-        # 会話コンテキスト初期化（キャッシュから復元または新規作成）
-        conversation = ConversationContext(self.system_prompt)
-        if cached_conversation:
-            conversation.exchanges = cached_conversation.get("exchanges", [])
-            conversation.chain_taint_states = cached_conversation.get("taint_states", [])
-            
-            if self.verbose:
-                print(f"  [CONTEXT RESTORED] {len(conversation.exchanges)} exchanges from cache")
-        
-        # キャッシュされた分析結果をコピー
-        chain_analyses = cached_analyses[:cached_length] if cached_analyses else []
-        
-        # 残りの関数を解析（キャッシュされていない部分のみ）
-        for position in range(cached_length, len(chain)):
-            if self.verbose:
-                print(f"\n  [{position+1}/{len(chain)}] Analyzing {chain[position]}...")
-            
-            analysis = self._analyze_function(
-                chain[position], position, chain, vd, conversation
-            )
-            chain_analyses.append(analysis)
-            
-            # 中間結果をキャッシュに保存（save_prefixを使用）
             if self.cache:
-                conversation_data = {
+                cached_length, cached_data = self.cache.get_longest_prefix_match(chain)
+
+            if cached_data:
+                cached_analyses = cached_data.get("chain_analyses", [])
+                cached_conversation = cached_data.get("conversation_state", {})
+
+                if cached_length == len(chain):
+                    self.stats["cache_hits"] += 1
+                    if self.verbose:
+                        print(f"  [CACHE HIT] Complete flow cached")
+                    if "result" in cached_data:
+                        cached_result = cached_data["result"]
+                        if self.conversation_logger:
+                            self._log_cached_flow(cached_result)
+                        return cached_result
+                elif cached_length > 0:
+                    self.stats["cache_hits"] += 1
+                    self.stats["cache_partial_hits"] += 1
+                    if self.verbose:
+                        cached_funcs = " → ".join(chain[:cached_length])
+                        print(f"  [CACHE HIT] Reusing {cached_length}/{len(chain)} functions")
+                        print(f"    Cached: {cached_funcs}")
+            elif self.cache:
+                self.stats["cache_misses"] += 1
+                if self.verbose:
+                    print(f"  [CACHE MISS] No cached data found")
+
+            # 会話コンテキスト初期化（キャッシュから復元または新規作成）
+            conversation = ConversationContext(self.system_prompt)
+            if cached_conversation:
+                conversation.exchanges = cached_conversation.get("exchanges", [])
+                conversation.chain_taint_states = cached_conversation.get("taint_states", [])
+
+                if self.verbose:
+                    print(f"  [CONTEXT RESTORED] {len(conversation.exchanges)} exchanges from cache")
+
+            # キャッシュされた分析結果をコピー
+            chain_analyses = cached_analyses[:cached_length] if cached_analyses else []
+
+            # 残りの関数を解析（キャッシュされていない部分のみ）
+            for position in range(cached_length, len(chain)):
+                if self.verbose:
+                    print(f"\n  [{position+1}/{len(chain)}] Analyzing {chain[position]}...")
+
+                analysis = self._analyze_function(
+                    chain[position], position, chain, vd, conversation
+                )
+                chain_analyses.append(analysis)
+
+                # 中間結果をキャッシュに保存（save_prefixを使用）
+                if self.cache:
+                    conversation_data = {
+                        "history": conversation.exchanges.copy(),
+                        "taint_state": self._extract_taint_state(chain_analyses),
+                        "findings": self._extract_findings(chain_analyses),
+                        "chain_analyses": chain_analyses.copy(),
+                        "conversation_state": {
+                            "exchanges": conversation.exchanges.copy(),
+                            "taint_states": conversation.chain_taint_states.copy()
+                        }
+                    }
+                    self.cache.save_prefix(chain, position, conversation_data)
+
+            # 最終的な脆弱性判定
+            if self.verbose:
+                print(f"\n[VULNERABILITY DECISION] Making final decision for flow {flow_idx}")
+
+            vulnerability_decision = self._make_final_decision(
+                chain_analyses, chain, vd, conversation
+            )
+
+            # 結果を構築
+            result = self._build_result(
+                flow_idx, chain, vd, chain_analyses, vulnerability_decision
+            )
+
+            # 完全なフローをキャッシュに保存（save_prefixを使用）
+            if self.cache:
+                final_data = {
                     "history": conversation.exchanges.copy(),
                     "taint_state": self._extract_taint_state(chain_analyses),
-                    "findings": self._extract_findings(chain_analyses),
-                    "chain_analyses": chain_analyses.copy(),
+                    "findings": result.get("findings", []),
+                    "chain_analyses": chain_analyses,
                     "conversation_state": {
                         "exchanges": conversation.exchanges.copy(),
                         "taint_states": conversation.chain_taint_states.copy()
+                    },
+                    "result": result  # 完全な結果を含める
+                }
+                self.cache.save_prefix(chain, len(chain) - 1, final_data)
+
+            # 会話ロガー終了
+            if self.conversation_logger:
+                self._finalize_conversation_log(vulnerability_decision)
+
+            if self.verbose:
+                is_vuln = result.get("is_vulnerable", False)
+                status = "VULNERABLE" if is_vuln else "SAFE"
+                print(f"\n[FLOW {flow_idx}] Analysis complete: {status}")
+                print(f"{'='*60}\n")
+
+            return result
+
+        except Exception as e:
+            # エラーが発生した場合でも会話ログを保存
+            if self.conversation_logger:
+                error_decision = {
+                    "vulnerability_decision": {"found": False},
+                    "vulnerability_details": {
+                        "vulnerability_type": "analysis_error",
+                        "error_message": str(e)
                     }
                 }
-                self.cache.save_prefix(chain, position, conversation_data)
-        
-        # 最終的な脆弱性判定
-        if self.verbose:
-            print(f"\n[VULNERABILITY DECISION] Making final decision for flow {flow_idx}")
-        
-        vulnerability_decision = self._make_final_decision(
-            chain_analyses, chain, vd, conversation
-        )
-        
-        # 結果を構築
-        result = self._build_result(
-            flow_idx, chain, vd, chain_analyses, vulnerability_decision
-        )
-        
-        # 完全なフローをキャッシュに保存（save_prefixを使用）
-        if self.cache:
-            final_data = {
-                "history": conversation.exchanges.copy(),
-                "taint_state": self._extract_taint_state(chain_analyses),
-                "findings": result.get("findings", []),
-                "chain_analyses": chain_analyses,
-                "conversation_state": {
-                    "exchanges": conversation.exchanges.copy(),
-                    "taint_states": conversation.chain_taint_states.copy()
-                },
-                "result": result  # 完全な結果を含める
-            }
-            self.cache.save_prefix(chain, len(chain) - 1, final_data)
-        
-        # 会話ロガー終了
-        if self.conversation_logger:
-            self._finalize_conversation_log(vulnerability_decision)
-        
-        if self.verbose:
-            is_vuln = result.get("is_vulnerable", False)
-            status = "VULNERABLE" if is_vuln else "SAFE"
-            print(f"\n[FLOW {flow_idx}] Analysis complete: {status}")
-            print(f"{'='*60}\n")
-        
-        return result
+                self._finalize_conversation_log(error_decision)
+            # 例外を再スロー
+            raise
 
     # ヘルパーメソッドを追加
     def _extract_taint_state(self, analyses: List[Dict]) -> Dict:
@@ -488,11 +503,23 @@ class FlowAnalyzer:
     def _finalize_conversation_log(self, vulnerability_decision: Dict):
         """会話ログを完了"""
         if self.conversation_logger:
-            decision = vulnerability_decision.get("vulnerability_decision", {})
-            details = vulnerability_decision.get("vulnerability_details", {})
+            # 防御的処理：vulnerability_decisionが不正な構造でもエラーにならないようにする
+            if not isinstance(vulnerability_decision, dict):
+                if self.verbose:
+                    print(f"[WARNING] _finalize_conversation_log: vulnerability_decision is not a dict")
+                vulnerability_decision = {}
+
+            decision = vulnerability_decision.get("vulnerability_decision")
+            if not isinstance(decision, dict):
+                decision = {}
+
+            details = vulnerability_decision.get("vulnerability_details")
+            if not isinstance(details, dict):
+                details = {}
+
             self.conversation_logger.end_flow(
-                is_vulnerable=decision.get("found", False),
-                vulnerability_type=details.get("vulnerability_type"),
+                is_vulnerable=decision.get("found", False) if isinstance(decision, dict) else False,
+                vulnerability_type=details.get("vulnerability_type") if isinstance(details, dict) else None,
                 vulnerability_details=details
             )
     
@@ -529,37 +556,48 @@ Code (first 300 chars): {code[:300]}...
                      chain_analyses: List[Dict],
                      vulnerability_decision: Dict) -> Dict:
         """結果構築"""
-        decision = vulnerability_decision.get("vulnerability_decision", {})
-        details = vulnerability_decision.get("vulnerability_details")
+        # vulnerability_decisionが不正な構造の場合に備えた防御的処理
+        if not isinstance(vulnerability_decision, dict):
+            if self.verbose:
+                print(f"[WARNING] vulnerability_decision is not a dict: {type(vulnerability_decision)}")
+            vulnerability_decision = {}
 
+        decision = vulnerability_decision.get("vulnerability_decision")
+        if not isinstance(decision, dict):
+            if self.verbose:
+                print(f"[WARNING] vulnerability_decision.vulnerability_decision is missing or invalid")
+            decision = {}
+
+        details = vulnerability_decision.get("vulnerability_details")
         # detailsがNoneの場合は空の辞書に設定
-        if details is None:
+        if not isinstance(details, dict):
+            if self.verbose:
+                print(f"[WARNING] vulnerability_details is missing or invalid: {type(details)}")
             details = {}
-        
+
         # structural_risks収集
         all_structural_risks = []
 
-
         # chain_analysesから収集
         for analysis in chain_analyses:
-            if "structural_risks" in analysis and analysis["structural_risks"]:
+            if isinstance(analysis, dict) and "structural_risks" in analysis and analysis["structural_risks"]:
                 all_structural_risks.extend(analysis["structural_risks"])
                 if self.verbose:
                     print(f"  Collected {len(analysis['structural_risks'])} risks from {analysis.get('phase', 'unknown')} phase")
-        
+
         # vulnerability_decisionからも収集
-        if "structural_risks" in vulnerability_decision:
+        if "structural_risks" in vulnerability_decision and isinstance(vulnerability_decision["structural_risks"], list):
             all_structural_risks.extend(vulnerability_decision["structural_risks"])
 
         if self.verbose and all_structural_risks:
             print(f"[DEBUG] Total structural_risks collected: {len(all_structural_risks)}")
-    
+
         return {
             "flow_index": flow_idx,
             "chain": chain,
             "vd": vd,
-            "is_vulnerable": decision.get("found", False),
-            "vulnerability_type": details.get("vulnerability_type"),
+            "is_vulnerable": decision.get("found", False) if isinstance(decision, dict) else False,
+            "vulnerability_type": details.get("vulnerability_type") if isinstance(details, dict) else None,
             "vulnerability_details": details,
             "findings": all_structural_risks,  # 確実に設定
             "chain_analyses": chain_analyses

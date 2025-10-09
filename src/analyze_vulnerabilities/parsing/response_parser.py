@@ -317,7 +317,11 @@ class ResponseParser:
                     found = bool(found_flag)
                 result["vulnerability_decision"] = {"found": found, "raw": parsed.get("vulnerability_decision", {})}
             result.setdefault("vulnerability_decision", {}).setdefault("raw", parsed.get("vulnerability_decision", {}))
-            result["vulnerability_details"] = parsed.get("vulnerability_details", {})
+
+            # vulnerability_details の安全な取得（Noneの場合は空辞書）
+            vuln_details = parsed.get("vulnerability_details")
+            result["vulnerability_details"] = vuln_details if isinstance(vuln_details, dict) else {}
+
             result["evaluated_sink_lines"] = parsed.get("evaluated_sink_lines", [])
             result["sink_targets"] = parsed.get("sink_targets", {})
             result["structural_risks"] = parsed.get("structural_risks", [])

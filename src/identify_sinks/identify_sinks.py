@@ -205,10 +205,16 @@ def analyze_external_function_as_sink(client, func_name: str, log_file: Path,
                                      retry_handler: LLMRetryHandler = None) -> tuple[list[dict], float]:
     """
     外部関数をシンクとして分析（LLM専用）
-    SINKS_JSON形式を優先し、なければPAREN_LIST形式にフォールバック
+    新しいプロンプト形式に対応：
+    {
+      "function": "...",
+      "is_sink_candidate": true|false,
+      "dangerous_params": [{"param_index": INT, "role": "...", "reason": "..."}],
+      "reason": "..."
+    }
     """
     start_time = time.time()  # 解析開始時間
-    
+
     # RAGを使用する場合、関連情報を取得
     rag_context = ""
     if use_rag and _rag_client is not None:
@@ -217,7 +223,7 @@ def analyze_external_function_as_sink(client, func_name: str, log_file: Path,
         except Exception as e:
             print(f"[WARN] RAG search failed: {e}")
             rag_context = ""
-    
+
     # プロンプトを読み込み
     if use_rag and rag_context and "[ERROR]" not in rag_context:
         prompt_template = _prompt_manager.load_prompt("sink_identification_with_rag.txt")
@@ -229,20 +235,20 @@ def analyze_external_function_as_sink(client, func_name: str, log_file: Path,
         prompt_template = _prompt_manager.load_prompt("sink_identification.txt")
         # 波括弧のエスケープ問題を回避
         prompt = prompt_template.replace("{func_name}", func_name)
-    
+
     with open(log_file, "a", encoding="utf-8") as lf:
         lf.write(f"# External Function: {func_name}\n")
         if use_rag and rag_context and "[ERROR]" not in rag_context:
             lf.write(f"## RAG Context:\n{rag_context[:500]}...\n")
         lf.write(f"## Prompt:\n{prompt}\n")
-    
+
     # LLMに問い合わせ（リトライハンドラーを使用）
     context = {
         "project": project_name,
         "function": func_name,
         "phase": "sink_identification"
     }
-    
+
     if retry_handler:
         resp = retry_handler.execute_with_retry(client, prompt, context)
     else:
@@ -252,54 +258,64 @@ def analyze_external_function_as_sink(client, func_name: str, log_file: Path,
             resp, _ = client.chat_completion_with_tokens(messages)
         else:
             resp = client.chat_completion(messages)
-    
+
     with open(log_file, "a", encoding="utf-8") as lf:
         lf.write(f"## Response:\n{resp}\n\n")
-    
+
     if not resp:
         return [], time.time() - start_time
-    
+
     sinks: List[Dict[str, Any]] = []
-    confidence = "medium"
 
     parsed = _extract_json_payload(resp)
     if parsed:
+        # 新しいプロンプト形式をパース
         if parsed.get("function") and parsed["function"] != func_name:
             print(f"[WARN] Response function mismatch: expected {func_name}, got {parsed.get('function')}")
 
-        confidence = _normalize_confidence(parsed.get("confidence"))
+        is_sink_candidate = parsed.get("is_sink_candidate", False)
+        dangerous_params = parsed.get("dangerous_params", [])
+        reason = parsed.get("reason", "")
 
-        sink_entries = parsed.get("sinks", [])
-        if isinstance(sink_entries, list):
-            for sink in sink_entries:
-                if not isinstance(sink, dict):
+        # is_sink_candidate が true の場合のみシンクとして扱う
+        if is_sink_candidate and isinstance(dangerous_params, list):
+            for param in dangerous_params:
+                if not isinstance(param, dict):
                     continue
-                param_index = sink.get("param_index")
+
+                param_index = param.get("param_index")
                 if not isinstance(param_index, int):
                     continue
 
-                reason = sink.get("reason", "")
-                if isinstance(reason, str):
-                    reason = reason.strip()
-                else:
-                    reason = ""
+                role = param.get("role", "unknown")
+                param_reason = param.get("reason", reason)
 
-                rule_id = _normalize_rule_id(sink.get("rule_id"))
+                # role から rule_id を推定
+                role_to_rule = {
+                    "dest": "weak_input_validation",
+                    "len": "weak_input_validation",
+                    "buf": "weak_input_validation",
+                    "output": "unencrypted_output",
+                }
+                rule_id = role_to_rule.get(role, "other")
 
                 sinks.append({
                     "kind": "function",
-                    "name": sink.get("name", func_name),
+                    "name": func_name,
                     "param_index": param_index,
                     "rule_id": rule_id,
-                    "reason": reason,
-                    "confidence": confidence
+                    "reason": param_reason,
+                    "confidence": "high",  # プロンプトが厳格なので信頼度高
+                    "role": role
                 })
 
-        non_sinks = parsed.get("non_sinks", [])
-        if non_sinks:
-            print(f"  → Non-sink parameters noted: {non_sinks}")
+            if sinks:
+                print(f"  → Sink identified: {func_name} with {len(sinks)} dangerous params: {[s['param_index'] for s in sinks]}")
+            else:
+                print(f"  → Sink candidate but no valid params: {func_name}")
+        else:
+            print(f"  → Not a sink: {func_name} (is_sink_candidate={is_sink_candidate})")
 
-        print(f"  → JSON parsed: {len(sinks)} sinks found (confidence: {confidence})")
         elapsed_time = time.time() - start_time
         return sinks, elapsed_time
 

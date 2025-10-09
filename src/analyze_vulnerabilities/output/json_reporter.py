@@ -471,6 +471,10 @@ class JSONReporter:
         if not self.project_root or not self.user_functions:
             return False
 
+        # file: プレフィックスを除去
+        if file_path.startswith("file:"):
+            file_path = file_path[5:]
+
         # ファイルパスを解決
         path = Path(file_path)
         if not path.is_absolute():
