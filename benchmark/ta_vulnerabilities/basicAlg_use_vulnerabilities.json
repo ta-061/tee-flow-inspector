@@ -1,0 +1,2396 @@
+{
+  "analysis_date": "2025-10-09T08:25:37.707514",
+  "analysis_time_seconds": 625.7454059123993,
+  "analysis_time_formatted": "10.4 minutes",
+  "llm_provider": "openai",
+  "analysis_mode": "hybrid",
+  "rag_enabled": false,
+  "statistics": {
+    "total_flows_analyzed": 20,
+    "flows_with_vulnerabilities": 8,
+    "total_vulnerability_lines": 7,
+    "total_structural_risk_lines": 40,
+    "total_detections_before_consolidation": 54,
+    "total_lines_after_consolidation": 47,
+    "consolidation_rate": "13.0%",
+    "severity_distribution": {
+      "critical": 0,
+      "high": 4,
+      "medium": 3,
+      "low": 1
+    },
+    "cwe_distribution": {
+      "CWE-125/125-like: Out-of-bounds or improper memory write": 1,
+      "CWE-125/126": 1,
+      "digest_final_output_to_ree_with_taint": 1,
+      "CWE-310": 1,
+      "CWE-311: Missing Crypto Initialization or Improper Handling Leading to Sensitive Data Disclosure": 1,
+      "data_exfiltration_to_REE": 1,
+      "CWE-125/131 Potential improper handling of tainted input in external crypto API": 1,
+      "CWE-200: Information Exposure": 1
+    },
+    "rule_distribution": {
+      "other": 26,
+      "shared_memory_overwrite": 14,
+      "weak_input_validation": 5,
+      "unencrypted_output": 1,
+      "equal": 1
+    },
+    "execution_time_seconds": 625.7454059123993,
+    "llm_calls": 64,
+    "cache_hits": 19,
+    "cache_partial_hits": 19,
+    "cache_misses": 1,
+    "cache_hit_rate": "95.0%",
+    "token_usage": {},
+    "retries": 0,
+    "retry_successes": 0
+  },
+  "total_vulnerability_lines": 7,
+  "vulnerabilities": [
+    {
+      "vulnerability_id": "VULN-0001",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaAes.c",
+      "line": 199,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-125/125-like: Out-of-bounds or improper memory write",
+      "functions": [
+        "TEE_CipherDoFinal"
+      ],
+      "sink_functions": [
+        "TEE_CipherDoFinal"
+      ],
+      "vulnerability_types": [
+        "CWE-125/125-like: Out-of-bounds or improper memory write"
+      ],
+      "rule_ids": [
+        "shared_memory_overwrite"
+      ],
+      "descriptions": [
+        "tainted l_dataLen and REE-visible outBuf used in final cipher call; bounds enforcement not verifiable from this context"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "g_CryptoTaHandle_Aes",
+          "g_CryptoTaAes_AesOper",
+          "TEE_CipherDoFinal"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-origin taints on l_pInbuf, l_pOutbuf, and l_dataLen propagated into the DoFinal call",
+          "propagation_path": [
+            "TEE_CipherDoFinal call at CryptoVerifyTaAes.c:199"
+          ],
+          "sink": "TEE_CipherDoFinal"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "tainted length used by cipher operation",
+            "no explicit per-call bounds validation visible at this level"
+          ],
+          "attack_scenario": "malformed input length could trigger buffer overrun/wrong-output length inside DoFinal",
+          "impact": "potential memory corruption or plaintext leakage if output buffer handling relies on unchecked length"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "CryptoVerifyTaAes.c:199",
+          "recommendation": "ensure l_dataLen is within valid bounds for l_pOutbuf and that DoFinal respects buffer sizes"
+        }
+      ],
+      "decision_rationales": [
+        "Memory-safety priority detects potential out-of-bounds risk on a crypto operation with tainted inputs"
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0002",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHash.c",
+      "line": 133,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-125/126",
+      "functions": [
+        "TEE_DigestDoFinal"
+      ],
+      "sink_functions": [
+        "TEE_DigestDoFinal"
+      ],
+      "vulnerability_types": [
+        "CWE-125/126",
+        "digest_final_output_to_ree_with_taint"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "DigestDoFinal called with tainted output target and pOutLen; bounds validation not explicit at this line",
+        "Digest finalization writes to REE-visible output using tainted inputs without bounds checks shown in this path"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "g_CryptoTaHandle_Pbkdf",
+          "g_CryptoTaPbkdf_PBKDF2",
+          "l_CryptoTaPbkdf_HMAC",
+          "g_CryptoTaHash_sha",
+          "TEE_DigestDoFinal"
+        ],
+        [
+          "TA_InvokeCommandEntryPoint",
+          "g_CryptoTaHandle_Rsa",
+          "g_CryptoTaRsa_rsaSignOper",
+          "g_CryptoTaHash_sha",
+          "TEE_DigestDoFinal"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-originated inputs (caller-provided output buffer and pOutLen)",
+          "propagation_path": [
+            "l_CryptoTaHash_sha -> TEE_DigestDoFinal @ CryptoVerifyTaHash.c:133"
+          ],
+          "sink": "digest output written to caller buffer without explicit per-call bounds verification"
+        },
+        {
+          "source": "REE-originated inBuf/inLen (tainted)",
+          "propagation_path": [
+            "g_CryptoTaHash_sha: input/inLen -> TEE_DigestDoFinal -> output/pOutLen @ CryptoVerifyTaHash.c:133"
+          ],
+          "sink": "output buffer written by TEE_DigestDoFinal on REE-visible memory"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "tainted output buffer length misinterpreted by local code",
+            "caller may provide insufficient pOutLen"
+          ],
+          "attack_scenario": "malformed pOutLen could cause truncated/dropped digest or buffer overrun in edge cases",
+          "impact": "possible information disclosure risk if digest partials are exposed, or memory corruption in adversarial scenarios"
+        },
+        {
+          "preconditions": [
+            "Taunted input fed into digest final"
+          ],
+          "attack_scenario": "Adversary-controlled input could influence final digest output length/content if misused downstream",
+          "impact": "Possible information leakage of digest content or misreporting of length if combined with downstream code"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "CryptoVerifyTaHash.c:133",
+          "recommendation": "validate pOutLen against dkLen and ensure output buffer capacity before DigestDoFinal"
+        },
+        {
+          "type": "bounds_check",
+          "location": "TEE_DigestDoFinal call site",
+          "recommendation": "Ensure pOutLen bounds and output buffer are validated before finalization"
+        }
+      ],
+      "decision_rationales": [
+        "Line writes into a TA-output buffer using tainted inputs without strong per-call bounds checks; memory-safety risk combined with potential partial exposure of digest",
+        "Line writes digest final into a REE-visible buffer using tainted data without explicit sanitization; cannot confirm secret leakage but boundary/sanitization concerns exist"
+      ],
+      "severity_distribution": {
+        "medium": 1,
+        "high": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0003",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHash.c",
+      "line": 251,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "low",
+      "confidence_level": "medium",
+      "primary_vulnerability_type": "CWE-310",
+      "functions": [
+        "TEE_DeriveKey"
+      ],
+      "sink_functions": [
+        "TEE_DeriveKey"
+      ],
+      "vulnerability_types": [
+        "CWE-310"
+      ],
+      "rule_ids": [
+        "other"
+      ],
+      "descriptions": [
+        "tainted REE inputs bound for key derivation without explicit sanitization"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "g_CryptoTaHandle_hmac",
+          "g_CryptoTaHash_hmac",
+          "TEE_DeriveKey"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-originated paramTypes/params passed to g_CryptoTaHash_hmac -> l_Param -> TEE_DeriveKey",
+          "propagation_path": [
+            "TA_InvokeCommandEntryPoint:251 -> TEE_DeriveKey"
+          ],
+          "sink": "TEE_DeriveKey"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            " tainted inputs reach key-derivation API",
+            "no sanitizers on the key material path"
+          ],
+          "attack_scenario": "an attacker controlling REE inputs influences derived key material parameters",
+          "impact": "potential leakage or misuse of derived key material within TA"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "TEE_DeriveKey call site",
+          "recommendation": "validate and sanitize inputs to key derivation, constrain lengths and counts"
+        }
+      ],
+      "decision_rationales": [
+        "TA-local key derivation uses tainted inputs; without sanitization, there is a minimal risk of leakage of sensitive values into REE-visible artifacts through the derivation parameters."
+      ],
+      "severity_distribution": {
+        "low": 1
+      },
+      "rule_distribution": {
+        "other": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0004",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHash.c",
+      "line": 253,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-311: Missing Crypto Initialization or Improper Handling Leading to Sensitive Data Disclosure",
+      "functions": [
+        "TEE_GetObjectBufferAttribute"
+      ],
+      "sink_functions": [
+        "TEE_GetObjectBufferAttribute"
+      ],
+      "vulnerability_types": [
+        "CWE-311: Missing Crypto Initialization or Improper Handling Leading to Sensitive Data Disclosure"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "Secret value retrieved into a REE-visible output buffer without sanitizer"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "g_CryptoTaHandle_hmac",
+          "g_CryptoTaHash_hmac",
+          "TEE_GetObjectBufferAttribute"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "params derived secret value from previous derive/key material (REE-originated) tainted",
+          "propagation_path": [
+            "g_CryptoTaHash_hmac -> TEE_GetObjectBufferAttribute @ CryptoVerifyTaHash.c:253"
+          ],
+          "sink": "TEE_GetObjectBufferAttribute writes SECRET_VALUE to output buffer in REE-visible memory"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Secret key material produced in TA can be copied to REE-visible memory without sanitization"
+          ],
+          "attack_scenario": "An attacker observing REE-visible output could access derived secret value",
+          "impact": "Secret data exposure; potential downstream misuse in REE context"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "memory_sanitization",
+          "location": "TEE_GetObjectBufferAttribute usage at line 253",
+          "recommendation": "Ensure sensitive outputs are masked or sanitized or ensure OUTPUT region is protected/private"
+        }
+      ],
+      "decision_rationales": [
+        "Exposure of secret material to REE-visible memory without sanitization or access control constitutes direct unencrypted_output risk"
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0005",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaPbkdf2.c",
+      "line": 264,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "medium",
+      "confidence_level": "medium",
+      "primary_vulnerability_type": "data_exfiltration_to_REE",
+      "functions": [
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "data_exfiltration_to_REE"
+      ],
+      "rule_ids": [
+        "other"
+      ],
+      "descriptions": [
+        "TA-private data being moved to REE-visible output without sanitization"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "g_CryptoTaHandle_Pbkdf",
+          "g_CryptoTaPbkdf_PBKDF2",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "TA-private buffers (U_tmp, tmp_hmac, resultBuf)",
+          "propagation_path": [
+            "U_tmp <- S via TEE_MemMove @ /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaPbkdf2.c:230",
+            "U_tmp <- tmp_hmac via TEE_MemMove @ /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaPbkdf2.c:241",
+            "output <- resultBuf via TEE_MemMove @ /workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaPbkdf2.c:264"
+          ],
+          "sink": "TEE_MemMove calls"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Caller supplies tainted inputs; no sanitization before copying into REE-visible output"
+          ],
+          "attack_scenario": " attacker observes REE-visible output containing derived key material",
+          "impact": "potential leakage of sensitive derived material to REE-visible memory"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "sanitization_before_copy",
+          "location": "g_CryptoTaPbkdf_PBKDF2 and/or g_CryptoTaHandle_Pbkdf_PBKDF2",
+          "recommendation": "clear sensitive TA-private buffers before copying to REE-visible memory or avoid copying sensitive data to REE-visible region"
+        }
+      ],
+      "decision_rationales": [
+        "Data copied from TA-private buffers to REE-visible output without explicit sanitization creates a potential exposure of sensitive cryptographic material"
+      ],
+      "severity_distribution": {
+        "medium": 1
+      },
+      "rule_distribution": {
+        "other": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0006",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaRsa.c",
+      "line": 345,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-125/131 Potential improper handling of tainted input in external crypto API",
+      "functions": [
+        "TEE_AsymmetricDecrypt"
+      ],
+      "sink_functions": [
+        "TEE_AsymmetricDecrypt"
+      ],
+      "vulnerability_types": [
+        "CWE-125/131 Potential improper handling of tainted input in external crypto API"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "tainted input buffers supplied to external API with REE-visible output; no bounds checks observed on this path"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "g_CryptoTaHandle_Rsa",
+          "g_CryptoTaRsa_rsaDecOper",
+          "TEE_AsymmetricDecrypt"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-originated inBuf/inLen/outBuf/pOutLen",
+          "propagation_path": [
+            "l_InputData <- inBuf @ file:line 345",
+            "l_InputLen <- inLen @ file:line 345",
+            "l_OutPut <- outBuf @ file:line 345",
+            "l_OutputLen <- pOutLen @ file:line 345"
+          ],
+          "sink": "TEE_AsymmetricDecrypt call with tainted buffers"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "tainted input length and data passed to decrypt API",
+            "no sanitizer observed prior to sink line"
+          ],
+          "attack_scenario": " attacker-controlled input decrypted into REE-visible buffer; potential buffer overrun if API doesn't enforce bounds",
+          "impact": "possible leakage or corruption of REE memory; potential denial of service or data integrity issues"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "TEE_AsymmetricDecrypt call site @ file:line 345",
+          "recommendation": "validate input bounds and ensure output length does not exceed allocated buffer"
+        }
+      ],
+      "decision_rationales": [
+        "tainted inputs passed directly into an external crypto API with REE-visible outputs and no sanitization evident on this path; memory-safety risk confirmed"
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0007",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaRsa.c",
+      "line": 415,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "medium",
+      "confidence_level": "medium",
+      "primary_vulnerability_type": "CWE-200: Information Exposure",
+      "functions": [
+        "TEE_AsymmetricSignDigest"
+      ],
+      "sink_functions": [
+        "TEE_AsymmetricSignDigest"
+      ],
+      "vulnerability_types": [
+        "CWE-200: Information Exposure"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "Output buffer is destination of signed data derived from tainted inputs; no explicit sanitization observed on this path"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "g_CryptoTaHandle_Rsa",
+          "g_CryptoTaRsa_rsaSignOper",
+          "TEE_AsymmetricSignDigest"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-originated inBuf/inLen or l_Hash",
+          "propagation_path": [
+            "inBuf/inLen -> l_Hash -> outBuf @ file:line 415"
+          ],
+          "sink": "Signature written to REE-visible outBuf"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            " tainted input could influence signature output or be exposed via outBuf "
+          ],
+          "attack_scenario": "Attacker could observe or modify output signature in REE-visible memory if not properly sanitized",
+          "impact": "Disclosure or tampering of cryptographic material exposed to REE"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "TEE_AsymmetricSignDigest call site",
+          "recommendation": "ensure outBuf length is sufficient and validated prior to write"
+        },
+        {
+          "type": "input_sanitization",
+          "location": "inBuf/inLen/hash source",
+          "recommendation": "validate/limit inputs before signing"
+        }
+      ],
+      "decision_rationales": [
+        "While cryptographic signatures themselves may not be secret, placing the output into a REE-visible buffer without explicit sanitization constitutes a potential information exposure risk given tainted inputs."
+      ],
+      "severity_distribution": {
+        "medium": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    }
+  ],
+  "total_finding_lines": 40,
+  "structural_risks": [
+    {
+      "finding_id": "RISK-0001",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoTaHandle.c",
+      "line": 325,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "g_CryptoTaHandle_Random"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Binding REE-visible buffer to a callee parameter; potential untrusted write target without explicit bounds checks here"
+      ],
+      "code_excerpts": [
+        "l_RandomLen = params[0].memref.size; l_pBuf = params[0].memref.buffer;"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:random",
+          "size_triplet:copy_len=l_RandomLen,src_sz=params[0].memref.size,dst_sz=l_RandomLen"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0002",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoTaHandle.c",
+      "line": 366,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "g_CryptoTaHandle_hmac"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Alias of REE-visible input buffer passed into helper; potential uncontrolled propagation of tainted REE data into cryptographic operation"
+      ],
+      "code_excerpts": [
+        "l_OutPut = params[0].memref.buffer; l_OutputLen = params[0].memref.size; l_Count = params[1].value.a; g_CryptoTaHash_hmac(...);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=l_OutputLen,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0003",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaAes.c",
+      "line": 140,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_InitRefAttribute"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Bound data from a REE-visible key buffer is being copied into a TA-private attribute without an explicit sanitizer beyond the static call"
+      ],
+      "code_excerpts": [
+        "TEE_InitRefAttribute(&l_pAttr, TEE_ATTR_SECRET_VALUE, aesOper.key, 16);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:unknown",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:secret",
+          "size_triplet:copy_len=16,src_sz=16,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0004",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaAes.c",
+      "line": 199,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "g_CryptoTaAes_AesOper"
+      ],
+      "sink_functions": [
+        "TEE_CipherDoFinal"
+      ],
+      "rules": [
+        "shared_memory_overwrite"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "l_pOutbuf is a REE-visible buffer and is written to by the cipher operation using a tainted length (l_dataLen) without an explicit bounds check on this path"
+      ],
+      "code_excerpts": [
+        "TEE_CipherDoFinal(l_pOperation, l_pInbuf, l_dataLen, l_pOutbuf, &l_dataLen);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0005",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaEntry.c",
+      "line": 479,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "g_CryptoTaHandle_Rsa"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Pointer arguments (inBuf/outBuf) originate from REE and are passed into a callee; potential for unchecked taint propagation into internal RSA signer"
+      ],
+      "code_excerpts": [
+        "g_CryptoTaRsa_rsaSignOper(l_rsaOper, l_InputData, l_OutPut, l_InputLen, &l_OutputLen);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0006",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHandle.c",
+      "line": 345,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "g_CryptoTaHandle_Sha"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Input buffer is REE-visible and used by the TA without explicit bounds or integrity checks prior to hashing"
+      ],
+      "code_excerpts": [
+        "l_InputData = params[0].memref.buffer; l_InputLen = params[0].memref.size;"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=l_InputLen,src_sz=l_InputLen,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0007",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHandle.c",
+      "line": 348,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "g_CryptoTaHandle_Sha"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Output buffer is REE-visible and written by TA plumbing without explicit sanitization/validation of length"
+      ],
+      "code_excerpts": [
+        "l_OutPut = params[2].memref.buffer; l_OutputLen = params[2].memref.size;"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=l_OutputLen,src_sz=l_OutputLen,dst_sz=l_OutputLen"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0008",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHandle.c",
+      "line": 393,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "g_CryptoTaHandle_Aes"
+      ],
+      "sink_functions": [
+        "unknown"
+      ],
+      "rules": [
+        "shared_memory_overwrite"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "l_aesOper.inBuf is a REE-visible buffer bound to a callee parameter; naive pointer assignment may overwrite adjacent REE-visible memory if bounds are violated"
+      ],
+      "code_excerpts": [
+        "l_aesOper.inBuf = params[1].memref.buffer;"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0009",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHandle.c",
+      "line": 394,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "g_CryptoTaHandle_Aes",
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "unknown",
+        "="
+      ],
+      "rules": [
+        "shared_memory_overwrite",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "l_aesOper.outBuf is a REE-visible buffer bound to a callee parameter; unvalidated write via TEE_MemMove could overflow if outBuf smaller than 6 bytes",
+        "Pointer binding at call-site: dest outBuf originates from REE-visible memory, binding to callee parameter; origin of test is TA-private"
+      ],
+      "code_excerpts": [
+        "l_aesOper.outBuf = params[2].memref.buffer;"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite",
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:private",
+          "size_triplet:copy_len=6,src_sz=6,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1,
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0010",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHandle.c",
+      "line": 396,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "g_CryptoTaHandle_Aes",
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "rules": [
+        "shared_memory_overwrite"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "TEE_MemMove writes into REE-visible outBuf without explicit bounds check on the same path; potential in-place overwrite risk",
+        "Writes into REE-visible buffer l_aesOper.outBuf using data from a local TA-private array without guaranteed destination capacity check"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(l_aesOper.outBuf, test, sizeof(test));"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=6,src_sz=0,dst_sz=0",
+          "src_region:TEE-private",
+          "sensitivity_label:private",
+          "size_triplet:copy_len=6,src_sz=6,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0011",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHandle.c",
+      "line": 423,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "g_CryptoTaHandle_Pbkdf"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Pointer binding: l_pResData bound to caller-provided memref.buffer in REE-visible memory"
+      ],
+      "code_excerpts": [
+        "l_pResData = params[0].memref.buffer;"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0012",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHandle.c",
+      "line": 446,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "g_CryptoTaHandle_Rsa"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Input buffer from REE is used as in/out in RSA operation; potential for in-place operations on REE-visible memory without clear bounds checks on this path"
+      ],
+      "code_excerpts": [
+        "l_InputData = params[0].memref.buffer; l_InputLen = params[0].memref.size;"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0013",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHash.c",
+      "line": 97,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "g_CryptoTaHash_sha"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Input pointer originates from REE-visible memory and is passed directly to a crypto digest without explicit sanitization"
+      ],
+      "code_excerpts": [
+        "l_InputData = input; l_InputLen = inLen;"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=inLen,src_sz=inLen,dst_sz=inLen"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0014",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHash.c",
+      "line": 122,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "g_CryptoTaHash_sha"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Output buffer is REE-visible and supplied to digest final; no explicit bounds validation on the destination length prior to write"
+      ],
+      "code_excerpts": [
+        "ret = TEE_DigestDoFinal(l_OperationHandle, NULL, 0, output, pOutLen);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=l_OutputLen,src_sz=l_OutputLen,dst_sz=l_OutputLen"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0015",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHash.c",
+      "line": 130,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "g_CryptoTaHash_sha"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "weak_input_validation"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Input buffer and length come from caller tainted sources and are used to update digest without explicit bounds validation in this path"
+      ],
+      "code_excerpts": [
+        "TEE_DigestUpdate(l_OperationHandle, input, inLen);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0016",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHash.c",
+      "line": 132,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "g_CryptoTaHash_sha"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "weak_input_validation"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "DigestDoFinal uses caller-provided output buffer length pointer; potential overflow if pOutLen not properly validated upstream"
+      ],
+      "code_excerpts": [
+        "ret = TEE_DigestDoFinal(l_OperationHandle, NULL, 0, output, pOutLen);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0017",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHash.c",
+      "line": 133,
+      "consolidated": true,
+      "detection_count": 3,
+      "primary_rule": "other",
+      "functions": [
+        "g_CryptoTaHash_sha",
+        "TEE_DigestDoFinal"
+      ],
+      "sink_functions": [
+        "=",
+        "TEE_DigestDoFinal"
+      ],
+      "rules": [
+        "other",
+        "shared_memory_overwrite",
+        "weak_input_validation"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Pointer to length out len is REE-visible and used to control final write length without explicit taint handling",
+        "Output buffer and length are REE-visible and written by TA without explicit bounds validation on the same path",
+        "Output buffer and its length are derived from untrusted inputs and used to receive digest without explicit bounds checks beyond the pOutLen contract",
+        "In-place write into REE-visible output buffer (output) driven by tainted caller data (pOutLen) with no explicit bounds enforcement in this path",
+        "Output length and destination buffer are tainted/controlled by REE inputs; finalization writes into a REE-visible buffer without explicit bounds verification here",
+        "Final digest writes into a REE-visible buffer using a tainted length/offset without an explicit bounds check in this path",
+        "Digest finalization writes to REE-visible memory with tainted inputs without accompanying bounds sanitization",
+        "Final digest output is written into a REE-visible buffer using tainted TA context data without an explicit bounds check on the same path"
+      ],
+      "code_excerpts": [
+        "l_OutputLen = pOutLen ? *pOutLen : 0;",
+        "ret = TEE_DigestDoFinal(l_OperationHandle, NULL, 0, output, pOutLen);",
+        "TEE_DigestDoFinal(l_OperationHandle, NULL, 0, output, pOutLen);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other",
+          "shared_memory_overwrite",
+          "weak_input_validation"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=pOutLen,src_sz=pOutLen,dst_sz=pOutLen",
+          "flow_dir:TA->REE",
+          "dst_region:REE-visible",
+          "size_triplet:copy_len=*,src_sz=*,dst_sz=*",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1,
+        "other": 1,
+        "weak_input_validation": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0018",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHash.c",
+      "line": 135,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "TEE_DigestDoFinal"
+      ],
+      "sink_functions": [
+        "TEE_DigestDoFinal"
+      ],
+      "rules": [
+        "shared_memory_overwrite"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "pOutLen is REE-visible and will be written with the digest length without explicit sanitizer on destination size"
+      ],
+      "code_excerpts": [
+        "TF(\"The out put length is :%d\\n\", *pOutLen);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=(*pOutLen),src_sz=(*pOutLen),dst_sz=(*pOutLen)"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0019",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHash.c",
+      "line": 251,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_DeriveKey"
+      ],
+      "sink_functions": [
+        "TEE_DeriveKey"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "tainted REE-provided parameters (l_Param) are passed into a key-derivation API; potential leakage or improper handling into the output key object",
+        "structural risk: tainted inputs bound to a cryptographic API call without sanitizer"
+      ],
+      "code_excerpts": [
+        "TEE_DeriveKey(l_OperationHandle, l_Param, 3, l_SvHandle);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:private",
+          "size_triplet:copy_len=3,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0020",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHash.c",
+      "line": 253,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "unencrypted_output",
+      "functions": [
+        "TEE_GetObjectBufferAttribute"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "unencrypted_output",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Secret value retrieved into a REE-visible output buffer without sanitizer; risk of leakage of sensitive material",
+        "Call-site binding: output buffer (REE-visible) is destination for TA-derived data; potential taint propagation into REE"
+      ],
+      "code_excerpts": [
+        "ret = TEE_GetObjectBufferAttribute(l_SvHandle, TEE_ATTR_SECRET_VALUE, output, &OutLen);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "unencrypted_output",
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:secret",
+          "size_triplet:copy_len=OutLen,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1,
+        "unencrypted_output": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0021",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaHash.c",
+      "line": 450,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "g_CryptoTaHash_sha"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Input buffer and output buffer are used across a crypto digest operation; potential tainted input into a digest with output stored in a local/TA-private area without explicit REE exposure"
+      ],
+      "code_excerpts": [
+        "g_CryptoTaHash_sha(EN_OP_SHA1, g_RsaRaw, sizeof(g_RsaRaw), l_Hash, pOutLen);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->TA",
+          "src_region:unknown",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0022",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaOther.c",
+      "line": 120,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_GenerateRandom"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Call-site binding of tainted arguments (len, output) to callee parameters without explicit bounds handling in this mid-hop"
+      ],
+      "code_excerpts": [
+        "TEE_GenerateRandom(output, len);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:random",
+          "size_triplet:copy_len=len,src_sz=len,dst_sz=len"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0023",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaOther.c",
+      "line": 328,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "g_CryptoTaOther_Random"
+      ],
+      "sink_functions": [
+        "TEE_GenerateRandom"
+      ],
+      "rules": [
+        "shared_memory_overwrite"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Writes into REE-visible buffer via tainted length and pointer without explicit bounds checks in this context"
+      ],
+      "code_excerpts": [
+        "TEE_GenerateRandom(output, len);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=len,src_sz=len,dst_sz=len"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0024",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaPbkdf2.c",
+      "line": 110,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "l_CryptoTaPbkdf_HMAC"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "shared_memory_overwrite"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Potential write into key_append[64U] when klen > 64U path is taken and later used for HMAC; no explicit sanitizer on these writes besides the guard"
+      ],
+      "code_excerpts": [
+        "if(klen > 64U) { TEE_MemMove(key_append, key, 64U); } else { TEE_MemMove(key_append, key, klen); }"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0025",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaPbkdf2.c",
+      "line": 125,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "l_CryptoTaPbkdf_HMAC"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "l_HashLen and related buffers (X, Y, U_tmp) are written based on tainted inputs without full bounds validation"
+      ],
+      "code_excerpts": [
+        "for(index = 0U; index < 64U; index++) { X[index] = key_append[index]^ipad; Y[index] = key_append[index]^opad; }"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0026",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaPbkdf2.c",
+      "line": 131,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "l_CryptoTaPbkdf_HMAC"
+      ],
+      "sink_functions": [
+        "array_write"
+      ],
+      "rules": [
+        "weak_input_validation"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "stringText is populated from X and then extended by tainted text input without explicit bounds checks"
+      ],
+      "code_excerpts": [
+        "for(index = 0U; index < tlen; index++) { stringText[64 + index] = text[index]; }"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0027",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaPbkdf2.c",
+      "line": 156,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Copying internal derived data (y_Hash) to an output buffer that is exposed to the REE, enabling potential leakage of intermediate material derived from tainted inputs"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(output, y_Hash, 20U);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:unknown",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=20,src_sz=20,dst_sz=20"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0028",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaPbkdf2.c",
+      "line": 229,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "TEE_MemFill"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "shared_memory_overwrite"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Writes into a TA-private stack/region buffer without bounds checks on the same path (U_tmp), potential in-place modification within private memory"
+      ],
+      "code_excerpts": [
+        "TEE_MemFill(U_tmp, 0, 128);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "flow_dir:unknown",
+          "src_region:TEE-private",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=128,src_sz=0,dst_sz=128"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0029",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaPbkdf2.c",
+      "line": 230,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "=",
+        "array_write"
+      ],
+      "rules": [
+        "other",
+        "weak_input_validation"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "src buffer S is REE-visible and is copied into a TA-private destination U_tmp; length Slen tainted by caller",
+        "per-byte write to U_tmp is governed by Slen; no explicit bounds check on U_tmp write path beyond monolithic move"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(U_tmp, S, Slen);",
+        "U_tmp[index] = ... (inferred from loop when combining U_tmp and tmp_hmac)"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other",
+          "weak_input_validation"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=Slen,src_sz=Slen,dst_sz=Slen"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1,
+        "weak_input_validation": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0030",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaPbkdf2.c",
+      "line": 240,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "TEE_MemFill"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "shared_memory_overwrite"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Second in-place zeroing of U_tmp before subsequent use; writes into TA-private buffer without explicit bounds checks"
+      ],
+      "code_excerpts": [
+        "TEE_MemFill(U_tmp, 0, 128U);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "flow_dir:unknown",
+          "src_region:TEE-private",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=128,src_sz=0,dst_sz=128"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0031",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaPbkdf2.c",
+      "line": 241,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "src buffer tmp_hmac is TEA-private while destination U_tmp is TA-private; potential cross-buffer taint transfer"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(U_tmp, tmp_hmac, 20U);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:unknown",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=20,src_sz=20,dst_sz=20"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0032",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaPbkdf2.c",
+      "line": 264,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "final copy of resultBuf to output; output is REE-visible and result length dkLen controls copy"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(output, resultBuf, dkLen);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=dkLen,src_sz=dkLen,dst_sz=dkLen"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0033",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaRsa.c",
+      "line": 152,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_MemFill"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Memory initialization fills a TA-private array; no taint sources or bounds checks observed on this mid-hop"
+      ],
+      "code_excerpts": [
+        "TEE_MemFill(g_PrivateKeyAttr, 0, 3*(sizeof(TEE_Attribute)));"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:unknown",
+          "src_region:TEE-private",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=3*(sizeof(TEE_Attribute)),src_sz=0,dst_sz=0"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0034",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaRsa.c",
+      "line": 210,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_MemFill"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Filling a TA-private array with a known pattern; potential for misuse if this memory is later exposed or misinterpreted by external inputs",
+        "Filling a TA-private buffer with data derived from REE input without explicit bounds validation on the destination size"
+      ],
+      "code_excerpts": [
+        "TEE_MemFill(g_PublicKeyAttr, 0, 2*(sizeof(TEE_Attribute)));"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:unknown",
+          "src_region:TEE-private",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?",
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "size_triplet:copy_len=2*(sizeof(TEE_Attribute)),src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0035",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaRsa.c",
+      "line": 345,
+      "consolidated": true,
+      "detection_count": 3,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "g_CryptoTaRsa_rsaDecOper",
+        "TEE_AsymmetricDecrypt"
+      ],
+      "sink_functions": [
+        "TEE_AsymmetricDecrypt",
+        "="
+      ],
+      "rules": [
+        "shared_memory_overwrite",
+        "equal",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Decrypt output is written into a REE-visible buffer without a verifiable bounds check on the same path",
+        "Output buffer written via decryption path using tainted REE input without explicit bounds verification on the same path",
+        "Call-site binding of REE-visible buffers to callee parameters (inBuf/outBuf) exposes aliasing risk via shared memory handoff",
+        "tainted inputs passed to external decryption API with output written to a REE-visible buffer"
+      ],
+      "code_excerpts": [
+        "l_TeeRetVal = TEE_AsymmetricDecrypt(g_pOperationHandle, NULL, 0, inBuf, inLen, outBuf, pOutLen);",
+        "g_CryptoTaRsa_rsaDecOper(l_rsaOper, l_InputData, l_OutPut, l_InputLen, &l_OutputLen);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite",
+          "weak_input_validation"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "equal": 1,
+        "shared_memory_overwrite": 1,
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0036",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaRsa.c",
+      "line": 415,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_AsymmetricSignDigest"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Output buffer/outLen are derived from REE-visible inputs and used as a destination for cryptographic operation without explicit sanitizer on those buffers"
+      ],
+      "code_excerpts": [
+        "l_TeeRetVal = TEE_AsymmetricSignDigest(g_pOperationHandle, NULL, 0, l_Hash, 20, outBuf, pOutLen);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0037",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaRsa.c",
+      "line": 471,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "g_CryptoTaRsa_rsaEncOper"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Encryption writes to a caller-provided output buffer; potential for unintended data exposure if buffers alias or bounds are improper",
+        "Binding of input buffer to callee parameter may alias REE-visible memory; potential per-byte copy risk across buffers",
+        "Out buffer bound could be tainted by caller and written by RSA operation; potential overwrite risk if lengths not synchronized"
+      ],
+      "code_excerpts": [
+        "g_CryptoTaRsa_rsaEncOper(l_rsaOper, l_InputData, l_OutPut, l_InputLen, &l_OutputLen);",
+        "l_InputData = params[0].memref.buffer; l_InputLen = params[0].memref.size;",
+        "l_OutPut = params[1].memref.buffer; l_OutputLen = params[1].memref.size;"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0038",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaRsa.c",
+      "line": 483,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "g_CryptoTaRsa_rsaVerifyOper"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "shared_memory_overwrite"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        " TA writes verified result into a REE-visible output buffer using a tainted input path without explicit bounds checks on the same path"
+      ],
+      "code_excerpts": [
+        "g_CryptoTaRsa_rsaVerifyOper(l_rsaOper, l_InputData, l_OutPut, l_InputLen, &l_OutputLen);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0039",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaRsa.c",
+      "line": 490,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "shared_memory_overwrite"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Writing into a REE-visible output buffer via a direct memory copy path without explicit bounds checks on the same path"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(outBuf, VERIFY_RESULT_FAIL, sizeof(VERIFY_RESULT_FAIL));"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:unknown",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=sizeof(VERIFY_RESULT_FAIL),src_sz=sizeof(VERIFY_RESULT_FAIL),dst_sz=sizeof(VERIFY_RESULT_FAIL)"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0040",
+      "file": "/workspace/benchmark/basicAlg_use/ta/CryptoVerifyTaes.c",
+      "line": 199,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "TEE_CipherDoFinal"
+      ],
+      "sink_functions": [
+        "TEE_CipherDoFinal"
+      ],
+      "rules": [
+        "shared_memory_overwrite"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "l_pOutbuf is a REE-visible buffer and is written using a tainted length (l_dataLen) without explicit path-bound checks in this scope"
+      ],
+      "code_excerpts": [
+        "l_RetVal = TEE_CipherDoFinal(l_pOperation, l_pInbuf, l_dataLen, l_pOutbuf, &l_dataLen);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    }
+  ]
+}

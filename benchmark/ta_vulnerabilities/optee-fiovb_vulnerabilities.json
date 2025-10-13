@@ -1,0 +1,996 @@
+{
+  "analysis_date": "2025-10-09T07:58:38.131837",
+  "analysis_time_seconds": 600.4325132369995,
+  "analysis_time_formatted": "10.0 minutes",
+  "llm_provider": "openai",
+  "analysis_mode": "hybrid",
+  "rag_enabled": false,
+  "statistics": {
+    "total_flows_analyzed": 13,
+    "flows_with_vulnerabilities": 7,
+    "total_vulnerability_lines": 6,
+    "total_structural_risk_lines": 8,
+    "total_detections_before_consolidation": 22,
+    "total_lines_after_consolidation": 14,
+    "consolidation_rate": "36.4%",
+    "severity_distribution": {
+      "critical": 0,
+      "high": 3,
+      "medium": 5,
+      "low": 0
+    },
+    "cwe_distribution": {
+      "CWE-125/125-like: Out-of-bounds read/write via tainted memmove": 2,
+      "CWE-125/126: Out-of-bounds/read/write, potential buffer overflow": 2,
+      "CWE-420/weak_input_validation": 1,
+      "CWE-330: Use of a Broken or Risky Cryptographic Primitive (informational mapping placeholder)": 1,
+      "CWE-125: Out-of-bounds Read": 1,
+      "Memory-safety / potential out-of-bounds copy": 1,
+      "CWE-1320/Memory overwrite via tainted copy": 1
+    },
+    "rule_distribution": {
+      "weak_input_validation": 4,
+      "other": 5,
+      "shared_memory_overwrite": 4,
+      "unknown": 1,
+      "unencrypted_output": 1,
+      "=": 1
+    },
+    "execution_time_seconds": 600.4325132369995,
+    "llm_calls": 46,
+    "cache_hits": 12,
+    "cache_partial_hits": 12,
+    "cache_misses": 1,
+    "cache_hit_rate": "92.3%",
+    "token_usage": {},
+    "retries": 1,
+    "retry_successes": 1
+  },
+  "total_vulnerability_lines": 6,
+  "vulnerabilities": [
+    {
+      "vulnerability_id": "VULN-0001",
+      "file": "/workspace/benchmark/optee-fiovb/ta/entry.c",
+      "line": 36,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-125/125-like: Out-of-bounds read/write via tainted memmove",
+      "functions": [
+        "get_named_object_name"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "CWE-125/125-like: Out-of-bounds read/write via tainted memmove",
+        "CWE-125/126: Out-of-bounds/read/write, potential buffer overflow"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "tainted input used as source in memmove to destination buffer without bounds validation",
+        "first memmove could overflow destination if pref_len exceeds actual buffer capacity"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "write_persist_value",
+          "increase_boot_firmware",
+          "write_value",
+          "get_named_object_name",
+          "TEE_MemMove"
+        ],
+        [
+          "TA_InvokeCommandEntryPoint",
+          "write_persist_value",
+          "increase_boot_firmware",
+          "is_rollback_protected",
+          "read_value",
+          "get_named_object_name",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-originated input (name_orig, name_orig_size) used as source for TEE_MemMove",
+          "propagation_path": [
+            "name_orig_size tainted at get_named_object_name:25-33",
+            "get_named_object_name:36",
+            "get_named_object_name:39"
+          ],
+          "sink": "TEE_MemMove into name buffer"
+        },
+        {
+          "source": "REE-originated name/origin size passed into read_value -> get_named_object_name",
+          "propagation_path": [
+            "name_orig and name_orig_size tainted at call site in read_value @ entry.c:116",
+            "get_named_object_name at entry.c:25-39"
+          ],
+          "sink": "TEE_MemMove copies into name buffer"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "tainted length/value conditions combined with fixed destination buffer size"
+          ],
+          "attack_scenario": "an attacker controls name_orig and name_orig_size to force over-read/overwrite in destination buffer via memmove",
+          "impact": "potential memory corruption or leakage in subsequent processing"
+        },
+        {
+          "preconditions": [
+            "destination buffer smaller than pref_len or name_orig_size not accounting for pref_len"
+          ],
+          "attack_scenario": "craft inputs where name buffer insufficient to hold pref_len or name_orig_size+pref_len",
+          "impact": "possible buffer overflow leading to memory corruption or crash"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "get_named_object_name:25-42",
+          "recommendation": "validate name_orig_size against remaining buffer capacity before memmove; ensure pref_len + name_orig_size fits name_full"
+        },
+        {
+          "type": "bounds_check",
+          "location": "get_named_object_name:29-33",
+          "recommendation": "ensure destination buffer has at least final size (name_orig_size + pref_len) before first memmove; validate both copies separately"
+        }
+      ],
+      "decision_rationales": [
+        "tainted inputs are copied with memmove without explicit per-call bounds checks; both sink calls are vulnerable",
+        "Although there is a total-length check, per-copy bounds are not independently proven safe; treat as potential vulnerability requiring bounds tightening"
+      ],
+      "severity_distribution": {
+        "high": 1,
+        "medium": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0002",
+      "file": "/workspace/benchmark/optee-fiovb/ta/entry.c",
+      "line": 39,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-125/125-like: Out-of-bounds read/write via tainted memmove",
+      "functions": [
+        "get_named_object_name"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "CWE-125/125-like: Out-of-bounds read/write via tainted memmove",
+        "CWE-125/126: Out-of-bounds/read/write, potential buffer overflow"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "tainted input used with computed offset/length in memmove without bounds checks",
+        "second memmove could overflow destination if name_orig_size exceeds remaining space"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "write_persist_value",
+          "increase_boot_firmware",
+          "write_value",
+          "get_named_object_name",
+          "TEE_MemMove"
+        ],
+        [
+          "TA_InvokeCommandEntryPoint",
+          "write_persist_value",
+          "increase_boot_firmware",
+          "is_rollback_protected",
+          "read_value",
+          "get_named_object_name",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-originated input (name_orig, name_orig_size) used as source for TEE_MemMove",
+          "propagation_path": [
+            "name_orig_size tainted at get_named_object_name:25-33",
+            "get_named_object_name:36",
+            "get_named_object_name:39"
+          ],
+          "sink": "TEE_MemMove into name buffer"
+        },
+        {
+          "source": "REE-originated name/origin size passed into read_value -> get_named_object_name",
+          "propagation_path": [
+            "name_orig and name_orig_size tainted at call site in read_value @ entry.c:116",
+            "get_named_object_name at entry.c:25-39"
+          ],
+          "sink": "TEE_MemMove copies into name buffer"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "tainted length/value conditions combined with fixed destination buffer size"
+          ],
+          "attack_scenario": "an attacker controls name_orig and name_orig_size to force over-read/overwrite in destination buffer via memmove",
+          "impact": "potential memory corruption or leakage in subsequent processing"
+        },
+        {
+          "preconditions": [
+            "destination buffer smaller than pref_len or name_orig_size not accounting for pref_len"
+          ],
+          "attack_scenario": "craft inputs where name buffer insufficient to hold pref_len or name_orig_size+pref_len",
+          "impact": "possible buffer overflow leading to memory corruption or crash"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "get_named_object_name:25-42",
+          "recommendation": "validate name_orig_size against remaining buffer capacity before memmove; ensure pref_len + name_orig_size fits name_full"
+        },
+        {
+          "type": "bounds_check",
+          "location": "get_named_object_name:29-33",
+          "recommendation": "ensure destination buffer has at least final size (name_orig_size + pref_len) before first memmove; validate both copies separately"
+        }
+      ],
+      "decision_rationales": [
+        "tainted inputs are copied with memmove without explicit per-call bounds checks; both sink calls are vulnerable",
+        "Although there is a total-length check, per-copy bounds are not independently proven safe; treat as potential vulnerability requiring bounds tightening"
+      ],
+      "severity_distribution": {
+        "high": 1,
+        "medium": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0003",
+      "file": "/workspace/benchmark/optee-fiovb/ta/entry.c",
+      "line": 89,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "medium",
+      "confidence_level": "medium",
+      "primary_vulnerability_type": "CWE-420/weak_input_validation",
+      "functions": [
+        "TEE_CreatePersistentObject"
+      ],
+      "sink_functions": [
+        "TEE_CreatePersistentObject"
+      ],
+      "vulnerability_types": [
+        "CWE-420/weak_input_validation",
+        "CWE-330: Use of a Broken or Risky Cryptographic Primitive (informational mapping placeholder)"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "TA-originated inputs used to construct/alter a persistent object without explicit bounds validation",
+        "tainted inputs passed to a persistent object creation API without explicit per-parameter bounds validation"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "write_persist_value",
+          "increase_boot_firmware",
+          "write_value",
+          "TEE_CreatePersistentObject"
+        ],
+        [
+          "TA_InvokeCommandEntryPoint",
+          "write_persist_value",
+          "write_value",
+          "TEE_CreatePersistentObject"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-visible inputs from write_value call",
+          "propagation_path": [
+            "write_value -> TEE_CreatePersistentObject @ entry.c:89"
+          ],
+          "sink": "TEE_CreatePersistentObject"
+        },
+        {
+          "source": "REE-originated parameters used to construct name_full and value",
+          "propagation_path": [
+            "name, name_sz -> name_full via get_named_object_name @ 84-85",
+            "name_full, name_full_sz, value, value_sz, overwrite -> TEE_CreatePersistentObject @ 89"
+          ],
+          "sink": "TEE_CreatePersistentObject"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "tainted object name and data passed to persistent storage without bounds/format checks"
+          ],
+          "attack_scenario": "an attacker could push crafted name/value pairs to overwrite or create objects",
+          "impact": "potential unauthorized object creation or data corruption in persistent storage"
+        },
+        {
+          "preconditions": [
+            "name can collide with existing object",
+            "value_sz unvalidated for object size",
+            "overwrite flag could permit unintended updates"
+          ],
+          "attack_scenario": "An attacker providing crafted name/value could overwrite a persistent object, potentially leaking or corroding stored data",
+          "impact": "Moderate risk of persistent data corruption or leakage if object management is insecure"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "write_value -> TEE_CreatePersistentObject @ entry.c:89",
+          "recommendation": "validate name_full/name_full_sz and value/value_sz before use"
+        },
+        {
+          "type": "bounds_check",
+          "location": "write_value @ 84-92",
+          "recommendation": "validate name and value lengths against allowed ranges before object creation"
+        },
+        {
+          "type": "input_sanitization",
+          "location": "write_value @ 65-68 / 84-92",
+          "recommendation": "sanitize inputs or enforce strict policies on allowlisted names/values"
+        }
+      ],
+      "decision_rationales": [
+        "Input taint combined with a storage API call without explicit validation constitutes a weak-input-via-sink concern.",
+        "External API call uses tainted inputs without complete, explicit bounds validation in this path; promotion to unencrypted_output not applicable, but risk is present via weak_input_validation"
+      ],
+      "severity_distribution": {
+        "medium": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0004",
+      "file": "/workspace/benchmark/optee-fiovb/ta/entry.c",
+      "line": 128,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "medium",
+      "confidence_level": "medium",
+      "primary_vulnerability_type": "CWE-125: Out-of-bounds Read",
+      "functions": [
+        "TEE_ReadObjectData"
+      ],
+      "sink_functions": [
+        "TEE_ReadObjectData"
+      ],
+      "vulnerability_types": [
+        "CWE-125: Out-of-bounds Read"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "tainted inputs passed to a memory read without bounds validation"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "write_persist_value",
+          "increase_boot_firmware",
+          "is_rollback_protected",
+          "read_value",
+          "TEE_ReadObjectData"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-originated inputs used to populate value buffers",
+          "propagation_path": [
+            "read_value -> read_object_data at /workspace/benchmark/optee-fiovb/ta/entry.c:128"
+          ],
+          "sink": "TEE_ReadObjectData reads into value with value_sz from a tainted source"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "tainted value_sz from REE could exceed actual available object data"
+          ],
+          "attack_scenario": "malformed/large value_sz could cause a read beyond object bounds",
+          "impact": "potential information disclosure or crash due to invalid read"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "read_value/TEE_ReadObjectData call path",
+          "recommendation": "enforce proper bounds on value_sz before read"
+        }
+      ],
+      "decision_rationales": [
+        "tainted inputs used as read size without explicit sanitization in the mid-path"
+      ],
+      "severity_distribution": {
+        "medium": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0005",
+      "file": "/workspace/benchmark/optee-fiovb/ta/entry.c",
+      "line": 268,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "medium",
+      "confidence_level": "medium",
+      "primary_vulnerability_type": "Memory-safety / potential out-of-bounds copy",
+      "functions": [
+        "write_persist_value"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "Memory-safety / potential out-of-bounds copy"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "tainted length used for memory move from REE-visible buffer into TA-private memory without per-call bounds enforcement"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "write_persist_value",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "params[1].memref.buffer (REE-visible)",
+          "propagation_path": [
+            "params[1].memref.buffer @ /workspace/benchmark/optee-fiovb/ta/entry.c:268"
+          ],
+          "sink": "TEE_MemMove into local TA buffer 'value' with length value_sz"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "value_sz derived from REE input without explicit bounds enforcement"
+          ],
+          "attack_scenario": "anomalous large value_sz could cause out-of-bounds read from REE-visible buffer into TA-private memory",
+          "impact": "potential information disclosure or memory corruption within TA context"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "write_persist_value @ /workspace/benchmark/optee-fiovb/ta/entry.c:268",
+          "recommendation": "validate value_sz against params[1].memref.size and TA heap limits before MemMove"
+        }
+      ],
+      "decision_rationales": [
+        "TA-MemMove uses tainted length from REE input; no evident sanitizer on this specific copy path to guarantee safety"
+      ],
+      "severity_distribution": {
+        "medium": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0006",
+      "file": "/workspace/benchmark/optee-fiovb/ta/entry.c",
+      "line": 326,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-1320/Memory overwrite via tainted copy",
+      "functions": [
+        "read_persist_value"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "CWE-1320/Memory overwrite via tainted copy"
+      ],
+      "rule_ids": [
+        "shared_memory_overwrite"
+      ],
+      "descriptions": [
+        "tainted length used to copy into REE-visible buffer without bounds check on the same line"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "read_persist_value",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "TA-originated value buffer",
+          "propagation_path": [
+            "read_persist_value: pt/params -> value -> TEE_MemMove(params[1].memref.buffer, value, value_sz) @ entry.c:326"
+          ],
+          "sink": "TEE_MemMove into REE-visible buffer using tainted length value_sz"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "value_sz tainted from REE",
+            "destination memref.buffer REE-visible",
+            "no bounds check on same path"
+          ],
+          "attack_scenario": "copy more data than destination can hold, leading to memory corruption or leakage",
+          "impact": "potential memory corruption, information leakage, or crash"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "entry.c:326",
+          "recommendation": "validate value_sz against params[1].memref.size before copy"
+        }
+      ],
+      "decision_rationales": [
+        "tainted data is copied into a REE-visible buffer without explicit bounds validation on the copy path"
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      }
+    }
+  ],
+  "total_finding_lines": 8,
+  "structural_risks": [
+    {
+      "finding_id": "RISK-0001",
+      "file": "/workspace/benchmark/optee-fiovb/ta/entry.c",
+      "line": 36,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "get_named_object_name",
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "TEE_MemMove",
+        "="
+      ],
+      "rules": [
+        "weak_input_validation",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "tainted input name_orig_size copied into destination buffer without explicit per-call bounds validation in this path",
+        "tainted REE input (name_orig/name_orig_size) copied into TA-side buffer without explicit bounds validation on this path",
+        "tainted REE input (name, pref_len) bound to a callee buffer without explicit bounds validation on this path",
+        "tainted inputs used as source in memory copy into output buffer without explicit per-call bounds sanitization",
+        "tainted input (name_orig or related length) used as copy length to a destination buffer with no explicit per-call bounds check on this path",
+        "tainted input used as destination/source in memory move with a preceding bounds check; potential bounds-unsafe write into REE-visible buffer"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(name, named_value_prefix, pref_len);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation",
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?",
+          "dst_region:TA-private",
+          "flow_dir:TA->REE",
+          "dst_region:REE-visible"
+        ]
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1,
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0002",
+      "file": "/workspace/benchmark/optee-fiovb/ta/entry.c",
+      "line": 39,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "get_named_object_name",
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "=",
+        "TEE_MemMove",
+        "array_write"
+      ],
+      "rules": [
+        "weak_input_validation",
+        "shared_memory_overwrite"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "tainted inputs used as source in memory copy into output buffer without explicit per-call bounds sanitization",
+        "tainted input (name_orig/name_orig_size) used as copy source with derived destination (name + pref_len) without explicit bounds checks here",
+        "per-byte copy from tainted source into output buffer without explicit per-byte bounds checking at this site",
+        "writing into REE-visible output buffer via tainted source (name_orig) without explicit bounds check on same path",
+        "tainted input name_orig/name_orig_size copied into REE-visible output without per-byte bounds verification on the write path beyond the pre-check",
+        "tainted input used as destination/source in memory move with a preceding bounds check; potential bounds-unsafe write into REE-visible buffer"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(name + pref_len, name_orig, name_orig_size);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation",
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "size_triplet:copy_len=pref_len",
+          "size_triplet:copy_len=?,src_sz=name_orig_size,dst_sz=name_orig_size+pref_len",
+          "flow_dir:REE->TA"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1,
+        "weak_input_validation": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0003",
+      "file": "/workspace/benchmark/optee-fiovb/ta/entry.c",
+      "line": 89,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "TEE_CreatePersistentObject"
+      ],
+      "sink_functions": [
+        "=",
+        "TEE_CreatePersistentObject"
+      ],
+      "rules": [
+        "weak_input_validation",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "TA-facing inputs (name_full, name_full_sz, value, value_sz) tainted from REE flow into a storage API without explicit validation",
+        "tainted inputs used in persistent object creation without explicit bounds/validation",
+        "tainted input buffers (name_full, name_full_sz, value, value_sz) passed to a callee without explicit bounds validation on this path",
+        "structural risk due to tainted inputs entering a callee without explicit local sanitizer for all parameters"
+      ],
+      "code_excerpts": [
+        "res = TEE_CreatePersistentObject(storageid, name_full, name_full_sz, flags, NULL, value, value_sz, &h);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation",
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?",
+          "dst_region:unknown"
+        ]
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1,
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0004",
+      "file": "/workspace/benchmark/optee-fiovb/ta/entry.c",
+      "line": 128,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "TEE_ReadObjectData"
+      ],
+      "sink_functions": [
+        "=",
+        "TEE_ReadObjectData"
+      ],
+      "rules": [
+        "weak_input_validation",
+        "shared_memory_overwrite"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "data flows from a secure object into a REE-visible output buffer without explicit bounds checks on the inputs",
+        "reading into a memory region that is likely REE-visible with tainted length/count could overwrite without proper bounds",
+        "writes into TA-private buffer 'value' using tainted length 'value_sz' without explicit bounds handling in this mid-hop"
+      ],
+      "code_excerpts": [
+        "res =  TEE_ReadObjectData(h, value, value_sz, count);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation",
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "size_triplet:copy_len=value_sz,src_sz=value_sz,dst_sz=count"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1,
+        "weak_input_validation": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0005",
+      "file": "/workspace/benchmark/optee-fiovb/ta/entry.c",
+      "line": 243,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "write_persist_value"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "alias of REE-visible input buffer bound to a callee parameter without explicit sanitization"
+      ],
+      "code_excerpts": [
+        "name_buf = params[0].memref.buffer;"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0006",
+      "file": "/workspace/benchmark/optee-fiovb/ta/entry.c",
+      "line": 268,
+      "consolidated": true,
+      "detection_count": 3,
+      "primary_rule": "unknown",
+      "functions": [
+        "write_persist_value",
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "TEE_MemMove",
+        "="
+      ],
+      "rules": [
+        "unknown",
+        "shared_memory_overwrite",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "per-byte copy from REE-visible buffer into TA-private heap via callee; potential unvalidated length",
+        "copy from REE-visible/TA-visible buffer into another REE-visible buffer via tainted lengths without explicit bounds sanity on this path",
+        "binding of REE-visible source to callee parameter with no explicit bounds check on the same path",
+        "binding of TA-private destination to callee parameter without explicit bounds handling; potential in-memory overwrite risk if lengths misused"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(value, params[1].memref.buffer, value_sz);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other",
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?",
+          "flow_dir:REE->TA",
+          "src_region:unknown"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1,
+        "other": 1,
+        "unknown": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0007",
+      "file": "/workspace/benchmark/optee-fiovb/ta/entry.c",
+      "line": 326,
+      "consolidated": true,
+      "detection_count": 3,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "TEE_MemMove",
+        "read_persist_value"
+      ],
+      "sink_functions": [
+        "TEE_MemMove",
+        "="
+      ],
+      "rules": [
+        "shared_memory_overwrite",
+        "unencrypted_output",
+        "="
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "copy from TA-managed value into REE-visible parameter buffer without explicit bounds checks on this path",
+        "TEE_MemMove writes into a REE-visible buffer (params[1].memref.buffer) using a TA-allocated value size (tainted), without explicit bounds check on the same path",
+        "tainted length used to copy into REE-visible buffer without an explicit bounds check on the same path",
+        "TA-private data (value) copied into REE-visible buffer; potential data leakage path",
+        "binding of destination buffer pointer to REE-visible region at call-site",
+        "binding of source value pointer to TA-private region at call-site"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(params[1].memref.buffer, value, value_sz);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite",
+          "unencrypted_output",
+          "="
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "size_triplet:copy_len=value_sz,src_sz=value_sz,dst_sz=params[1].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1,
+        "unencrypted_output": 1,
+        "=": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0008",
+      "file": "/workspace/benchmark/optee-fiovb/ta/entry.c",
+      "line": 350,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "delete_persist_value"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "tainted REE input buffer bound to a local pointer without explicit bounds sanitization in this path"
+      ],
+      "code_excerpts": [
+        "name_buf = params[0].memref.buffer; name_buf_sz = params[0].memref.size;"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    }
+  ]
+}

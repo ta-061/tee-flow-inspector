@@ -1,0 +1,191 @@
+{
+  "analysis_date": "2025-10-09T06:53:52.418704",
+  "analysis_time_seconds": 64.28540754318237,
+  "analysis_time_formatted": "1.1 minutes",
+  "llm_provider": "openai",
+  "analysis_mode": "hybrid",
+  "rag_enabled": false,
+  "statistics": {
+    "total_flows_analyzed": 2,
+    "flows_with_vulnerabilities": 0,
+    "total_vulnerability_lines": 0,
+    "total_structural_risk_lines": 3,
+    "total_detections_before_consolidation": 5,
+    "total_lines_after_consolidation": 3,
+    "consolidation_rate": "40.0%",
+    "severity_distribution": {
+      "critical": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0
+    },
+    "cwe_distribution": {},
+    "rule_distribution": {
+      "shared_memory_overwrite": 2,
+      "weak_input_validation": 1,
+      "other": 1,
+      "unencrypted_output": 1
+    },
+    "execution_time_seconds": 64.28540754318237,
+    "llm_calls": 6,
+    "cache_hits": 1,
+    "cache_partial_hits": 1,
+    "cache_misses": 1,
+    "cache_hit_rate": "50.0%",
+    "token_usage": {},
+    "retries": 0,
+    "retry_successes": 0
+  },
+  "total_vulnerability_lines": 0,
+  "vulnerabilities": [],
+  "total_finding_lines": 3,
+  "structural_risks": [
+    {
+      "finding_id": "RISK-0001",
+      "file": "/workspace/benchmark/random/ta/random_example_ta.c",
+      "line": 84,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "random_number_generate"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "rules": [
+        "shared_memory_overwrite"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "writing into REE-visible destination buffer using tainted length (params[0].memref.size) without a confirmed in-path bound check"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:unknown",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0002",
+      "file": "/workspace/benchmark/random/ta/random_example_ta.c",
+      "line": 94,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "TEE_GenerateRandom"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "weak_input_validation"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "pointer argument (buf) originates from TA-private heap and is passed to an API without validation of length/contents"
+      ],
+      "code_excerpts": [
+        "TEE_GenerateRandom(buf, params[0].memref.size);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0003",
+      "file": "/workspace/benchmark/random/ta/random_example_ta.c",
+      "line": 95,
+      "consolidated": true,
+      "detection_count": 3,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "random_number_generate",
+        "TEE_GenerateRandom",
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "TEE_MemMove",
+        "="
+      ],
+      "rules": [
+        "shared_memory_overwrite",
+        "other",
+        "unencrypted_output"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "tainted-length-based copy into REE-visible output buffer without safe bounds check established in same path",
+        "after generation, data in private buffer is copied into a REE-visible output buffer without an explicit bounds-check on the same path",
+        "data moved from a tainted local buffer to a REE-visible destination without explicit bounds-checking safety on the same path",
+        "destination is REE-visible and data originates from REE-tainted source; no encryption/sanitization performed prior to conveying to REE"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(params[0].memref.buffer, buf, params[0].memref.size);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite",
+          "other",
+          "unencrypted_output"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:UNKNOWN",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?",
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "src_region:REE-visible"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1,
+        "other": 1,
+        "unencrypted_output": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    }
+  ]
+}

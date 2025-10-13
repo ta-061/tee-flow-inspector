@@ -1,0 +1,728 @@
+{
+  "analysis_date": "2025-10-09T06:58:16.777188",
+  "analysis_time_seconds": 220.53693842887878,
+  "analysis_time_formatted": "3.7 minutes",
+  "llm_provider": "openai",
+  "analysis_mode": "hybrid",
+  "rag_enabled": false,
+  "statistics": {
+    "total_flows_analyzed": 7,
+    "flows_with_vulnerabilities": 3,
+    "total_vulnerability_lines": 3,
+    "total_structural_risk_lines": 10,
+    "total_detections_before_consolidation": 15,
+    "total_lines_after_consolidation": 13,
+    "consolidation_rate": "13.3%",
+    "severity_distribution": {
+      "critical": 0,
+      "high": 1,
+      "medium": 2,
+      "low": 0
+    },
+    "cwe_distribution": {
+      "CWE-125/126: Out-of-bounds or improper handling of input length": 1,
+      "CWE-119/Other": 1,
+      "unencrypted_output_in_transfer_to_REE": 1
+    },
+    "rule_distribution": {
+      "weak_input_validation": 3,
+      "other": 9
+    },
+    "execution_time_seconds": 220.53693842887878,
+    "llm_calls": 19,
+    "cache_hits": 6,
+    "cache_partial_hits": 6,
+    "cache_misses": 1,
+    "cache_hit_rate": "85.7%",
+    "token_usage": {},
+    "retries": 1,
+    "retry_successes": 1
+  },
+  "total_vulnerability_lines": 3,
+  "vulnerabilities": [
+    {
+      "vulnerability_id": "VULN-0001",
+      "file": "/workspace/benchmark/secure_storage/ta/secure_storage_ta.c",
+      "line": 56,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "medium",
+      "primary_vulnerability_type": "CWE-125/126: Out-of-bounds or improper handling of input length",
+      "functions": [
+        "delete_object"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "CWE-125/126: Out-of-bounds or improper handling of input length"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "tainted length used to copy into TA memory without explicit bounds validation"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "delete_object",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "params[0].memref.size (REE-originated)",
+          "propagation_path": [
+            "params[0].memref.size @ file:/workspace/benchmark/secure_storage/ta/secure_storage_ta.c:51",
+            "obj_id_sz @ file:/workspace/benchmark/secure_storage/ta/secure_storage_ta.c:51",
+            "TEE_MemMove(obj_id, params[0].memref.buffer, obj_id_sz) @ file:/workspace/benchmark/secure_storage/ta/secure_storage_ta.c:56"
+          ],
+          "sink": "TEE_MemMove uses tainted length to copy from REE buffer into TA memory"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            " tainted obj_id_sz length may exceed destination buffer size"
+          ],
+          "attack_scenario": "Malicious REE data could cause buffer overrun or truncated reads if length is larger than obj_id capacity",
+          "impact": "Potential memory corruption or information leakage due to unchecked copy length"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "secure_storage_ta.c:56",
+          "recommendation": "Validate obj_id_sz against destination buffer size before MemMove"
+        },
+        {
+          "type": "sanitization",
+          "location": "secure_storage_ta.c:56",
+          "recommendation": "Enforce strict length verification and/or use safe copy helpers"
+        }
+      ],
+      "decision_rationales": [
+        "Despite presence of a MemMove call, tainted length reaching a MEMMOVE without explicit bounds check constitutes a vulnerability risk that warrants reporting."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0002",
+      "file": "/workspace/benchmark/secure_storage/ta/secure_storage_ta.c",
+      "line": 120,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "medium",
+      "confidence_level": "medium",
+      "primary_vulnerability_type": "CWE-119/Other",
+      "functions": [
+        "TEE_CreatePersistentObject"
+      ],
+      "sink_functions": [
+        "TEE_CreatePersistentObject"
+      ],
+      "vulnerability_types": [
+        "CWE-119/Other"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "tainted REE inputs used in persistent object creation without per-parameter validation"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "create_raw_object",
+          "TEE_CreatePersistentObject"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-provided buffers (params) used to form obj_id and data",
+          "propagation_path": [
+            "param types validated, then obj_id_sz/data_sz derived",
+            "obj_id = TEE_Malloc(obj_id_sz, 0); TEE_MemMove(obj_id, params[0].memref.buffer, obj_id_sz)",
+            "data = TEE_Malloc(data_sz, 0); TEE_MemMove(data, params[1].memref.buffer, data_sz)",
+            "TEE_CreatePersistentObject(..., obj_id, obj_id_sz, obj_data_flag, ...)"
+          ],
+          "sink": "TEE_CreatePersistentObject"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "tainted REE inputs reach storage creation without per-parameter sanitization"
+          ],
+          "attack_scenario": "malformed obj_id/data could influence object creation (overflow or misnaming) in private storage",
+          "impact": "potential corruption or misnaming of persistent storage object; information exposure unlikely via REE, but correctness/availability risk"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "creation path: obj_id/data copies",
+          "recommendation": "validate obj_id_sz and data_sz against expected limits before allocation/copy"
+        },
+        {
+          "type": "input_validation",
+          "location": "before TEE_CreatePersistentObject",
+          "recommendation": "validate contents of obj_id and data against expected formats"
+        }
+      ],
+      "decision_rationales": [
+        "tainted inputs reach a sensitive storage operation without explicit sanitization on the same path"
+      ],
+      "severity_distribution": {
+        "medium": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0003",
+      "file": "/workspace/benchmark/secure_storage/ta/secure_storage_ta.c",
+      "line": 214,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "medium",
+      "confidence_level": "medium",
+      "primary_vulnerability_type": "unencrypted_output_in_transfer_to_REE",
+      "functions": [
+        "read_raw_object"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "unencrypted_output_in_transfer_to_REE"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "Potential plaintext exposure by copying private data into REE-visible memory without sanitization"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "read_raw_object",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-originated parameters (params[0], params[1])",
+          "propagation_path": [
+            "TA_InvokeCommandEntryPoint -> read_raw_object @ file:line",
+            "data read from object -> copied to REE-visible buffer"
+          ],
+          "sink": "TEE_MemMove on line 214"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "data read from persistent object is sensitive (secret/private) and copied to REE-visible memory without sanitization"
+          ],
+          "attack_scenario": "Attacker with REE access could observe plaintext data if object data is sensitive and not sanitized",
+          "impact": "Disclosure of sensitive object data to REE"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "read_raw_object @ line 214",
+          "recommendation": "Ensure destination buffer is large enough and consider explicit length checks before memmove"
+        }
+      ],
+      "decision_rationales": [
+        "Line 214 transfers data from private memory to a REE-visible buffer without explicit sanitization; matches unencrpyted_output criteria under soft policy."
+      ],
+      "severity_distribution": {
+        "medium": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    }
+  ],
+  "total_finding_lines": 10,
+  "structural_risks": [
+    {
+      "finding_id": "RISK-0001",
+      "file": "/workspace/benchmark/secure_storage/ta/secure_storage_ta.c",
+      "line": 56,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "delete_object",
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "rules": [
+        "weak_input_validation"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "tainted input length (obj_id_sz from REE) used as copy length without explicit bounds validation",
+        "tainted length obj_id_sz used to copy into TA-local buffer obj_id with no explicit bounds validation"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(obj_id, params[0].memref.buffer, obj_id_sz);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation"
+        ],
+        "others": [
+          "unknown",
+          "REE-visible",
+          "TEE-private",
+          "copy_len=obj_id_sz=?,src_sz=?",
+          "",
+          "TA->REE"
+        ]
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0002",
+      "file": "/workspace/benchmark/secure_storage/ta/secure_storage_ta.c",
+      "line": 104,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "rules": [
+        "weak_input_validation",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "tainted length obj_id_sz used to copy into TA-local buffer obj_id (second call) with no explicit bounds validation",
+        "tainted REE input buffer copied into TA-private memory without explicit per-byte bounds checks on the copy"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(obj_id, params[0].memref.buffer, obj_id_sz);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation",
+          "other"
+        ],
+        "others": [
+          "TA->REE",
+          "TEE-private",
+          "unknown",
+          "copy_len=obj_id_sz=?,src_sz=?",
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=obj_id_sz,dst_sz=obj_id_sz"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1,
+        "weak_input_validation": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0003",
+      "file": "/workspace/benchmark/secure_storage/ta/secure_storage_ta.c",
+      "line": 110,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "TEE_MemMove",
+        "create_raw_object"
+      ],
+      "sink_functions": [
+        "TEE_MemMove",
+        "array_write"
+      ],
+      "rules": [
+        "weak_input_validation",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "tainted data_sz used to copy into TA-local buffer data, potential over-read if data_sz exceeds destination",
+        "tainted REE input buffer data copied into TA-private buffer without explicit bounds check on the copy",
+        "copy of REE-provided data into private buffer without explicit per-byte bound checks on the data size",
+        "tainted REE input buffer copied into TA-private memory without explicit per-byte bounds checks on the copy"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(data, params[1].memref.buffer, data_sz);",
+        "data = TEE_Malloc(data_sz, 0); TEE_MemMove(data, params[1].memref.buffer, data_sz);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation",
+          "other"
+        ],
+        "others": [
+          "TA->REE",
+          "TEE-private",
+          "unknown",
+          "copy_len=data_sz=?,src_sz=?",
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=params[1].memref.size,dst_sz=data_sz",
+          "size_triplet:copy_len=?,src_sz=data_sz,dst_sz=data_sz"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1,
+        "weak_input_validation": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0004",
+      "file": "/workspace/benchmark/secure_storage/ta/secure_storage_ta.c",
+      "line": 121,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_CreatePersistentObject"
+      ],
+      "sink_functions": [
+        "TEES_CreatePersistentObject"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "REE-provided object id buffer copied into TA-private storage object via callee without explicit per-byte bounds checks on the copy"
+      ],
+      "code_excerpts": [
+        "res = TEE_CreatePersistentObject(TEE_STORAGE_PRIVATE, obj_id, obj_id_sz, obj_data_flag, TEE_HANDLE_NULL, NULL, 0, &object);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=obj_id_sz,src_sz=obj_id_sz,dst_sz=obj_id_sz"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0005",
+      "file": "/workspace/benchmark/secure_storage/ta/secure_storage_ta.c",
+      "line": 125,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_CreatePersistentObject"
+      ],
+      "sink_functions": [
+        "TEES_CreatePersistentObject"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "REE-provided data buffer copied into TA-private storage object via callee without explicit per-byte bounds checks on the copy"
+      ],
+      "code_excerpts": [
+        "res = TEE_CreatePersistentObject(TEE_STORAGE_PRIVATE, obj_id, obj_id_sz, obj_data_flag, TEE_HANDLE_NULL, NULL, 0, &object);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=data_sz,src_sz=data_sz,dst_sz=data_sz"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0006",
+      "file": "/workspace/benchmark/secure_storage/ta/secure_storage_ta.c",
+      "line": 133,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_WriteObjectData"
+      ],
+      "sink_functions": [
+        "TEE_WriteObjectData"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "tainted REE input data passed to storage API without explicit sanitization or bounds checks"
+      ],
+      "code_excerpts": [
+        "res = TEE_WriteObjectData(object, data, data_sz);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=data_sz,src_sz=params[1].memref.size,dst_sz=data_sz"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0007",
+      "file": "/workspace/benchmark/secure_storage/ta/secure_storage_ta.c",
+      "line": 172,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "read_raw_object",
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "alias/binding: REE-visible input buffer bound to private stack/heap object obj_id via TA_MemMove",
+        "alias/binding: REE-visible input buffer bound to private buffer obj_id via TA_MemMove"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(obj_id, params[0].memref.buffer, obj_id_sz);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=obj_id_sz,src_sz=obj_id_sz,dst_sz=obj_id_sz"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0008",
+      "file": "/workspace/benchmark/secure_storage/ta/secure_storage_ta.c",
+      "line": 195,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_GetObjectInfo1"
+      ],
+      "sink_functions": [
+        "TEE_GetObjectInfo1"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "callee operates on REE-derived object handle and writes object_info in TA-private memory; potential information exposure via object_info without bounds context"
+      ],
+      "code_excerpts": [
+        "res = TEE_GetObjectInfo1(object, &object_info);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0009",
+      "file": "/workspace/benchmark/secure_storage/ta/secure_storage_ta.c",
+      "line": 211,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_ReadObjectData"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "alias/binding: REE-visible input buffer bound to callee data via TEE_ReadObjectData"
+      ],
+      "code_excerpts": [
+        "res = TEE_ReadObjectData(object, data, object_info.dataSize, &read_bytes);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=object_info.dataSize,src_sz=object_info.dataSize,dst_sz=object_info.dataSize"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0010",
+      "file": "/workspace/benchmark/secure_storage/ta/secure_storage_ta.c",
+      "line": 214,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "alias/binding: TA copies data into REE-visible buffer from private memory"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(params[1].memref.buffer, data, read_bytes);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=read_bytes,src_sz=read_bytes,dst_sz=read_bytes"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    }
+  ]
+}

@@ -1,0 +1,299 @@
+{
+  "analysis_date": "2025-10-09T07:47:27.321401",
+  "analysis_time_seconds": 161.90182065963745,
+  "analysis_time_formatted": "2.7 minutes",
+  "llm_provider": "openai",
+  "analysis_mode": "hybrid",
+  "rag_enabled": false,
+  "statistics": {
+    "total_flows_analyzed": 3,
+    "flows_with_vulnerabilities": 1,
+    "total_vulnerability_lines": 1,
+    "total_structural_risk_lines": 4,
+    "total_detections_before_consolidation": 7,
+    "total_lines_after_consolidation": 5,
+    "consolidation_rate": "28.6%",
+    "severity_distribution": {
+      "critical": 0,
+      "high": 0,
+      "medium": 1,
+      "low": 0
+    },
+    "cwe_distribution": {
+      "memory-safety/unencrypted_output": 1
+    },
+    "rule_distribution": {
+      "weak_input_validation": 1,
+      "other": 4,
+      "shared_memory_overwrite": 1
+    },
+    "execution_time_seconds": 161.90182065963745,
+    "llm_calls": 10,
+    "cache_hits": 2,
+    "cache_partial_hits": 2,
+    "cache_misses": 1,
+    "cache_hit_rate": "66.7%",
+    "token_usage": {},
+    "retries": 0,
+    "retry_successes": 0
+  },
+  "total_vulnerability_lines": 1,
+  "vulnerabilities": [
+    {
+      "vulnerability_id": "VULN-0001",
+      "file": "/workspace/benchmark/secvideo_demo/ta/secvideo_demo_ta.c",
+      "line": 110,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "medium",
+      "confidence_level": "medium",
+      "primary_vulnerability_type": "memory-safety/unencrypted_output",
+      "functions": [
+        "memset"
+      ],
+      "sink_functions": [
+        "array_write"
+      ],
+      "vulnerability_types": [
+        "memory-safety/unencrypted_output"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "tainted REE data used to write into a private heap buffer per-byte without an explicit bounds check on the write length"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "clear_screen",
+          "memset"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "params[0].value.a (REE-visible taint)",
+          "propagation_path": [
+            "params[0].value.a -> memset call @ /workspace/benchmark/secvideo_demo/ta/secvideo_demo_ta.c:110"
+          ],
+          "sink": "buf written byte-by-byte via memset with tainted data to a private buffer"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "tainted color value used to populate a large private buffer"
+          ],
+          "attack_scenario": "an attacker-controlled color value writes into a private buffer without bounds checks, potentially leaking data or corrupting memory",
+          "impact": "possible information leakage or memory corruption inside TA private heap"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "memset call @ 110",
+          "recommendation": "enforce bounds on size or use bounded copy API"
+        }
+      ],
+      "decision_rationales": [
+        "Per-byte write of tainted data into private memory without explicit bounds -> memory-safety risk"
+      ],
+      "severity_distribution": {
+        "medium": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    }
+  ],
+  "total_finding_lines": 4,
+  "structural_risks": [
+    {
+      "finding_id": "RISK-0001",
+      "file": "/workspace/benchmark/secvideo_demo/ta/secvideo_demo_ta.c",
+      "line": 110,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "memset"
+      ],
+      "sink_functions": [
+        "array_write",
+        "="
+      ],
+      "rules": [
+        "weak_input_validation",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "tainted REE data used to update a private buffer byte-by-byte without an explicit bounds check on the write length",
+        "bind callee parameter (dest buffer) to its origin region for call-site trace",
+        "per-byte write to private buffer using tainted data with no bounds check"
+      ],
+      "code_excerpts": [
+        "memset(buf, params[0].value.a, size);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation",
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=16384,src_sz=unknown,dst_sz=unknown"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1,
+        "weak_input_validation": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0002",
+      "file": "/workspace/benchmark/secvideo_demo/ta/secvideo_demo_ta.c",
+      "line": 143,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_PopulateTransientObject"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "callee receives address of a local TA structure; potential binding of tainted data to internal TA object"
+      ],
+      "code_excerpts": [
+        "res = TEE_PopulateTransientObject(hkey, &attr, 1);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:unknown",
+          "src_region:unknown",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0003",
+      "file": "/workspace/benchmark/secvideo_demo/ta/secvideo_demo_ta.c",
+      "line": 158,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "TEE_CipherDoFinal"
+      ],
+      "sink_functions": [
+        "TEE_CipherDoFinal",
+        "="
+      ],
+      "rules": [
+        "shared_memory_overwrite",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "out buffer is REE-visible memory; tainted input could drive writes beyond *outsz during cipher operation",
+        "call-site binding of tainted REE-visible buffers (in/out) to cipher API parameters"
+      ],
+      "code_excerpts": [
+        "res = TEE_CipherDoFinal(crypto_op, in, *outsz, out, outsz);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite",
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=sz,src_sz=sz,dst_sz=*outsz"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1,
+        "shared_memory_overwrite": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0004",
+      "file": "/workspace/benchmark/secvideo_demo/ta/secvideo_demo_ta.c",
+      "line": 206,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "image_data"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "binding of tainted callee arguments (outbuf) to REE-visible memory at decrypt call-site"
+      ],
+      "code_excerpts": [
+        "res = decrypt(buf, sz, (uint8_t *)outbuf + offset, &dsz);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TA-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=dsz,src_sz=sz,dst_sz=dsz"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    }
+  ]
+}

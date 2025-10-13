@@ -1,0 +1,321 @@
+{
+  "analysis_date": "2025-10-09T06:52:26.821428",
+  "analysis_time_seconds": 103.68730115890503,
+  "analysis_time_formatted": "1.7 minutes",
+  "llm_provider": "openai",
+  "analysis_mode": "hybrid",
+  "rag_enabled": false,
+  "statistics": {
+    "total_flows_analyzed": 3,
+    "flows_with_vulnerabilities": 2,
+    "total_vulnerability_lines": 2,
+    "total_structural_risk_lines": 3,
+    "total_detections_before_consolidation": 6,
+    "total_lines_after_consolidation": 5,
+    "consolidation_rate": "16.7%",
+    "severity_distribution": {
+      "critical": 0,
+      "high": 1,
+      "medium": 1,
+      "low": 0
+    },
+    "cwe_distribution": {
+      "CWE-125/126: Out-of-bounds/Buffer Overread or Overflow in cryptographic output path": 1,
+      "CWE-125/126: Out-of-bounds read/write": 1
+    },
+    "rule_distribution": {
+      "shared_memory_overwrite": 1,
+      "other": 2,
+      "weak_input_validation": 1
+    },
+    "execution_time_seconds": 103.68730115890503,
+    "llm_calls": 10,
+    "cache_hits": 2,
+    "cache_partial_hits": 2,
+    "cache_misses": 1,
+    "cache_hit_rate": "66.7%",
+    "token_usage": {},
+    "retries": 0,
+    "retry_successes": 0
+  },
+  "total_vulnerability_lines": 2,
+  "vulnerabilities": [
+    {
+      "vulnerability_id": "VULN-0001",
+      "file": "/workspace/benchmark/hotp/ta/hotp_ta.c",
+      "line": 108,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-125/126: Out-of-bounds/Buffer Overread or Overflow in cryptographic output path",
+      "functions": [
+        "TEE_MACComputeFinal"
+      ],
+      "sink_functions": [
+        "TEE_MACComputeFinal"
+      ],
+      "vulnerability_types": [
+        "CWE-125/126: Out-of-bounds/Buffer Overread or Overflow in cryptographic output path"
+      ],
+      "rule_ids": [
+        "shared_memory_overwrite"
+      ],
+      "descriptions": [
+        "Output buffer is REE-visible and could be overrun by the MAC output without bounds check"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "get_hotp",
+          "hmac_sha1",
+          "TEE_MACComputeFinal"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "state->K/state->counter/state->K_len etc. tainted from REE into TA",
+          "propagation_path": [
+            "REE -> TA: param_types and buffers propagated into hmac_sha1",
+            "TA-internal MAC buffers (out/outlen) exposed to REE"
+          ],
+          "sink": "TEE_MACComputeFinal writes MAC output to REE-visible buffer without explicit bounds checks"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "out buffer not sized to mac_len",
+            "outlen not validated against required MAC size"
+          ],
+          "attack_scenario": "Provide malicious-sized/typed output buffer to cause truncation or overflow of MAC data into REE memory",
+          "impact": "Potential leakage or corruption of adjacent REE memory; possible information disclosure or crash"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "get_hotp/TEE_MACComputeFinal call site: line ~108",
+          "recommendation": "Ensure outlen >= expected MAC size and validate before compute"
+        },
+        {
+          "type": "memory_safety",
+          "location": "hmac/mac output path",
+          "recommendation": "Enforce strict buffer size checks and sanitizer coverage"
+        }
+      ],
+      "decision_rationales": [
+        "Without explicit bounds validation on the destination output buffer in this sink line, tainted inputs reach an external sink with potential memory safety risk."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0002",
+      "file": "/workspace/benchmark/hotp/ta/hotp_ta.c",
+      "line": 153,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "medium",
+      "confidence_level": "medium",
+      "primary_vulnerability_type": "CWE-125/126: Out-of-bounds read/write",
+      "functions": [
+        "memcpy"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "vulnerability_types": [
+        "CWE-125/126: Out-of-bounds read/write"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "Tainted REE input used as copy length into TA-private buffer without thorough sanitization"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "register_shared_key",
+          "memcpy"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "params[0].memref.buffer and params[0].memref.size (REE-visible)",
+          "propagation_path": [
+            "param_types check passes -> memcpy(state->K, params[0].memref.buffer, params[0].memref.size) @ /workspace/benchmark/hotp/ta/hotp_ta.c:153"
+          ],
+          "sink": "state->K buffer (TA-private) receives tainted length from REE"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Caller passes tainted memory and size without stronger sanitization"
+          ],
+          "attack_scenario": "Untrusted data copied into TA-internal key storage without rigorous bounds enforcement",
+          "impact": "Potential leakage or corruption of internal key material if size misused"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "/workspace/benchmark/hotp/ta/hotp_ta.c:149-150",
+          "recommendation": "Ensure params[0].memref.size cannot exceed sizeof(state->K) and consistently validate against actual destination size before memcpy"
+        }
+      ],
+      "decision_rationales": [
+        "Memcpy copies tainted REE input into TA-private storage without comprehensive sanitizer beyond a basic size guard; line 149-150 provides a bound check but the path allows potential overread if size > dest size is not strictly prevented"
+      ],
+      "severity_distribution": {
+        "medium": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    }
+  ],
+  "total_finding_lines": 3,
+  "structural_risks": [
+    {
+      "finding_id": "RISK-0001",
+      "file": "/workspace/benchmark/hotp/ta/hotp_ta.c",
+      "line": 108,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "TEE_MACComputeFinal"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "shared_memory_overwrite"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Output is written back to REE-visible memory via out/outlen without explicit bounds checks on the destination path"
+      ],
+      "code_excerpts": [
+        "res = TEE_MACComputeFinal(op_handle, NULL, 0, out, outlen);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "TA-private",
+          "REE-visible",
+          "unknown",
+          "copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0002",
+      "file": "/workspace/benchmark/hotp/ta/hotp_ta.c",
+      "line": 152,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "memset"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Pointer argument state->K is a TA-private buffer; binding to memset may be influenced by REE inputs via subsequent memcpy"
+      ],
+      "code_excerpts": [
+        "memset(state->K, 0, sizeof(state->K));"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "TA->REE",
+          "TEE-private",
+          "unknown",
+          "copy_len=sizeof(state->K),src_sz=0,dst_sz=sizeof(state->K)"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0003",
+      "file": "/workspace/benchmark/hotp/ta/hotp_ta.c",
+      "line": 153,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "memcpy"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "weak_input_validation",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Copy from a REE-visible buffer into TA-private storage with a tainted length, though a bounds check exists",
+        "Per-byte copy from REE-visible buffer to TA private state with tainted length and only a partial bounds check"
+      ],
+      "code_excerpts": [
+        "memcpy(state->K, params[0].memref.buffer, params[0].memref.size);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation"
+        ],
+        "others": [
+          "REE->TA",
+          "REE-visible",
+          "TEE-private",
+          "public",
+          "copy_len=params[0].memref.size,src_sz=params[0].memref.size,dst_sz=sizeof(state->K)",
+          "TA->REE"
+        ]
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1,
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    }
+  ]
+}

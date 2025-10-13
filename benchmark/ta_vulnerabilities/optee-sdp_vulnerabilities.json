@@ -1,0 +1,1195 @@
+{
+  "analysis_date": "2025-10-09T08:01:04.151270",
+  "analysis_time_seconds": 119.60408663749695,
+  "analysis_time_formatted": "2.0 minutes",
+  "llm_provider": "openai",
+  "analysis_mode": "hybrid",
+  "rag_enabled": false,
+  "statistics": {
+    "total_flows_analyzed": 3,
+    "flows_with_vulnerabilities": 3,
+    "total_vulnerability_lines": 10,
+    "total_structural_risk_lines": 8,
+    "total_detections_before_consolidation": 22,
+    "total_lines_after_consolidation": 18,
+    "consolidation_rate": "18.2%",
+    "severity_distribution": {
+      "critical": 0,
+      "high": 8,
+      "medium": 2,
+      "low": 0
+    },
+    "cwe_distribution": {
+      "CWE-129/125 style memory-safety issue due to tainted index used for array write": 1,
+      "CWE-125/125-like for Buffer Overflow via snprintf into REE-visible buffer": 7,
+      "CWE-125": 2
+    },
+    "rule_distribution": {
+      "weak_input_validation": 3,
+      "other": 3,
+      "shared_memory_overwrite": 6
+    },
+    "execution_time_seconds": 119.60408663749695,
+    "llm_calls": 12,
+    "cache_hits": 2,
+    "cache_partial_hits": 2,
+    "cache_misses": 1,
+    "cache_hit_rate": "66.7%",
+    "token_usage": {},
+    "retries": 0,
+    "retry_successes": 0
+  },
+  "total_vulnerability_lines": 10,
+  "vulnerabilities": [
+    {
+      "vulnerability_id": "VULN-0001",
+      "file": "/workspace/benchmark/optee-sdp/ta/platform/stub.c",
+      "line": 112,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-129/125 style memory-safety issue due to tainted index used for array write",
+      "functions": [
+        "memset"
+      ],
+      "sink_functions": [
+        "memset"
+      ],
+      "vulnerability_types": [
+        "CWE-129/125 style memory-safety issue due to tainted index used for array write"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "tainted index used to access regions[index] without explicit lower-bound check"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "destroy_region",
+          "platform_destroy_region",
+          "memset"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-origin param index",
+          "propagation_path": [
+            "index tainted at entry of platform_destroy_region(int index) @ /workspace/benchmark/optee-sdp/ta/platform/stub.c:107-112",
+            "memset(&regions[index], 0, sizeof(regions[index])) @ /workspace/benchmark/optee-sdp/ta/platform/stub.c:112"
+          ],
+          "sink": "memset writes into regions[index] using tainted index"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "index could be negative or exceed MAX_REGIONS-1 if the upper check is bypassed or equals MAX_REGIONS"
+          ],
+          "attack_scenario": "an attacker supplies a tainted index that bypasses/violates bounds, leading to out-of-bounds write into regions array",
+          "impact": "corruption of adjacent memory, potential TA instability or leakage of memory contents"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "lower_bound_check",
+          "location": "platform_destroy_region@107-112",
+          "recommendation": "enforce index >= 0 and index < MAX_REGIONS before memset"
+        }
+      ],
+      "decision_rationales": [
+        "Memory safety risk due to tainted index used in a per-byte/bytewise write without a full addressable bounds guarantee"
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0002",
+      "file": "/workspace/benchmark/optee-sdp/ta/platform/stub.c",
+      "line": 210,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-125/125-like for Buffer Overflow via snprintf into REE-visible buffer",
+      "functions": [
+        "snprintf"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "vulnerability_types": [
+        "CWE-125/125-like for Buffer Overflow via snprintf into REE-visible buffer"
+      ],
+      "rule_ids": [
+        "shared_memory_overwrite"
+      ],
+      "descriptions": [
+        "tainted length used to bound write into REE-visible buffer"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "dump_status",
+          "platform_dump_status",
+          "snprintf"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-provided params (buffer + size) under platform_dump_status",
+          "propagation_path": [
+            "TA_InvokeCommandEntryPoint -> platform_dump_status (line ~210)",
+            "platform_dump_status -> snprintf (line ~210)"
+          ],
+          "sink": "snprintf into REE-visible memref.buffer with tainted size"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "tainted size bound to memref.buffer",
+            "no per-call bounds check in same line"
+          ],
+          "attack_scenario": "writer may overflow destination buffer if size exceeds actual remaining capacity",
+          "impact": "potential memory corruption or leakage in REE-visible memory"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "platform_dump_status/snprintf call lines",
+          "recommendation": "validate size against remaining buffer before each snprintf call"
+        },
+        {
+          "type": "bounds_check",
+          "location": "loop writes",
+          "recommendation": "compute remaining space per iteration and enforce before each write"
+        },
+        {
+          "type": "mem_access_check",
+          "location": "all snprintf calls",
+          "recommendation": "avoid in-place pointer advancement without bound re-evaluation"
+        }
+      ],
+      "decision_rationales": [
+        "multiple independent snprintf calls write to a shared REE-visible buffer using tainted length without per-call bounds checks; memory-safety risk prioritized over other concerns"
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0003",
+      "file": "/workspace/benchmark/optee-sdp/ta/platform/stub.c",
+      "line": 215,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-125/125-like for Buffer Overflow via snprintf into REE-visible buffer",
+      "functions": [
+        "snprintf"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "vulnerability_types": [
+        "CWE-125/125-like for Buffer Overflow via snprintf into REE-visible buffer"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "loop writes into buffer with tainted bounds"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "dump_status",
+          "platform_dump_status",
+          "snprintf"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-provided params (buffer + size) under platform_dump_status",
+          "propagation_path": [
+            "TA_InvokeCommandEntryPoint -> platform_dump_status (line ~210)",
+            "platform_dump_status -> snprintf (line ~210)"
+          ],
+          "sink": "snprintf into REE-visible memref.buffer with tainted size"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "tainted size bound to memref.buffer",
+            "no per-call bounds check in same line"
+          ],
+          "attack_scenario": "writer may overflow destination buffer if size exceeds actual remaining capacity",
+          "impact": "potential memory corruption or leakage in REE-visible memory"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "platform_dump_status/snprintf call lines",
+          "recommendation": "validate size against remaining buffer before each snprintf call"
+        },
+        {
+          "type": "bounds_check",
+          "location": "loop writes",
+          "recommendation": "compute remaining space per iteration and enforce before each write"
+        },
+        {
+          "type": "mem_access_check",
+          "location": "all snprintf calls",
+          "recommendation": "avoid in-place pointer advancement without bound re-evaluation"
+        }
+      ],
+      "decision_rationales": [
+        "multiple independent snprintf calls write to a shared REE-visible buffer using tainted length without per-call bounds checks; memory-safety risk prioritized over other concerns"
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0004",
+      "file": "/workspace/benchmark/optee-sdp/ta/platform/stub.c",
+      "line": 220,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-125/125-like for Buffer Overflow via snprintf into REE-visible buffer",
+      "functions": [
+        "snprintf"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "vulnerability_types": [
+        "CWE-125/125-like for Buffer Overflow via snprintf into REE-visible buffer"
+      ],
+      "rule_ids": [
+        "shared_memory_overwrite"
+      ],
+      "descriptions": [
+        "tainted size used for subsequent write into buffer"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "dump_status",
+          "platform_dump_status",
+          "snprintf"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-provided params (buffer + size) under platform_dump_status",
+          "propagation_path": [
+            "TA_InvokeCommandEntryPoint -> platform_dump_status (line ~210)",
+            "platform_dump_status -> snprintf (line ~210)"
+          ],
+          "sink": "snprintf into REE-visible memref.buffer with tainted size"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "tainted size bound to memref.buffer",
+            "no per-call bounds check in same line"
+          ],
+          "attack_scenario": "writer may overflow destination buffer if size exceeds actual remaining capacity",
+          "impact": "potential memory corruption or leakage in REE-visible memory"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "platform_dump_status/snprintf call lines",
+          "recommendation": "validate size against remaining buffer before each snprintf call"
+        },
+        {
+          "type": "bounds_check",
+          "location": "loop writes",
+          "recommendation": "compute remaining space per iteration and enforce before each write"
+        },
+        {
+          "type": "mem_access_check",
+          "location": "all snprintf calls",
+          "recommendation": "avoid in-place pointer advancement without bound re-evaluation"
+        }
+      ],
+      "decision_rationales": [
+        "multiple independent snprintf calls write to a shared REE-visible buffer using tainted length without per-call bounds checks; memory-safety risk prioritized over other concerns"
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0005",
+      "file": "/workspace/benchmark/optee-sdp/ta/platform/stub.c",
+      "line": 224,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-125/125-like for Buffer Overflow via snprintf into REE-visible buffer",
+      "functions": [
+        "snprintf"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "vulnerability_types": [
+        "CWE-125/125-like for Buffer Overflow via snprintf into REE-visible buffer"
+      ],
+      "rule_ids": [
+        "shared_memory_overwrite"
+      ],
+      "descriptions": [
+        "in-place write with tainted size without per-call guard"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "dump_status",
+          "platform_dump_status",
+          "snprintf"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-provided params (buffer + size) under platform_dump_status",
+          "propagation_path": [
+            "TA_InvokeCommandEntryPoint -> platform_dump_status (line ~210)",
+            "platform_dump_status -> snprintf (line ~210)"
+          ],
+          "sink": "snprintf into REE-visible memref.buffer with tainted size"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "tainted size bound to memref.buffer",
+            "no per-call bounds check in same line"
+          ],
+          "attack_scenario": "writer may overflow destination buffer if size exceeds actual remaining capacity",
+          "impact": "potential memory corruption or leakage in REE-visible memory"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "platform_dump_status/snprintf call lines",
+          "recommendation": "validate size against remaining buffer before each snprintf call"
+        },
+        {
+          "type": "bounds_check",
+          "location": "loop writes",
+          "recommendation": "compute remaining space per iteration and enforce before each write"
+        },
+        {
+          "type": "mem_access_check",
+          "location": "all snprintf calls",
+          "recommendation": "avoid in-place pointer advancement without bound re-evaluation"
+        }
+      ],
+      "decision_rationales": [
+        "multiple independent snprintf calls write to a shared REE-visible buffer using tainted length without per-call bounds checks; memory-safety risk prioritized over other concerns"
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0006",
+      "file": "/workspace/benchmark/optee-sdp/ta/platform/stub.c",
+      "line": 228,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-125/125-like for Buffer Overflow via snprintf into REE-visible buffer",
+      "functions": [
+        "snprintf"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "vulnerability_types": [
+        "CWE-125/125-like for Buffer Overflow via snprintf into REE-visible buffer"
+      ],
+      "rule_ids": [
+        "shared_memory_overwrite"
+      ],
+      "descriptions": [
+        "continued writes with tainted length"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "dump_status",
+          "platform_dump_status",
+          "snprintf"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-provided params (buffer + size) under platform_dump_status",
+          "propagation_path": [
+            "TA_InvokeCommandEntryPoint -> platform_dump_status (line ~210)",
+            "platform_dump_status -> snprintf (line ~210)"
+          ],
+          "sink": "snprintf into REE-visible memref.buffer with tainted size"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "tainted size bound to memref.buffer",
+            "no per-call bounds check in same line"
+          ],
+          "attack_scenario": "writer may overflow destination buffer if size exceeds actual remaining capacity",
+          "impact": "potential memory corruption or leakage in REE-visible memory"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "platform_dump_status/snprintf call lines",
+          "recommendation": "validate size against remaining buffer before each snprintf call"
+        },
+        {
+          "type": "bounds_check",
+          "location": "loop writes",
+          "recommendation": "compute remaining space per iteration and enforce before each write"
+        },
+        {
+          "type": "mem_access_check",
+          "location": "all snprintf calls",
+          "recommendation": "avoid in-place pointer advancement without bound re-evaluation"
+        }
+      ],
+      "decision_rationales": [
+        "multiple independent snprintf calls write to a shared REE-visible buffer using tainted length without per-call bounds checks; memory-safety risk prioritized over other concerns"
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0007",
+      "file": "/workspace/benchmark/optee-sdp/ta/platform/stub.c",
+      "line": 235,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-125/125-like for Buffer Overflow via snprintf into REE-visible buffer",
+      "functions": [
+        "snprintf"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "vulnerability_types": [
+        "CWE-125/125-like for Buffer Overflow via snprintf into REE-visible buffer"
+      ],
+      "rule_ids": [
+        "shared_memory_overwrite"
+      ],
+      "descriptions": [
+        "writing region metadata with tainted size"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "dump_status",
+          "platform_dump_status",
+          "snprintf"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-provided params (buffer + size) under platform_dump_status",
+          "propagation_path": [
+            "TA_InvokeCommandEntryPoint -> platform_dump_status (line ~210)",
+            "platform_dump_status -> snprintf (line ~210)"
+          ],
+          "sink": "snprintf into REE-visible memref.buffer with tainted size"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "tainted size bound to memref.buffer",
+            "no per-call bounds check in same line"
+          ],
+          "attack_scenario": "writer may overflow destination buffer if size exceeds actual remaining capacity",
+          "impact": "potential memory corruption or leakage in REE-visible memory"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "platform_dump_status/snprintf call lines",
+          "recommendation": "validate size against remaining buffer before each snprintf call"
+        },
+        {
+          "type": "bounds_check",
+          "location": "loop writes",
+          "recommendation": "compute remaining space per iteration and enforce before each write"
+        },
+        {
+          "type": "mem_access_check",
+          "location": "all snprintf calls",
+          "recommendation": "avoid in-place pointer advancement without bound re-evaluation"
+        }
+      ],
+      "decision_rationales": [
+        "multiple independent snprintf calls write to a shared REE-visible buffer using tainted length without per-call bounds checks; memory-safety risk prioritized over other concerns"
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0008",
+      "file": "/workspace/benchmark/optee-sdp/ta/platform/stub.c",
+      "line": 241,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-125/125-like for Buffer Overflow via snprintf into REE-visible buffer",
+      "functions": [
+        "snprintf"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "vulnerability_types": [
+        "CWE-125/125-like for Buffer Overflow via snprintf into REE-visible buffer"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "writing attached region line with tainted size in loop"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "dump_status",
+          "platform_dump_status",
+          "snprintf"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-provided params (buffer + size) under platform_dump_status",
+          "propagation_path": [
+            "TA_InvokeCommandEntryPoint -> platform_dump_status (line ~210)",
+            "platform_dump_status -> snprintf (line ~210)"
+          ],
+          "sink": "snprintf into REE-visible memref.buffer with tainted size"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "tainted size bound to memref.buffer",
+            "no per-call bounds check in same line"
+          ],
+          "attack_scenario": "writer may overflow destination buffer if size exceeds actual remaining capacity",
+          "impact": "potential memory corruption or leakage in REE-visible memory"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "platform_dump_status/snprintf call lines",
+          "recommendation": "validate size against remaining buffer before each snprintf call"
+        },
+        {
+          "type": "bounds_check",
+          "location": "loop writes",
+          "recommendation": "compute remaining space per iteration and enforce before each write"
+        },
+        {
+          "type": "mem_access_check",
+          "location": "all snprintf calls",
+          "recommendation": "avoid in-place pointer advancement without bound re-evaluation"
+        }
+      ],
+      "decision_rationales": [
+        "multiple independent snprintf calls write to a shared REE-visible buffer using tainted length without per-call bounds checks; memory-safety risk prioritized over other concerns"
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0009",
+      "file": "/workspace/benchmark/optee-sdp/ta/platform/stub.c",
+      "line": 256,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "medium",
+      "confidence_level": "medium",
+      "primary_vulnerability_type": "CWE-125",
+      "functions": [
+        "snprintf"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "vulnerability_types": [
+        "CWE-125"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "tainted destination buffer and size used in snprintf without proven comprehensive bounds checks"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "dump_status",
+          "platform_dump_device",
+          "snprintf"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-originated tmp buffer and size",
+          "propagation_path": [
+            "platform_dump_device:256-256 LHS tmp <- RHS (destination buffer from REE)",
+            "platform_dump_device:256-256 snprintf into REE-visible buffer with tainted size",
+            "platform_dump_device:261-261 snprintf into REE-visible buffer within loop"
+          ],
+          "sink": "snprintf writes into REE-visible buffer using tainted size"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "tainted buffer and tainted size passed to snprintf"
+          ],
+          "attack_scenario": "malicious REE input could cause truncated or overflowing write, potentially corrupting adjacent memory if size is insufficient",
+          "impact": "data corruption, possible control flow/return value effects, information leakage if bounds are miscomputed"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "platform_dump_device:256-261",
+          "recommendation": "ensure snprintf correctly limits writes with a verified sanitized size before each write"
+        },
+        {
+          "type": "input_validation",
+          "location": "platform_dump_device:256-261",
+          "recommendation": "validate or constrain format strings and arguments to prevent unexpected writes"
+        }
+      ],
+      "decision_rationales": [
+        "Two tainted writes via snprintf to a REE-visible buffer with tainted size; potential overflow risk exists despite a bounds sanitizer, so classed as vulnerable with weak input validation"
+      ],
+      "severity_distribution": {
+        "medium": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0010",
+      "file": "/workspace/benchmark/optee-sdp/ta/platform/stub.c",
+      "line": 261,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "medium",
+      "confidence_level": "medium",
+      "primary_vulnerability_type": "CWE-125",
+      "functions": [
+        "snprintf"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "vulnerability_types": [
+        "CWE-125"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "tainted destination buffer and size used in snprintf within loop without proven comprehensive bounds checks"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "dump_status",
+          "platform_dump_device",
+          "snprintf"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-originated tmp buffer and size",
+          "propagation_path": [
+            "platform_dump_device:256-256 LHS tmp <- RHS (destination buffer from REE)",
+            "platform_dump_device:256-256 snprintf into REE-visible buffer with tainted size",
+            "platform_dump_device:261-261 snprintf into REE-visible buffer within loop"
+          ],
+          "sink": "snprintf writes into REE-visible buffer using tainted size"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "tainted buffer and tainted size passed to snprintf"
+          ],
+          "attack_scenario": "malicious REE input could cause truncated or overflowing write, potentially corrupting adjacent memory if size is insufficient",
+          "impact": "data corruption, possible control flow/return value effects, information leakage if bounds are miscomputed"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "platform_dump_device:256-261",
+          "recommendation": "ensure snprintf correctly limits writes with a verified sanitized size before each write"
+        },
+        {
+          "type": "input_validation",
+          "location": "platform_dump_device:256-261",
+          "recommendation": "validate or constrain format strings and arguments to prevent unexpected writes"
+        }
+      ],
+      "decision_rationales": [
+        "Two tainted writes via snprintf to a REE-visible buffer with tainted size; potential overflow risk exists despite a bounds sanitizer, so classed as vulnerable with weak input validation"
+      ],
+      "severity_distribution": {
+        "medium": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    }
+  ],
+  "total_finding_lines": 8,
+  "structural_risks": [
+    {
+      "finding_id": "RISK-0001",
+      "file": "/workspace/benchmark/optee-sdp/ta/platform/stub.c",
+      "line": 112,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "platform_destroy_region",
+        "memset"
+      ],
+      "sink_functions": [
+        "array_write",
+        "memset"
+      ],
+      "rules": [
+        "weak_input_validation",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "tainted index used to write into internal region array without full bounds check (only upper bound checked)",
+        "tainted index used to perform per-byte write into internal region array without full bounds validation",
+        "tainted index used to zero an internal region element without ensuring index is within [0, MAX_REGIONS-1]"
+      ],
+      "code_excerpts": [
+        "memset(&regions[index], 0, sizeof(regions[index]));"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation"
+        ],
+        "others": [
+          "REE->TA",
+          "REE-visible",
+          "TA-private",
+          "unknown",
+          "copy_len=0,src_sz=0,dst_sz=0",
+          "TEE-private",
+          "copy_len=sizeof(regions[index]),src_sz=0,dst_sz=0"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1,
+        "weak_input_validation": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0002",
+      "file": "/workspace/benchmark/optee-sdp/ta/platform/stub.c",
+      "line": 173,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "platform_dump_status"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "shared_memory_overwrite"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "platform_dump_status passes tainted size to snprintf into REE-visible buffer, causing in-place growth of written data into the same buffer"
+      ],
+      "code_excerpts": [
+        "173-176"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=params[0].memref.size,src_sz=params[0].memref.size,dst_sz=params[0].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0003",
+      "file": "/workspace/benchmark/optee-sdp/ta/platform/stub.c",
+      "line": 210,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "platform_dump_status",
+        "snprintf"
+      ],
+      "sink_functions": [
+        "array_write",
+        "="
+      ],
+      "rules": [
+        "weak_input_validation",
+        "shared_memory_overwrite"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "per-byte snprintf writes into memref.buffer using evolving pointer; bounds rely on runtime size without explicit per-write bound check",
+        "tainted output buffer and length used in in-place write without explicit bounds check on same path",
+        "per-byte write into REE-visible buffer via snprintf; index/length bound evolves with tainted size"
+      ],
+      "code_excerpts": [
+        "210-216",
+        "210-212"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation",
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=params[0].memref.size,src_sz=params[0].memref.size,dst_sz=params[0].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1,
+        "shared_memory_overwrite": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0004",
+      "file": "/workspace/benchmark/optee-sdp/ta/platform/stub.c",
+      "line": 215,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "snprintf"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "shared_memory_overwrite"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "loop writes additional device lines into output buffer using tainted length without explicit bounds guard"
+      ],
+      "code_excerpts": [
+        "215-217"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=params[0].memref.size,src_sz=params[0].memref.size,dst_sz=params[0].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0005",
+      "file": "/workspace/benchmark/optee-sdp/ta/platform/stub.c",
+      "line": 235,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "snprintf"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "shared_memory_overwrite"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "region info written into output buffer with tainted size; potential overwrite in-place"
+      ],
+      "code_excerpts": [
+        "235-236"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=params[0].memref.size,src_sz=params[0].memref.size,dst_sz=params[0].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0006",
+      "file": "/workspace/benchmark/optee-sdp/ta/platform/stub.c",
+      "line": 241,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "snprintf"
+      ],
+      "sink_functions": [
+        "array_write"
+      ],
+      "rules": [
+        "weak_input_validation"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "per-byte write for attached region metadata with tainted/unknown bounds"
+      ],
+      "code_excerpts": [
+        "241-243"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=params[0].memref.size,src_sz=params[0].memref.size,dst_sz=params[0].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0007",
+      "file": "/workspace/benchmark/optee-sdp/ta/platform/stub.c",
+      "line": 256,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "snprintf"
+      ],
+      "sink_functions": [
+        "=",
+        "snprintf"
+      ],
+      "rules": [
+        "shared_memory_overwrite",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "tainted REE-visible destination buffer used as output target by snprintf without proven bounds enforcement on this path",
+        "tainted REE-originated input used as destination for snprintf without guaranteed bounds safety on this path"
+      ],
+      "code_excerpts": [
+        "256"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite",
+          "weak_input_validation"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=size,src_sz=size,dst_sz=size"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1,
+        "shared_memory_overwrite": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0008",
+      "file": "/workspace/benchmark/optee-sdp/ta/platform/stub.c",
+      "line": 261,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "snprintf"
+      ],
+      "sink_functions": [
+        "=",
+        "snprintf"
+      ],
+      "rules": [
+        "shared_memory_overwrite",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "tainted REE-visible destination buffer used as output target by snprintf within loop without explicit bounds enforcement on this path",
+        "tainted REE-originated input used as destination for snprintf without guaranteed bounds safety on this path"
+      ],
+      "code_excerpts": [
+        "261"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite",
+          "weak_input_validation"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=size,src_sz=size,dst_sz=size"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1,
+        "shared_memory_overwrite": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    }
+  ]
+}

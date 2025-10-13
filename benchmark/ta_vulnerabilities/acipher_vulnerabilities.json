@@ -1,0 +1,294 @@
+{
+  "analysis_date": "2025-10-09T06:48:04.077438",
+  "analysis_time_seconds": 51.00669002532959,
+  "analysis_time_formatted": "51.0 seconds",
+  "llm_provider": "openai",
+  "analysis_mode": "hybrid",
+  "rag_enabled": false,
+  "statistics": {
+    "total_flows_analyzed": 1,
+    "flows_with_vulnerabilities": 1,
+    "total_vulnerability_lines": 1,
+    "total_structural_risk_lines": 4,
+    "total_detections_before_consolidation": 6,
+    "total_lines_after_consolidation": 5,
+    "consolidation_rate": "16.7%",
+    "severity_distribution": {
+      "critical": 0,
+      "high": 0,
+      "medium": 1,
+      "low": 0
+    },
+    "cwe_distribution": {
+      "CWE-36/121-style: improper input validation leading to information disclosure via object metadata query": 1
+    },
+    "rule_distribution": {
+      "other": 3,
+      "weak_input_validation": 1,
+      "shared_memory_overwrite": 1
+    },
+    "execution_time_seconds": 51.00669002532959,
+    "llm_calls": 5,
+    "cache_hits": 0,
+    "cache_partial_hits": 0,
+    "cache_misses": 1,
+    "cache_hit_rate": "0.0%",
+    "token_usage": {},
+    "retries": 1,
+    "retry_successes": 1
+  },
+  "total_vulnerability_lines": 1,
+  "vulnerabilities": [
+    {
+      "vulnerability_id": "VULN-0001",
+      "file": "/workspace/benchmark/acipher/ta/acipher_ta.c",
+      "line": 73,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "medium",
+      "confidence_level": "medium",
+      "primary_vulnerability_type": "CWE-36/121-style: improper input validation leading to information disclosure via object metadata query",
+      "functions": [
+        "TEE_GetObjectInfo1"
+      ],
+      "sink_functions": [
+        "TEE_GetObjectInfo1"
+      ],
+      "vulnerability_types": [
+        "CWE-36/121-style: improper input validation leading to information disclosure via object metadata query"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "tainted object handle passed into API call without explicit validation"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "cmd_enc",
+          "TEE_GetObjectInfo1"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "state->key (REE-originated object handle)",
+          "propagation_path": [
+            "TA_InvokeCommandEntryPoint -> cmd_enc -> TEE_GetObjectInfo1(state->key, &key_info) @ acipher_ta.c:73"
+          ],
+          "sink": "TEE_GetObjectInfo1"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "state->key is non-null and tainted",
+            "no sanitizer fully mitigating the binding before the call"
+          ],
+          "attack_scenario": "an attacker-controlled key handle could influence object info metadata fetched by TEE_GetObjectInfo1",
+          "impact": "potential leakage of object metadata or misuse of object information"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "acipher_ta.c:73",
+          "recommendation": "validate object handle before TEE_GetObjectInfo1 call or add explicit state checks"
+        }
+      ],
+      "decision_rationales": [
+        "tainted input used directly in a getter without sufficient in-line validation or sanitization"
+      ],
+      "severity_distribution": {
+        "medium": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    }
+  ],
+  "total_finding_lines": 4,
+  "structural_risks": [
+    {
+      "finding_id": "RISK-0001",
+      "file": "/workspace/benchmark/acipher/ta/acipher_ta.c",
+      "line": 73,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_GetObjectInfo1"
+      ],
+      "sink_functions": [
+        "=",
+        "TEE_GetObjectInfo1"
+      ],
+      "rules": [
+        "other",
+        "weak_input_validation"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "tainted (REE-originated) object handle passed into info query; potential unchecked taint propagation into internal state",
+        "tainted REE-originated object handle passed into object-info API without explicit validation"
+      ],
+      "code_excerpts": [
+        "res = TEE_GetObjectInfo1(state->key, &key_info);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other",
+          "weak_input_validation"
+        ],
+        "others": [
+          "flow_dir:unknown",
+          "src_region:TEE-private",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1,
+        "weak_input_validation": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0002",
+      "file": "/workspace/benchmark/acipher/ta/acipher_ta.c",
+      "line": 79,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "cmd_enc"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "alias of REE-visible input buffer bound to callee parameter; potential unchecked taint propagation into internal operations"
+      ],
+      "code_excerpts": [
+        "inbuf = params[0].memref.buffer;"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0003",
+      "file": "/workspace/benchmark/acipher/ta/acipher_ta.c",
+      "line": 81,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "cmd_enc"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "alias of REE-visible output buffer bound to callee parameter; potential taint flow into output path"
+      ],
+      "code_excerpts": [
+        "outbuf = params[1].memref.buffer;"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0004",
+      "file": "/workspace/benchmark/acipher/ta/acipher_ta.c",
+      "line": 97,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "shared_memory_overwrite",
+      "functions": [
+        "cmd_enc"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "shared_memory_overwrite"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "tainted input/length (inbuf_len) used to drive output into REE-visible memory (outbuf) without explicit bounds check in the same path"
+      ],
+      "code_excerpts": [
+        "TEE_AsymmetricEncrypt(op, NULL, 0, inbuf, inbuf_len, outbuf, &outbuf_len);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    }
+  ]
+}
