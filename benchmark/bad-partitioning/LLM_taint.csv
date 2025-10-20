@@ -1,0 +1,191 @@
+﻿TA Name,Finding ID,Type,File Path,Line Number,Rule ID,Functions,Vulnerability Description,Structural Risk Description,Code Excerpt
+ta,"VULN-0001, RISK-0001",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,116,unencrypted_output,"TEE_MemMove, produce_2",TEE_MemMove copies TA-private 'key2' into REE-visible params[1].memref.buffer without sanitizer,"TEE_MemMove copies local 'key2' into REE-visible memref buffer (name suggests secret-like data)
+binding at call-site: destination is params[1].memref.buffer (REE-visible) and source is local 'key2' (TEE-private); shared buffer aliasing
+Potential memory-safety risk if params[1].memref.size is smaller than strlen(key2); no bounds check observed on this path","TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> TEE_MemMove
+TEE_MemMove(params[1].memref.buffer, key2, strlen(key2));"
+ta,"VULN-0002, RISK-0002",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,117,unencrypted_output,"produce_2, snprintf",snprintf writes TA-local 'key2' into REE-visible params[2].memref.buffer with no sanitizer,"snprintf writes local 'key2' into REE-visible memref buffer
+snprintf writes local 'key2' into REE-visible memref buffer (destination is REE-shared)","TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> snprintf
+snprintf(params[2].memref.buffer, params[2].memref.size, ""%s"", key2);"
+ta,"VULN-0003, RISK-0003",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,121,unencrypted_output,"produce_2, snprintf",snprintf composes TA-local 'key2' and 'vi' into REE-visible params[2].memref.buffer with no sanitizer,snprintf composes local 'key2' and 'vi' into REE-visible memref buffer,"TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> snprintf
+snprintf(params[2].memref.buffer, params[2].memref.size, ""%s-%s"", key2, vi);"
+ta,"VULN-0004, RISK-0004",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,122,unencrypted_output,"produce_2, snprintf","snprintf composes TA-local 'key2','vi', and 'v' into REE-visible params[2].memref.buffer with no sanitizer","snprintf composes local 'key2','vi', and local int 'v' into REE-visible memref buffer
+snprintf composes local 'key2','vi', and 'v' into REE-visible memref buffer","TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> snprintf
+snprintf(params[2].memref.buffer, params[2].memref.size, ""%s-%s-%d"", key2, vi, v);"
+ta,"VULN-0005, RISK-0005",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,125,unencrypted_output,produce_2,snprintf writes (post-enc) TA-local 'key2' into REE-visible params[2].memref.buffer with no sanitizer,snprintf writes (possibly transformed) 'key2' into REE-visible memref buffer,"TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> snprintf
+snprintf(params[2].memref.buffer, params[2].memref.size, ""%s"", key2);"
+ta,"VULN-0006, RISK-0006",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,126,unencrypted_output,produce_2,snprintf composes (post-enc) TA-local 'key2' and 'vi' into REE-visible params[2].memref.buffer with no sanitizer,snprintf composes local 'key2' and 'vi' into REE-visible memref buffer after enc,"TA_InvokeCommandEntryPoint -> output -> produce -> produce_2 -> snprintf
+snprintf(params[2].memref.buffer, params[2].memref.size, ""%s-%s"", key2, vi);"
+ta,"VULN-0007, RISK-0007",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,136,unencrypted_output,"TEE_MemMove, produce",TEE_MemMove copies TA-private 'key1' into REE-visible params[1].memref.buffer without validation or protection.,"TEE_MemMove copies local 'key1' into REE-visible memref buffer (named 'key1' suggests secret-like data)
+binding: destination callee parameter aliases caller-provided REE memref buffer
+TEE_MemMove copies local 'key1' into REE-visible params[1].memref.buffer enabling disclosure","TA_InvokeCommandEntryPoint -> output -> produce -> TEE_MemMove
+TEE_MemMove(params[1].memref.buffer, key1, strlen(key1));"
+ta,"VULN-0008, RISK-0008",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,137,unencrypted_output,"produce, snprintf",snprintf writes TA-local 'key1' into REE-visible params[2].memref.buffer with no sanitizer,"snprintf writes local 'key1' into REE-visible memref buffer
+snprintf writes local 'key1' into caller-provided memref buffer (REE-visible) enabling TA->REE disclosure","TA_InvokeCommandEntryPoint -> output -> produce -> snprintf
+snprintf(params[2].memref.buffer, params[2].memref.size, ""%s"", key1);"
+ta,"VULN-0009, RISK-0009",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,143,unencrypted_output,"produce, snprintf",snprintf composes key1 and vi into REE-visible params[2].memref.buffer with no sanitizer,"snprintf composes local 'key1' and 'vi' into REE-visible memref buffer
+snprintf composes key1 and vi into caller memref buffer (REE-visible)","TA_InvokeCommandEntryPoint -> output -> produce -> snprintf
+snprintf(params[2].memref.buffer, params[2].memref.size, ""%s-%s"", key1, vi);"
+ta,"VULN-0010, RISK-0010",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,144,unencrypted_output,produce,"snprintf composes key1, vi, v into REE-visible params[2].memref.buffer with no sanitizer","snprintf composes local 'key1','vi', and local int 'v' into REE-visible memref buffer","TA_InvokeCommandEntryPoint -> output -> produce -> snprintf
+snprintf(params[2].memref.buffer, params[2].memref.size, ""%s-%s-%d"", key1, vi, v);"
+ta,"VULN-0011, RISK-0011",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,147,unencrypted_output,produce,snprintf writes (possibly transformed) key1 into REE-visible params[2].memref.buffer with no sanitizer,snprintf writes (possibly encrypted) 'key1' into REE-visible memref buffer,"TA_InvokeCommandEntryPoint -> output -> produce -> snprintf
+snprintf(params[2].memref.buffer, params[2].memref.size, ""%s"", key1);"
+ta,"VULN-0012, RISK-0012",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,148,unencrypted_output,produce,snprintf composes key1 and vi into REE-visible params[2].memref.buffer with no sanitizer,snprintf composes local 'key1' and 'vi' into REE-visible memref buffer after enc,"TA_InvokeCommandEntryPoint -> output -> produce -> snprintf
+snprintf(params[2].memref.buffer, params[2].memref.size, ""%s-%s"", key1, vi);"
+ta,"VULN-0013, RISK-0013",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,154,unencrypted_output,"TEE_MemMove, produce_3",TEE_MemMove copies TA-local sensitive 'key' into caller-provided (REE-visible) buffer without protection.,"binding: destination is local buffer, source is local 'key' (both TEE-private) at call-site
+TEE_MemMove copies local 'key' into caller-provided buffer (buf may be REE-visible)
+binding: dst parameter aliases caller-provided buffer (possible REE-visible) passed into TEE_MemMove
+TEE_MemMove invoked to copy local 'key' into caller buffer; potential disclosure of named 'key' into REE-visible memory
+TEE_MemMove copies TA-local 'key' into caller-provided buffer 'buf' which is REE-visible","TA_InvokeCommandEntryPoint -> output -> produce_3 -> TEE_MemMove
+TEE_MemMove(buf, key, strlen(key));"
+ta,"VULN-0014, RISK-0014",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,155,unencrypted_output,"produce_3, snprintf",snprintf writes TA-local 'key' into caller-provided REE-visible buffer with no sanitizer,"snprintf writes local 'key' into 'buf' which may be REE-visible (binding at call-site uncertain)
+snprintf writes local 'key' into local buf (likely TEE-private) at produce_3; binding depends on caller
+snprintf writes local 'key' into caller-provided buffer using caller-supplied size (no bounds check here)
+snprintf writes local 'key' into caller-provided buffer 'buf' using caller-supplied size (buffer may be REE-visible)","TA_InvokeCommandEntryPoint -> output -> produce_3 -> snprintf
+snprintf(buf, size, ""%s"", key);"
+ta,"VULN-0015, RISK-0015",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,175,unencrypted_output,"TEE_MemMove, output",TEE_MemMove copies local TA 'key' into REE-visible params[1].memref.buffer without sanitization.,"TEE_MemMove copies local 'key' into REE-visible memref buffer (possible disclosure of named 'key')
+binding: copies local 'key' into caller memref.buffer (caller-provided shared buffer)
+TEE_MemMove copies TA-local 'key' into params[1].memref.buffer (REE-visible)
+call copies local 'key' into REE-visible memref buffer (alias of shared buffer passed into helper); named 'key' suggests sensitive material
+TEE_MemMove copies local 'key' into REE-visible memref buffer prior to snprintfs; shows additional disclosure path.","TA_InvokeCommandEntryPoint -> output -> TEE_MemMove
+TEE_MemMove(params[1].memref.buffer, key, strlen(key));"
+ta,"VULN-0016, RISK-0016",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,176,unencrypted_output,"output, snprintf",Writes TA-private 'key' plaintext into REE-visible memref buffer.,"snprintf writes local 'key' into REE-visible memref buffer
+snprintf copies local 'key' into REE-visible params[2].memref.buffer using params[2].memref.size
+snprintf writes TA-local 'key' into params[2].memref.buffer (REE-visible)
+Subsequent snprintf writes the same local 'key' into params[2].memref.buffer (REE-visible); structural disclosure risk.
+binding: destination buffer argument is alias of REE-provided memref passed into output
+snprintf writes local 'key' into REE-visible memref buffer (possible disclosure of named 'key')","TA_InvokeCommandEntryPoint -> output -> snprintf
+snprintf(params[2].memref.buffer, params[2].memref.size, ""%s"", key);"
+ta,"VULN-0017, RISK-0017",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,184,unencrypted_output,"output, snprintf",Composes and writes TA-private 'key' plaintext into REE-visible memref buffer.,"snprintf composes local 'key' and 'vi' into REE-visible memref buffer
+snprintf composes local 'key' and 'vi' into REE-visible buffer using caller size
+binding: destination buffer argument is alias of REE-provided memref passed into output","TA_InvokeCommandEntryPoint -> output -> snprintf
+snprintf(params[2].memref.buffer, params[2].memref.size, ""%s-%s"", key, vi);"
+ta,"VULN-0018, RISK-0018",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,185,unencrypted_output,"output, snprintf",Composes and writes TA-private 'key' plaintext into REE-visible memref buffer.,"snprintf composes local 'key','vi', and local int 'v' into REE-visible memref buffer
+snprintf composes key/vi/v into caller memref buffer (REE-visible), possible TA->REE disclosure of key-derived data
+snprintf composes local 'key','vi', and 'v' into REE-visible buffer using caller size
+binding: destination buffer argument is alias of REE-provided memref passed into output
+snprintf composes local 'key','vi', and int 'v' into REE-visible memref buffer","TA_InvokeCommandEntryPoint -> output -> snprintf
+snprintf(params[2].memref.buffer, params[2].memref.size, ""%s-%s-%d"", key, vi, v);"
+ta,RISK-0019,Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,189,,snprintf,,"snprintf writes (possibly transformed) 'key' into REE-visible memref buffer after enc
+snprintf writes (possibly transformed by enc) 'key' into caller memref buffer (REE-visible)
+snprintf writes possibly encrypted/modified 'key' into REE-visible buffer using caller size
+binding: destination buffer argument is alias of REE-provided memref passed into output
+snprintf writes possibly-encrypted 'key' into REE-visible memref buffer after enc(key)","snprintf(params[2].memref.buffer, params[2].memref.size, ""%s"", key);"
+ta,RISK-0020,Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,190,,snprintf,,"snprintf composes local 'key' and 'vi' into REE-visible buffer using caller size
+binding: destination buffer argument is alias of REE-provided memref passed into output
+snprintf composes possibly-modified 'key' and 'vi' into REE-visible memref buffer","snprintf(params[2].memref.buffer, params[2].memref.size, ""%s-%s"", key, vi);"
+ta,RISK-0021,Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,191,,snprintf,,"snprintf composes local 'key','vi', and 'v' into REE-visible memref buffer (size controlled by REE-provided param)
+snprintf composes local 'key','vi', and 'v' into REE-visible buffer using caller size
+binding: destination buffer argument is alias of REE-provided memref passed into output
+snprintf composes possibly-modified 'key', 'vi', and 'v' into REE-visible memref buffer","snprintf(params[2].memref.buffer, params[2].memref.size, ""%s-%s-%d"", key, vi, v);"
+ta,RISK-0022,Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,203,weak_input_validation,produce_i2,,"array write into tmp_arr using tainted index 'a' with no bounds check on this path
+tmp_arr[a] = 43 uses tainted 'a' as index with no bounds check",tmp_arr[a] = 43;
+ta,RISK-0023,Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,204,weak_input_validation,produce_i2,,"per-byte copy into TA buffer 'str' using tainted size2 as loop bound without local check
+per-byte copy from buf2 into 'str' uses tainted size2 as loop bound without check",for (int i = 0; i < size2; i++) { str[i] = ((char *)buf2)[i]; }
+ta,"VULN-0019, RISK-0024",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,208,weak_input_validation,"TEE_MemMove, produce_i2",TEE_MemMove uses params[3].memref.size (REE-controlled) to copy into TA 'str' (size 1000) without bounds check.,"call copies from REE-visible params[3].memref.buffer into TA-local 'str' (potential tainted input)
+binding: destination 'str' (TEE-private) receives data from REE-visible params[3].memref.buffer
+binding: copies from REE-visible params[3].memref.buffer into TA buffer 'str' (possible tainted src)
+call copies REE-visible params[3].memref.buffer into local 'str' (alias of shared buffer passed into helper)
+TEE_MemMove copies params[3].memref.buffer (REE) into TA 'str' using caller-controlled size3
+copying REE-provided params[3].memref.buffer into TA buffer 'str' using caller-controlled length
+call-site binding: dst argument 'str' is TA-private while src is REE-visible buffer forwarded from caller","TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_MemMove
+TEE_MemMove(str, params[3].memref.buffer, params[3].memref.size);
+call at entry.c:208 (str <- params[3].memref.buffer)"
+ta,RISK-0025,Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,210,weak_input_validation,produce_i2,,read from TA buffer 'str' using index derived from tainted params[0].value.a (possible OOB),char c = str[params[0].value.a - 3];
+ta,"VULN-0020, RISK-0026",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,212,weak_input_validation,"TEE_MemMove, produce_i2",TEE_MemMove uses params[2].memref.size (REE-controlled) to copy into TA 'str' (size 1000) without bounds check.,"call copies REE-visible params[2].memref.buffer into local 'str' (alias of shared buffer passed into helper)
+TEE_MemMove copies params[2].memref.buffer (REE) into TA 'str' using caller-controlled size
+copying REE-provided params[2].memref.buffer into TA 'str' using caller-controlled length","TA_InvokeCommandEntryPoint -> input -> produce_i0 -> produce_i2 -> TEE_MemMove
+TEE_MemMove(str, params[2].memref.buffer, params[2].memref.size);"
+ta,RISK-0027,Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,222,weak_input_validation,produce_i0,,"array write into tmp_arr using tainted index 'a' with no local bounds check on 'a'
+tmp_arr indexed by tainted 'a' without bounds check",tmp_arr[a] = 43;
+ta,RISK-0028,Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,223,weak_input_validation,produce_i0,,"per-byte copy into TA buffer 'str' using tainted size2 as loop bound without an enclosing check on this path
+per-byte copy from caller buffer into TA 'str' using tainted size2 before checks",for (int i = 0; i < size2; i++) { str[i] = ((char *)buf2)[i]; }
+ta,"VULN-0021, RISK-0029",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,227,weak_input_validation,"TEE_MemMove, produce_i0","TEE_MemMove copies caller-controlled size3 into TA 'str' before the later size3 check, allowing overflow.","call copies local 'str' into buf3 (destination may be REE-visible or unknown) without visible bounds check here
+TEE_MemMove copies caller-provided buf3 into TA buffer 'str' using size3 (caller-controlled)
+copying caller-provided buf3 into TA 'str' using size3 (caller-controlled)
+call-site binding: dst 'str' is TA-private, src 'buf3' and len 'size3' originate from REE and are forwarded into TEE_MemMove","TA_InvokeCommandEntryPoint -> input -> produce_i0 -> TEE_MemMove
+TEE_MemMove(str, buf3, size3);"
+ta,VULN-0022,Vulnerability,/workspace/benchmark/bad-partitioning/ta/entry.c,238,weak_input_validation,produce_i0,"TEE_MemMove copies caller-controlled size2 into TA 'str' before the later size2 check, allowing overflow.",,TA_InvokeCommandEntryPoint -> input -> produce_i0 -> TEE_MemMove
+ta,RISK-0030,Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,246,shared_memory_overwrite,"TEE_MemMove, produce_i0",,"call copies TA-local 'str' into buf2 with fixed len 1000 (caller-provided buf2 region unknown; potential overwrite)
+binding: destination buf2 (unknown origin) receives local 'str' data
+binding: copies TA-local 'str' into caller-provided buf2 (dst may be REE-visible)
+call copies local 'str' into buf2 with constant length 1000; destination origin unknown (possible overwrite)
+TEE_MemMove writes 1000 bytes from TA 'str' into caller-provided buf2 (REE-visible) where dst size is size2 (caller-controlled) and no effective bounds check on this path
+writing 1000 bytes from TA 'str' into caller-provided buf2 (REE-visible) where destination size is caller-controlled and no local check on this path
+call-site binding: dst argument 'buf2' aliases caller-provided REE buffer (destination of TA->REE copy)
+TEE_MemMove writes 1000 bytes from TA 'str' into caller buffer buf2 where destination size is caller-controlled
+writing 1000 bytes from TA-private 'str' into caller-provided buf2 (REE-visible) with destination size controlled by caller earlier (size2) and no effective bounds check on this path","TEE_MemMove(buf2, str, 1000);
+call at entry.c:246 (buf2 <- str)"
+ta,RISK-0031,Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,283,,input,,TEE_Malloc invoked with tainted size params[0].value.a (allocation size influence by REE),"int *arr_a = TEE_Malloc(params[0].value.a, 0);"
+ta,RISK-0032,Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,284,,input,,TEE_Malloc invoked with tainted size params[1].memref.size (allocation size influenced by REE),"int *arr_ref = TEE_Malloc(params[1].memref.size, 0);"
+ta,RISK-0033,Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,285,weak_input_validation,input,,"per‑element write to tmp_arr using tainted params[0].value.a as index with no bounds check on that value
+Per-element write to tmp_arr using tainted params[0].value.a as index with no bounds check on that value",tmp_arr[params[0].value.a] = 43;
+ta,RISK-0034,Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,286,weak_input_validation,input,,"per‑byte copy into TA heap 'str' using params[2].memref.size (REE-tainted) as loop bound without additional check
+Per-byte loop copies params[2].memref.size bytes into TA buffer 'str' without checking against 'str' capacity",for (int i = 0; i < params[2].memref.size; i++) { str[i] = ((char *)params[2].memref.buffer)[i]; }
+ta,"VULN-0023, RISK-0035",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,290,weak_input_validation,"TEE_MemMove, input",Copies REE-controlled params[3].memref.size into TA buffer 'str' (1000) without checking bounds.,"binding: copies from REE-visible params[3].memref.buffer into TA-local 'str' (tainted src)
+TEE_MemMove moves REE-visible params[3].memref.buffer into TA buffer 'str' using REE-provided size
+call-site binding: src params[3].memref.buffer and len params[3].memref.size are REE-originated and copied into TA-private 'str'
+call-site binding: destination 'str' is TA-private buffer passed as first arg
+call-site binding: source params[3].memref.buffer originates from REE (shared)
+TEE_MemMove copying REE buffer into TA heap using REE-controlled size","TA_InvokeCommandEntryPoint -> input -> TEE_MemMove
+TEE_MemMove(str, params[3].memref.buffer, params[3].memref.size);"
+ta,"VULN-0024, RISK-0036",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,291,shared_memory_overwrite,"TEE_MemMove, input",Writes fixed 1000 bytes from TA 'str' into REE-visible params[2].memref.buffer whose size may be smaller.,"TEE_MemMove writes local 'str' into REE-visible params[2].memref.buffer (possible disclosure)
+binding: copies TA-local 'str' into params[2].memref.buffer (caller-provided dst, possible REE-visible)
+call copies local 'str' into REE-visible params[2].memref.buffer (possible disclosure of TA data to REE)
+TEE_MemMove writes TA-private 'str' into REE-visible params[2].memref.buffer with fixed length 1000 (possible overflow of destination)
+writing 1000 bytes from TA 'str' into params[2].memref.buffer (REE-visible) with destination size controlled by params[2].memref.size
+TEE_MemMove writes fixed 1000 bytes from TA-private 'str' into REE-visible params[2].memref.buffer (destination size is REE-controlled) without an effective check on this path
+Fixed-size write of 1000 bytes into REE-visible params[2].memref.buffer where destination size is REE-controlled
+TEE_MemMove writes TA-private 'str' into REE-visible params[2].memref.buffer with fixed length 1000; destination size is REE-controlled and may be smaller
+call-site binding: destination params[2].memref.buffer is REE-visible alias","TA_InvokeCommandEntryPoint -> input -> TEE_MemMove
+TEE_MemMove(params[2].memref.buffer, str, 1000);"
+ta,RISK-0037,Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,293,,input,,read from REE buffer using params[3].memref.size-derived index (possible OOB read if size small),char c = ((char *)params[3].memref.buffer)[params[3].memref.size - 3];
+ta,"VULN-0025, RISK-0038",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,306,weak_input_validation,"TEE_MemMove, input",Copies REE-controlled params[2].memref.size into TA buffer 'str' (1000) without checking bounds.,"TEE_MemMove copies params[2].memref.buffer into TA 'str' using REE-provided size
+copying params[2].memref.buffer into TA 'str' using caller-controlled size
+call-site binding: source params[2].memref.buffer originates from REE
+TEE_MemMove copies REE buffer into TA buffer using REE-provided size","TA_InvokeCommandEntryPoint -> input -> TEE_MemMove
+TEE_MemMove(str, params[2].memref.buffer, params[2].memref.size);"
+ta,"VULN-0026, RISK-0039",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,307,weak_input_validation,"TEE_MemMove, input",Copies REE-controlled params[3].memref.size into TA buffer 'str' (1000) without checking bounds.,"TEE_MemMove copies params[3].memref.buffer into TA 'str' using REE-provided size
+TEE_MemMove copies REE buffer into TA buffer using REE-provided size","TA_InvokeCommandEntryPoint -> input -> TEE_MemMove
+TEE_MemMove(str, params[3].memref.buffer, params[3].memref.size);"
+ta,"VULN-0027, RISK-0040",Vulnerability/Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,309,shared_memory_overwrite,"TEE_MemMove, input",Writes fixed 1000 bytes from TA 'str' into REE-visible params[2].memref.buffer; destination size is REE-controlled.,"TEE_MemMove writes TA 'str' into REE-visible params[2].memref.buffer with fixed length 1000 (destination size is REE-controlled)
+repeat call: writing 1000 bytes from TA 'str' into REE-visible params[2].memref.buffer where destination size is controlled by caller
+Repeat fixed-size write into REE buffer with destination size controlled by REE
+TEE_MemMove writes TA-private 'str' into REE-visible params[2].memref.buffer with fixed 1000 bytes; destination size is REE-controlled","TA_InvokeCommandEntryPoint -> input -> TEE_MemMove
+TEE_MemMove(params[2].memref.buffer, str, 1000);"
+ta,RISK-0041,Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,350,,"TEE_MemMove, produce_s",,"call copies buf (caller-provided) into TA-local 'str' using size variable 'size' (size tainted/unknown)
+binding: copies caller-provided buf into TA-local 'str' (src may be REE-visible)
+call copies buf into local 'str' (aliasing/shared origin unknown); origin of buf unknown
+copying caller buffer 'buf' into local str[1000] using caller-controlled size
+call-site binding: source 'buf' provided by REE and forwarded into TEE_MemMove
+TEE_MemMove copying caller-controlled buffer into TA stack 'str' using caller size
+TEE_MemMove copies potentially REE-originated buf into local stack buffer str; guarded by size<=1000 check
+Binding at call-site: dst=str (local), src=buf aliases REE-visible memref; caller has size bounds check at 346-348
+TEE_MemMove copies REE-originated buf into local str; guarded by size<=1000 check","TEE_MemMove(str, buf, size);"
+ta,RISK-0042,Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,357,,produce_s3,,local buf is alias of REE-visible params[0].memref.buffer,void *buf = params[0].memref.buffer;
+ta,RISK-0043,Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,401,,"TEE_MemMove, produce_s3",,"binding: copying params[0].memref.buffer (REE-visible) into TA-local 'str' may introduce tainted data
+binding: destination 'str' (local) aliases REE-visible params[0].memref.buffer as source
+binding: copies from REE-visible params[0].memref.buffer into TA-local 'str' (src tainted)
+call copies REE-visible params[0].memref.buffer into local 'str' (alias of shared buffer passed into helper)
+TEE_MemMove copies params[0].memref.buffer into TA stack 'str' using REE-provided size
+call-site binding: params[0].memref.buffer is REE-visible and passed to TEE_MemMove
+Binding at call-site: dst=str (local), src=params[0].memref.buffer (REE-visible); caller path has a bounds check near 481-483 covering similar usage
+TEE_MemMove copies REE-originated memref into local str; caller includes bounds check (see 481-483)
+TEE_MemMove copies REE-originated memref into local stack buffer; guarded by sz<=1000 check
+call-site binds dest 'str' to local stack buffer and src to REE-visible memref (pointer binding)
+TEE_MemMove copies REE-originated buffer into TA-stack; guarded by prior bounds check","TEE_MemMove(str, params[0].memref.buffer, params[0].memref.size);"
+ta,RISK-0044,Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,422,,shared_memory,,"local pointer buf is an alias of params[0].memref.buffer (REE-visible shared buffer)
+buf is an alias of REE-visible params[0].memref.buffer and used for subsequent operations
+buf is alias of params[0].memref.buffer (REE-visible shared buffer)
+Local pointer 'buf' aliases params[0].memref.buffer (REE-visible shared buffer).",void *buf = params[0].memref.buffer;
+ta,RISK-0045,Structural Risk,/workspace/benchmark/bad-partitioning/ta/entry.c,485,,"TEE_MemMove, shared_memory",,"binding: copies from REE-visible params[0].memref.buffer into TA-local 'str' (src tainted)
+call copies REE-visible params[0].memref.buffer into local 'str' (used in subsequent strcmp)
+TEE_MemMove copies params[0].memref.buffer into TA stack 'str' using REE-provided size
+call-site binding: params[0].memref.buffer is REE-visible and passed as source
+TEE_MemMove copies REE-originated memref into local stack buffer str; guarded by sz<=1000 check
+Binding at call-site: dst=str local, src=params[0].memref.buffer (REE-visible); caller checked sz<=1000 at 481-483
+TEE_MemMove copies REE-originated memref into local str; guarded by sz<=1000 check
+call-site binds dest 'str' to local stack buffer and src to REE-visible memref (pointer binding)
+TEE_MemMove copies REE-originated buffer into TA-stack; guarded by prior bounds check
+binding: destination 'str' is a local TEE-private buffer receiving data from REE-originated memref
+binding: source argument is params[0].memref.buffer which is REE-visible shared memory
+call to TEE_MemMove copies REE-originated data into local buffer; guarded by prior sz<=1000 check","TEE_MemMove(str, params[0].memref.buffer, params[0].memref.size);"

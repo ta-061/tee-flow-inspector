@@ -1,0 +1,4412 @@
+{
+  "analysis_date": "2025-10-14T01:23:38.224243",
+  "analysis_time_seconds": 1351.0518424510956,
+  "analysis_time_formatted": "22.5 minutes",
+  "llm_provider": "openai",
+  "analysis_mode": "hybrid",
+  "rag_enabled": false,
+  "statistics": {
+    "total_flows_analyzed": 14,
+    "flows_with_vulnerabilities": 11,
+    "total_vulnerability_lines": 27,
+    "total_structural_risk_lines": 45,
+    "total_detections_before_consolidation": 81,
+    "total_lines_after_consolidation": 72,
+    "consolidation_rate": "11.1%",
+    "severity_distribution": {
+      "critical": 0,
+      "high": 26,
+      "medium": 1,
+      "low": 0
+    },
+    "cwe_distribution": {
+      "CWE-200": 10,
+      "CWE‑200": 8,
+      "CWE-120": 4,
+      "CWE-120/CWE-121 (stack/heap buffer overflow) and CWE-125 (out-of-bounds write to shared memory)": 5
+    },
+    "rule_distribution": {
+      "other": 44,
+      "weak_input_validation": 7,
+      "shared_memory_overwrite": 3
+    },
+    "execution_time_seconds": 1351.0518424510956,
+    "llm_calls": 39,
+    "cache_hits": 13,
+    "cache_partial_hits": 13,
+    "cache_misses": 1,
+    "cache_hit_rate": "92.9%",
+    "token_usage": {},
+    "retries": 0,
+    "retry_successes": 0
+  },
+  "total_vulnerability_lines": 27,
+  "vulnerabilities": [
+    {
+      "vulnerability_id": "VULN-0001",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 116,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "medium",
+      "primary_vulnerability_type": "CWE-200",
+      "functions": [
+        "produce_2"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "CWE-200"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "TEE_MemMove copies TA-private 'key2' into REE-visible params[1].memref.buffer without sanitizer"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "output",
+          "produce",
+          "produce_2",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "local TA buffer 'key2' (initialized in produce_2)",
+          "propagation_path": [
+            "key2 -> TEE_MemMove dst=params[1].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:116",
+            "params (caller) originated from REE and was passed into produce_2 @ /workspace/benchmark/bad-partitioning/ta/entry.c:141",
+            "params flow back to REE when TA returns"
+          ],
+          "sink": "params[1].memref.buffer (REE-visible) receiving plaintext 'key2' via TEE_MemMove"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker-controlled REE or caller supplies params with params[1] memref accessible",
+            "No bounds or type validation on params[1].memref.size to limit writes"
+          ],
+          "attack_scenario": "Malicious REE invokes the TA command causing TA to copy its local secret 'key2' into the REE-provided buffer, exfiltrating the secret in plaintext to the Normal World.",
+          "impact": "Disclosure of TA-secret material (key-like data) to Normal World; loss of confidentiality of secret material."
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "produce_2:116",
+          "recommendation": "Verify params[1].memref.size is large enough (>= strlen(key2)+1) before copying; use safe APIs with explicit length limits."
+        },
+        {
+          "type": "access_control",
+          "location": "produce_2:116",
+          "recommendation": "Avoid writing TA-private keys into REE-visible buffers; return data via secure channels or keep keys TA-private."
+        },
+        {
+          "type": "encryption",
+          "location": "produce_2:116",
+          "recommendation": "If data must be shared, encrypt before copying to REE-visible memory."
+        }
+      ],
+      "decision_rationales": [
+        "All promotion conditions met: destination is REE-visible, data is named like a key (sensitivity_label=key), and no effective sanitizer was observed prior to the copy, so this is classified as unencrypted_output disclosure."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0002",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 117,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-200",
+      "functions": [
+        "produce_2"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "vulnerability_types": [
+        "CWE-200"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "snprintf writes TA-local 'key2' into REE-visible params[2].memref.buffer with no sanitizer"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "output",
+          "produce",
+          "produce_2",
+          "snprintf"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "TA-local buffers named like 'key2' (TEE-private)",
+          "propagation_path": [
+            "produce_2: key2 -> snprintf dst params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:117",
+            "produce_2: key2,vi -> snprintf dst params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:121",
+            "produce_2: key2,vi,v -> snprintf dst params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:122",
+            "produce_2: enc(key2) then snprintf -> params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:125",
+            "produce_2: key2 (post-enc),vi -> snprintf dst params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:126"
+          ],
+          "sink": "snprintf writing into REE-visible params[2].memref.buffer"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker (REE) can call TA_InvokeCommandEntryPoint with MEMREFs mapped to params[2]",
+            "No TA-side encryption or access control preventing writing sensitive TA-local 'key2' to the REE buffer"
+          ],
+          "attack_scenario": "TA composes or copies internal secret-like data 'key2' into REE-shared memref via snprintf, causing disclosure to REE caller.",
+          "impact": "Confidential TA-local secret ('key2') can be exposed to Normal World, compromising confidentiality."
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "access_control",
+          "location": "produce_2:116-126",
+          "recommendation": "Validate destination buffer ownership and avoid writing TA-private secrets into REE-visible memrefs; use TEE secure storage or return only non-sensitive results."
+        },
+        {
+          "type": "type_validation",
+          "location": "output:168-169",
+          "recommendation": "Ensure param_types semantics and memref directions are strictly validated and restrict MEMREF_OUTPUT where secrets may be returned."
+        },
+        {
+          "type": "encryption",
+          "location": "produce_2:125-126",
+          "recommendation": "If returning sensitive material is required, encrypt it with a key not exposed to REE before writing to REE-visible buffers."
+        }
+      ],
+      "decision_rationales": [
+        "All promotion conditions met: dst is REE-visible, source labeled 'key' (sensitive), and no sanitizer or access control prevents TA-private secret being written to REE; therefore classified as unencrypted_output disclosure."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0003",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 121,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-200",
+      "functions": [
+        "produce_2"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "vulnerability_types": [
+        "CWE-200"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "snprintf composes TA-local 'key2' and 'vi' into REE-visible params[2].memref.buffer with no sanitizer"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "output",
+          "produce",
+          "produce_2",
+          "snprintf"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "TA-local buffers named like 'key2' (TEE-private)",
+          "propagation_path": [
+            "produce_2: key2 -> snprintf dst params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:117",
+            "produce_2: key2,vi -> snprintf dst params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:121",
+            "produce_2: key2,vi,v -> snprintf dst params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:122",
+            "produce_2: enc(key2) then snprintf -> params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:125",
+            "produce_2: key2 (post-enc),vi -> snprintf dst params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:126"
+          ],
+          "sink": "snprintf writing into REE-visible params[2].memref.buffer"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker (REE) can call TA_InvokeCommandEntryPoint with MEMREFs mapped to params[2]",
+            "No TA-side encryption or access control preventing writing sensitive TA-local 'key2' to the REE buffer"
+          ],
+          "attack_scenario": "TA composes or copies internal secret-like data 'key2' into REE-shared memref via snprintf, causing disclosure to REE caller.",
+          "impact": "Confidential TA-local secret ('key2') can be exposed to Normal World, compromising confidentiality."
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "access_control",
+          "location": "produce_2:116-126",
+          "recommendation": "Validate destination buffer ownership and avoid writing TA-private secrets into REE-visible memrefs; use TEE secure storage or return only non-sensitive results."
+        },
+        {
+          "type": "type_validation",
+          "location": "output:168-169",
+          "recommendation": "Ensure param_types semantics and memref directions are strictly validated and restrict MEMREF_OUTPUT where secrets may be returned."
+        },
+        {
+          "type": "encryption",
+          "location": "produce_2:125-126",
+          "recommendation": "If returning sensitive material is required, encrypt it with a key not exposed to REE before writing to REE-visible buffers."
+        }
+      ],
+      "decision_rationales": [
+        "All promotion conditions met: dst is REE-visible, source labeled 'key' (sensitive), and no sanitizer or access control prevents TA-private secret being written to REE; therefore classified as unencrypted_output disclosure."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0004",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 122,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-200",
+      "functions": [
+        "produce_2"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "vulnerability_types": [
+        "CWE-200"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "snprintf composes TA-local 'key2','vi', and 'v' into REE-visible params[2].memref.buffer with no sanitizer"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "output",
+          "produce",
+          "produce_2",
+          "snprintf"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "TA-local buffers named like 'key2' (TEE-private)",
+          "propagation_path": [
+            "produce_2: key2 -> snprintf dst params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:117",
+            "produce_2: key2,vi -> snprintf dst params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:121",
+            "produce_2: key2,vi,v -> snprintf dst params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:122",
+            "produce_2: enc(key2) then snprintf -> params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:125",
+            "produce_2: key2 (post-enc),vi -> snprintf dst params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:126"
+          ],
+          "sink": "snprintf writing into REE-visible params[2].memref.buffer"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker (REE) can call TA_InvokeCommandEntryPoint with MEMREFs mapped to params[2]",
+            "No TA-side encryption or access control preventing writing sensitive TA-local 'key2' to the REE buffer"
+          ],
+          "attack_scenario": "TA composes or copies internal secret-like data 'key2' into REE-shared memref via snprintf, causing disclosure to REE caller.",
+          "impact": "Confidential TA-local secret ('key2') can be exposed to Normal World, compromising confidentiality."
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "access_control",
+          "location": "produce_2:116-126",
+          "recommendation": "Validate destination buffer ownership and avoid writing TA-private secrets into REE-visible memrefs; use TEE secure storage or return only non-sensitive results."
+        },
+        {
+          "type": "type_validation",
+          "location": "output:168-169",
+          "recommendation": "Ensure param_types semantics and memref directions are strictly validated and restrict MEMREF_OUTPUT where secrets may be returned."
+        },
+        {
+          "type": "encryption",
+          "location": "produce_2:125-126",
+          "recommendation": "If returning sensitive material is required, encrypt it with a key not exposed to REE before writing to REE-visible buffers."
+        }
+      ],
+      "decision_rationales": [
+        "All promotion conditions met: dst is REE-visible, source labeled 'key' (sensitive), and no sanitizer or access control prevents TA-private secret being written to REE; therefore classified as unencrypted_output disclosure."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0005",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 125,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-200",
+      "functions": [
+        "produce_2"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "vulnerability_types": [
+        "CWE-200"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "snprintf writes (post-enc) TA-local 'key2' into REE-visible params[2].memref.buffer with no sanitizer"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "output",
+          "produce",
+          "produce_2",
+          "snprintf"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "TA-local buffers named like 'key2' (TEE-private)",
+          "propagation_path": [
+            "produce_2: key2 -> snprintf dst params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:117",
+            "produce_2: key2,vi -> snprintf dst params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:121",
+            "produce_2: key2,vi,v -> snprintf dst params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:122",
+            "produce_2: enc(key2) then snprintf -> params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:125",
+            "produce_2: key2 (post-enc),vi -> snprintf dst params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:126"
+          ],
+          "sink": "snprintf writing into REE-visible params[2].memref.buffer"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker (REE) can call TA_InvokeCommandEntryPoint with MEMREFs mapped to params[2]",
+            "No TA-side encryption or access control preventing writing sensitive TA-local 'key2' to the REE buffer"
+          ],
+          "attack_scenario": "TA composes or copies internal secret-like data 'key2' into REE-shared memref via snprintf, causing disclosure to REE caller.",
+          "impact": "Confidential TA-local secret ('key2') can be exposed to Normal World, compromising confidentiality."
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "access_control",
+          "location": "produce_2:116-126",
+          "recommendation": "Validate destination buffer ownership and avoid writing TA-private secrets into REE-visible memrefs; use TEE secure storage or return only non-sensitive results."
+        },
+        {
+          "type": "type_validation",
+          "location": "output:168-169",
+          "recommendation": "Ensure param_types semantics and memref directions are strictly validated and restrict MEMREF_OUTPUT where secrets may be returned."
+        },
+        {
+          "type": "encryption",
+          "location": "produce_2:125-126",
+          "recommendation": "If returning sensitive material is required, encrypt it with a key not exposed to REE before writing to REE-visible buffers."
+        }
+      ],
+      "decision_rationales": [
+        "All promotion conditions met: dst is REE-visible, source labeled 'key' (sensitive), and no sanitizer or access control prevents TA-private secret being written to REE; therefore classified as unencrypted_output disclosure."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0006",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 126,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-200",
+      "functions": [
+        "produce_2"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "vulnerability_types": [
+        "CWE-200"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "snprintf composes (post-enc) TA-local 'key2' and 'vi' into REE-visible params[2].memref.buffer with no sanitizer"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "output",
+          "produce",
+          "produce_2",
+          "snprintf"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "TA-local buffers named like 'key2' (TEE-private)",
+          "propagation_path": [
+            "produce_2: key2 -> snprintf dst params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:117",
+            "produce_2: key2,vi -> snprintf dst params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:121",
+            "produce_2: key2,vi,v -> snprintf dst params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:122",
+            "produce_2: enc(key2) then snprintf -> params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:125",
+            "produce_2: key2 (post-enc),vi -> snprintf dst params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:126"
+          ],
+          "sink": "snprintf writing into REE-visible params[2].memref.buffer"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker (REE) can call TA_InvokeCommandEntryPoint with MEMREFs mapped to params[2]",
+            "No TA-side encryption or access control preventing writing sensitive TA-local 'key2' to the REE buffer"
+          ],
+          "attack_scenario": "TA composes or copies internal secret-like data 'key2' into REE-shared memref via snprintf, causing disclosure to REE caller.",
+          "impact": "Confidential TA-local secret ('key2') can be exposed to Normal World, compromising confidentiality."
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "access_control",
+          "location": "produce_2:116-126",
+          "recommendation": "Validate destination buffer ownership and avoid writing TA-private secrets into REE-visible memrefs; use TEE secure storage or return only non-sensitive results."
+        },
+        {
+          "type": "type_validation",
+          "location": "output:168-169",
+          "recommendation": "Ensure param_types semantics and memref directions are strictly validated and restrict MEMREF_OUTPUT where secrets may be returned."
+        },
+        {
+          "type": "encryption",
+          "location": "produce_2:125-126",
+          "recommendation": "If returning sensitive material is required, encrypt it with a key not exposed to REE before writing to REE-visible buffers."
+        }
+      ],
+      "decision_rationales": [
+        "All promotion conditions met: dst is REE-visible, source labeled 'key' (sensitive), and no sanitizer or access control prevents TA-private secret being written to REE; therefore classified as unencrypted_output disclosure."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0007",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 136,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-200",
+      "functions": [
+        "produce"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "CWE-200"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "TEE_MemMove copies TA-private 'key1' into REE-visible params[1].memref.buffer without validation or protection."
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "output",
+          "produce",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "key1 (local TA-private buffer, named 'key1')",
+          "propagation_path": [
+            "key1 -> TEE_MemMove(dest=params[1].memref.buffer, src=key1) @ /workspace/benchmark/bad-partitioning/ta/entry.c:136",
+            "params (caller-provided REE memrefs) originated at TA_InvokeCommandEntryPoint -> passed into produce -> used here @ entry.c:508/181/136"
+          ],
+          "sink": "params[1].memref.buffer (REE-visible) via TEE_MemMove"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker (REE) can provide params with memref buffers to the TA invoke",
+            "No bounds check or access control prevents the TA from writing into the provided memref"
+          ],
+          "attack_scenario": "Malicious REE-controlled client calls the TA, which writes TA-private key material ('key1') into the client's supplied shared buffer, exfiltrating the key in plaintext.",
+          "impact": "Disclosure of TA-private secret material to the Normal World (loss of confidentiality of 'key1')"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "access_control",
+          "location": "produce:136",
+          "recommendation": "Do not copy TA-private keys into REE-provided memrefs; restrict what is written to shared buffers."
+        },
+        {
+          "type": "bounds_check",
+          "location": "produce:136",
+          "recommendation": "Validate params[1].memref.size against src length and ensure null-termination before copying."
+        },
+        {
+          "type": "encryption",
+          "location": "produce:136",
+          "recommendation": "If returning sensitive data to REE is required, encrypt it under an REE-visible key or avoid returning secrets."
+        }
+      ],
+      "decision_rationales": [
+        "All promotion conditions met: destination is REE-visible, the data variable is semantically a key, and no effective sanitizer/bounds check is present; thus this is an unencrypted plaintext leak to REE."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0008",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 137,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE‑200",
+      "functions": [
+        "produce"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "vulnerability_types": [
+        "CWE‑200"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "snprintf writes TA-local 'key1' into REE-visible params[2].memref.buffer with no sanitizer"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "output",
+          "produce",
+          "snprintf"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "TA-local secret-like buffers (key/key1) written into params memref buffers",
+          "propagation_path": [
+            "key1 (local) -> TEE_MemMove -> params[1].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:136",
+            "key1 (local) -> snprintf -> params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:137",
+            "produce called from output passing REE-origin params array @ /workspace/benchmark/bad-partitioning/ta/entry.c:181"
+          ],
+          "sink": "snprintf writing TA-private key-derived data into REE-visible memref (params[2].memref.buffer)"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker (REE) invokes TA with MEMREFs in params allowing output to params[2].memref.buffer",
+            "TA contains local buffers named 'key'/'key1' used to hold sensitive material"
+          ],
+          "attack_scenario": "Malicious REE caller reads params[2] after TA returns to obtain TA-local secret-derived plaintext written by snprintf",
+          "impact": "Disclosure of TA-private secret-like data to REE, compromising confidentiality of keys/credentials"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "access_control",
+          "location": "produce:136-148",
+          "recommendation": "Do not write TA-private secrets into REE-visible buffers; return secrets via controlled, authenticated channel or encrypt before copying"
+        },
+        {
+          "type": "type_validation",
+          "location": "output/produce:168|181",
+          "recommendation": "Validate param_types and memref sizes and enforce policy on which memrefs may receive secret material"
+        },
+        {
+          "type": "encryption",
+          "location": "produce:136-148",
+          "recommendation": "Encrypt secret-derived data before writing into REE-visible memory"
+        }
+      ],
+      "decision_rationales": [
+        "All promotion conditions met: dst is REE-visible, data labeled/used as key-like secret, and no sanitizer or access control prevents TA->REE plaintext copy; therefore each snprintf is an unencrypted output of sensitive data."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0009",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 143,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE‑200",
+      "functions": [
+        "produce"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "vulnerability_types": [
+        "CWE‑200"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "snprintf composes key1 and vi into REE-visible params[2].memref.buffer with no sanitizer"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "output",
+          "produce",
+          "snprintf"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "TA-local secret-like buffers (key/key1) written into params memref buffers",
+          "propagation_path": [
+            "key1 (local) -> TEE_MemMove -> params[1].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:136",
+            "key1 (local) -> snprintf -> params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:137",
+            "produce called from output passing REE-origin params array @ /workspace/benchmark/bad-partitioning/ta/entry.c:181"
+          ],
+          "sink": "snprintf writing TA-private key-derived data into REE-visible memref (params[2].memref.buffer)"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker (REE) invokes TA with MEMREFs in params allowing output to params[2].memref.buffer",
+            "TA contains local buffers named 'key'/'key1' used to hold sensitive material"
+          ],
+          "attack_scenario": "Malicious REE caller reads params[2] after TA returns to obtain TA-local secret-derived plaintext written by snprintf",
+          "impact": "Disclosure of TA-private secret-like data to REE, compromising confidentiality of keys/credentials"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "access_control",
+          "location": "produce:136-148",
+          "recommendation": "Do not write TA-private secrets into REE-visible buffers; return secrets via controlled, authenticated channel or encrypt before copying"
+        },
+        {
+          "type": "type_validation",
+          "location": "output/produce:168|181",
+          "recommendation": "Validate param_types and memref sizes and enforce policy on which memrefs may receive secret material"
+        },
+        {
+          "type": "encryption",
+          "location": "produce:136-148",
+          "recommendation": "Encrypt secret-derived data before writing into REE-visible memory"
+        }
+      ],
+      "decision_rationales": [
+        "All promotion conditions met: dst is REE-visible, data labeled/used as key-like secret, and no sanitizer or access control prevents TA->REE plaintext copy; therefore each snprintf is an unencrypted output of sensitive data."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0010",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 144,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE‑200",
+      "functions": [
+        "produce"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "vulnerability_types": [
+        "CWE‑200"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "snprintf composes key1, vi, v into REE-visible params[2].memref.buffer with no sanitizer"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "output",
+          "produce",
+          "snprintf"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "TA-local secret-like buffers (key/key1) written into params memref buffers",
+          "propagation_path": [
+            "key1 (local) -> TEE_MemMove -> params[1].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:136",
+            "key1 (local) -> snprintf -> params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:137",
+            "produce called from output passing REE-origin params array @ /workspace/benchmark/bad-partitioning/ta/entry.c:181"
+          ],
+          "sink": "snprintf writing TA-private key-derived data into REE-visible memref (params[2].memref.buffer)"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker (REE) invokes TA with MEMREFs in params allowing output to params[2].memref.buffer",
+            "TA contains local buffers named 'key'/'key1' used to hold sensitive material"
+          ],
+          "attack_scenario": "Malicious REE caller reads params[2] after TA returns to obtain TA-local secret-derived plaintext written by snprintf",
+          "impact": "Disclosure of TA-private secret-like data to REE, compromising confidentiality of keys/credentials"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "access_control",
+          "location": "produce:136-148",
+          "recommendation": "Do not write TA-private secrets into REE-visible buffers; return secrets via controlled, authenticated channel or encrypt before copying"
+        },
+        {
+          "type": "type_validation",
+          "location": "output/produce:168|181",
+          "recommendation": "Validate param_types and memref sizes and enforce policy on which memrefs may receive secret material"
+        },
+        {
+          "type": "encryption",
+          "location": "produce:136-148",
+          "recommendation": "Encrypt secret-derived data before writing into REE-visible memory"
+        }
+      ],
+      "decision_rationales": [
+        "All promotion conditions met: dst is REE-visible, data labeled/used as key-like secret, and no sanitizer or access control prevents TA->REE plaintext copy; therefore each snprintf is an unencrypted output of sensitive data."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0011",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 147,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE‑200",
+      "functions": [
+        "produce"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "vulnerability_types": [
+        "CWE‑200"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "snprintf writes (possibly transformed) key1 into REE-visible params[2].memref.buffer with no sanitizer"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "output",
+          "produce",
+          "snprintf"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "TA-local secret-like buffers (key/key1) written into params memref buffers",
+          "propagation_path": [
+            "key1 (local) -> TEE_MemMove -> params[1].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:136",
+            "key1 (local) -> snprintf -> params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:137",
+            "produce called from output passing REE-origin params array @ /workspace/benchmark/bad-partitioning/ta/entry.c:181"
+          ],
+          "sink": "snprintf writing TA-private key-derived data into REE-visible memref (params[2].memref.buffer)"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker (REE) invokes TA with MEMREFs in params allowing output to params[2].memref.buffer",
+            "TA contains local buffers named 'key'/'key1' used to hold sensitive material"
+          ],
+          "attack_scenario": "Malicious REE caller reads params[2] after TA returns to obtain TA-local secret-derived plaintext written by snprintf",
+          "impact": "Disclosure of TA-private secret-like data to REE, compromising confidentiality of keys/credentials"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "access_control",
+          "location": "produce:136-148",
+          "recommendation": "Do not write TA-private secrets into REE-visible buffers; return secrets via controlled, authenticated channel or encrypt before copying"
+        },
+        {
+          "type": "type_validation",
+          "location": "output/produce:168|181",
+          "recommendation": "Validate param_types and memref sizes and enforce policy on which memrefs may receive secret material"
+        },
+        {
+          "type": "encryption",
+          "location": "produce:136-148",
+          "recommendation": "Encrypt secret-derived data before writing into REE-visible memory"
+        }
+      ],
+      "decision_rationales": [
+        "All promotion conditions met: dst is REE-visible, data labeled/used as key-like secret, and no sanitizer or access control prevents TA->REE plaintext copy; therefore each snprintf is an unencrypted output of sensitive data."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0012",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 148,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE‑200",
+      "functions": [
+        "produce"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "vulnerability_types": [
+        "CWE‑200"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "snprintf composes key1 and vi into REE-visible params[2].memref.buffer with no sanitizer"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "output",
+          "produce",
+          "snprintf"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "TA-local secret-like buffers (key/key1) written into params memref buffers",
+          "propagation_path": [
+            "key1 (local) -> TEE_MemMove -> params[1].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:136",
+            "key1 (local) -> snprintf -> params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:137",
+            "produce called from output passing REE-origin params array @ /workspace/benchmark/bad-partitioning/ta/entry.c:181"
+          ],
+          "sink": "snprintf writing TA-private key-derived data into REE-visible memref (params[2].memref.buffer)"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker (REE) invokes TA with MEMREFs in params allowing output to params[2].memref.buffer",
+            "TA contains local buffers named 'key'/'key1' used to hold sensitive material"
+          ],
+          "attack_scenario": "Malicious REE caller reads params[2] after TA returns to obtain TA-local secret-derived plaintext written by snprintf",
+          "impact": "Disclosure of TA-private secret-like data to REE, compromising confidentiality of keys/credentials"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "access_control",
+          "location": "produce:136-148",
+          "recommendation": "Do not write TA-private secrets into REE-visible buffers; return secrets via controlled, authenticated channel or encrypt before copying"
+        },
+        {
+          "type": "type_validation",
+          "location": "output/produce:168|181",
+          "recommendation": "Validate param_types and memref sizes and enforce policy on which memrefs may receive secret material"
+        },
+        {
+          "type": "encryption",
+          "location": "produce:136-148",
+          "recommendation": "Encrypt secret-derived data before writing into REE-visible memory"
+        }
+      ],
+      "decision_rationales": [
+        "All promotion conditions met: dst is REE-visible, data labeled/used as key-like secret, and no sanitizer or access control prevents TA->REE plaintext copy; therefore each snprintf is an unencrypted output of sensitive data."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0013",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 154,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-200",
+      "functions": [
+        "produce_3"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "CWE-200"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "TEE_MemMove copies TA-local sensitive 'key' into caller-provided (REE-visible) buffer without protection."
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "output",
+          "produce_3",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "TA-local secret 'key' (local array named 'key')",
+          "propagation_path": [
+            "produce_3.buf <- caller params[1].memref.buffer passed at /workspace/benchmark/bad-partitioning/ta/entry.c:182",
+            "produce_3: TEE_MemMove(buf, key, strlen(key)) @ /workspace/benchmark/bad-partitioning/ta/entry.c:154"
+          ],
+          "sink": "TEE_MemMove writing 'key' into REE-visible buffer (buf)"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker (REE) provides a memref buffer passed as params[1] to TA_InvokeCommandEntryPoint/output/produce_3",
+            "TA contains a local secret named 'key' with sensitive content"
+          ],
+          "attack_scenario": "The TA copies its local secret 'key' into the REE-provided memref via TEE_MemMove, allowing the Normal World to read the secret from its shared buffer.",
+          "impact": "Disclosure of TA-local secret (key) to Normal World; compromise of confidentiality of secret data"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "access_control",
+          "location": "produce_3:154",
+          "recommendation": "Do not copy TA-private secrets into REE-visible buffers; restrict outputs or encrypt before writing to shared memrefs."
+        },
+        {
+          "type": "type_validation",
+          "location": "output:168-169",
+          "recommendation": "Validate param semantics beyond param_types (ensure intended memref is output vs input) and avoid passing secrets into output memrefs."
+        },
+        {
+          "type": "bounds_check",
+          "location": "produce_3:155",
+          "recommendation": "Validate caller-supplied size before writes; ensure explicit size checks when composing strings."
+        }
+      ],
+      "decision_rationales": [
+        "All promotion conditions met: destination is REE-visible, data is a TA-local secret (name 'key' and usage), and there is no sanitizer preventing plaintext copy; therefore classify as unencrypted_output."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0014",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 155,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "medium",
+      "confidence_level": "medium",
+      "primary_vulnerability_type": "CWE-200",
+      "functions": [
+        "produce_3"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "vulnerability_types": [
+        "CWE-200"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "snprintf writes TA-local 'key' into caller-provided REE-visible buffer with no sanitizer"
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "output",
+          "produce_3",
+          "snprintf"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "params[1].memref.buffer (REE-visible) bound passed as buf to produce_3; local 'key' in TA is sensitive by name",
+          "propagation_path": [
+            "params (REE) -> output(param_types, params) @ /workspace/benchmark/bad-partitioning/ta/entry.c:508",
+            "params[1].memref.buffer -> produce_3(buf, size) @ /workspace/benchmark/bad-partitioning/ta/entry.c:182",
+            "snprintf(buf, size, \"%s\", key) writes key into REE-visible buf @ /workspace/benchmark/bad-partitioning/ta/entry.c:155"
+          ],
+          "sink": "snprintf writing TA-local 'key' into REE-visible buffer"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker controls/reads REE-side buffer referenced by params[1]",
+            "TA-local variable 'key' contains sensitive material (named 'key')"
+          ],
+          "attack_scenario": "TA copies a TA-local secret string labeled 'key' into a REE-shared buffer, allowing the Normal World to read the secret.",
+          "impact": "Disclosure of TA-local secret material to Normal World (confidentiality breach)"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "access_control",
+          "location": "produce_3:155",
+          "recommendation": "Avoid copying TA-private secrets into REE-visible buffers; return secrets via secure channels or encrypt before writing to REE-shared memory."
+        },
+        {
+          "type": "type_validation",
+          "location": "output:168-169",
+          "recommendation": "Validate param semantics beyond param_types (ensure memrefs are intended for output and not used to exfiltrate secrets)."
+        }
+      ],
+      "decision_rationales": [
+        "All promotion conditions met: dst_region is REE-visible, sensitivity inferred from variable name 'key', and no sanitizer prevents writing plaintext to REE; snprintf performs the write, so classify as unencrypted_output."
+      ],
+      "severity_distribution": {
+        "medium": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0015",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 175,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "medium",
+      "primary_vulnerability_type": "CWE-200",
+      "functions": [
+        "output"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "CWE-200"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "TEE_MemMove copies local TA 'key' into REE-visible params[1].memref.buffer without sanitization."
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "output",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "local TA buffer 'key' (initialized in output)",
+          "propagation_path": [
+            "key -> TEE_MemMove dst=params[1].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:175",
+            "params[1].memref.buffer is REE-visible (came from params passed into TA_InvokeCommandEntryPoint) @ /workspace/benchmark/bad-partitioning/ta/entry.c:508"
+          ],
+          "sink": "TEE_MemMove writing TA secret into REE-visible memref (params[1].memref.buffer)"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker-controlled REE supplies params with params[1] as MEMREF output/backing buffer",
+            "No runtime checks resize or overwrite the REE buffer before return"
+          ],
+          "attack_scenario": "Malicious REE supplies a memref buffer; TA copies its local secret 'key' into that buffer, allowing REE to read TA secret after TA returns.",
+          "impact": "Exposure of TA-local secret material (confidentiality breach)."
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "output:175",
+          "recommendation": "Validate params[1].memref.size against strlen(key) and limit copy to min(dst_size, src_size); use safe APIs that accept explicit sizes."
+        },
+        {
+          "type": "access_control",
+          "location": "output:168-169",
+          "recommendation": "Ensure param_types indicate intended direction and enforce access policy before copying secrets to REE-visible buffers."
+        },
+        {
+          "type": "encryption",
+          "location": "output:175",
+          "recommendation": "Avoid copying sensitive plaintext to REE; if necessary, encrypt before placing into REE-visible memory."
+        }
+      ],
+      "decision_rationales": [
+        "All promotion conditions met: dst_region == REE-visible, sensitivity_label inferred as 'key', and no effective sanitizer prior to the copy; therefore unencrypted sensitive data is written to REE."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0016",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 176,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE‑200",
+      "functions": [
+        "output"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "vulnerability_types": [
+        "CWE‑200"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "Writes TA-private 'key' plaintext into REE-visible memref buffer."
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "output",
+          "snprintf"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "params (REE) for buffers; TA-local 'key' (private) as secret source",
+          "propagation_path": [
+            "key (local TA buffer) -> TEE_MemMove to params[1].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:175",
+            "key (local) -> snprintf -> params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:176",
+            "key (local) -> snprintf -> params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:184",
+            "key (local) -> snprintf -> params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:185"
+          ],
+          "sink": "snprintf writing into REE-visible params[2].memref.buffer"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker controls or reads REE-side memref buffers",
+            "TA-local variable named 'key' contains sensitive secret"
+          ],
+          "attack_scenario": "TA writes TA-private secret plaintext into REE-shared memory via snprintf; REE can read secret directly.",
+          "impact": "Disclosure of TA-private secret (key) to Normal World; confidentiality breach"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "encryption",
+          "location": "output:176|output:184|output:185",
+          "recommendation": "Encrypt or avoid placing TA-private secrets into REE-visible memrefs; perform cryptographic protection before writing to REE buffers."
+        },
+        {
+          "type": "access_control",
+          "location": "output:entry (param validation):168-169",
+          "recommendation": "Validate that memref sizes are sufficient and that outputs are only written to authorized buffers; consider tightening param semantics to reject MEMREF_OUTPUT when sensitive data would be exposed."
+        }
+      ],
+      "decision_rationales": [
+        "Lines 176, 184, 185 copy a TA-local variable named 'key' (sensitive by name) into REE-visible buffers before any encryption call; this meets promotion conditions for unencrypted_output and constitutes a confidentiality vulnerability. Later snprintf calls occur after enc(key) and are treated as safe."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0017",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 184,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE‑200",
+      "functions": [
+        "output"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "vulnerability_types": [
+        "CWE‑200"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "Composes and writes TA-private 'key' plaintext into REE-visible memref buffer."
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "output",
+          "snprintf"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "params (REE) for buffers; TA-local 'key' (private) as secret source",
+          "propagation_path": [
+            "key (local TA buffer) -> TEE_MemMove to params[1].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:175",
+            "key (local) -> snprintf -> params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:176",
+            "key (local) -> snprintf -> params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:184",
+            "key (local) -> snprintf -> params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:185"
+          ],
+          "sink": "snprintf writing into REE-visible params[2].memref.buffer"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker controls or reads REE-side memref buffers",
+            "TA-local variable named 'key' contains sensitive secret"
+          ],
+          "attack_scenario": "TA writes TA-private secret plaintext into REE-shared memory via snprintf; REE can read secret directly.",
+          "impact": "Disclosure of TA-private secret (key) to Normal World; confidentiality breach"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "encryption",
+          "location": "output:176|output:184|output:185",
+          "recommendation": "Encrypt or avoid placing TA-private secrets into REE-visible memrefs; perform cryptographic protection before writing to REE buffers."
+        },
+        {
+          "type": "access_control",
+          "location": "output:entry (param validation):168-169",
+          "recommendation": "Validate that memref sizes are sufficient and that outputs are only written to authorized buffers; consider tightening param semantics to reject MEMREF_OUTPUT when sensitive data would be exposed."
+        }
+      ],
+      "decision_rationales": [
+        "Lines 176, 184, 185 copy a TA-local variable named 'key' (sensitive by name) into REE-visible buffers before any encryption call; this meets promotion conditions for unencrypted_output and constitutes a confidentiality vulnerability. Later snprintf calls occur after enc(key) and are treated as safe."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0018",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 185,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE‑200",
+      "functions": [
+        "output"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "vulnerability_types": [
+        "CWE‑200"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "Composes and writes TA-private 'key' plaintext into REE-visible memref buffer."
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "output",
+          "snprintf"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "params (REE) for buffers; TA-local 'key' (private) as secret source",
+          "propagation_path": [
+            "key (local TA buffer) -> TEE_MemMove to params[1].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:175",
+            "key (local) -> snprintf -> params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:176",
+            "key (local) -> snprintf -> params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:184",
+            "key (local) -> snprintf -> params[2].memref.buffer @ /workspace/benchmark/bad-partitioning/ta/entry.c:185"
+          ],
+          "sink": "snprintf writing into REE-visible params[2].memref.buffer"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker controls or reads REE-side memref buffers",
+            "TA-local variable named 'key' contains sensitive secret"
+          ],
+          "attack_scenario": "TA writes TA-private secret plaintext into REE-shared memory via snprintf; REE can read secret directly.",
+          "impact": "Disclosure of TA-private secret (key) to Normal World; confidentiality breach"
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "encryption",
+          "location": "output:176|output:184|output:185",
+          "recommendation": "Encrypt or avoid placing TA-private secrets into REE-visible memrefs; perform cryptographic protection before writing to REE buffers."
+        },
+        {
+          "type": "access_control",
+          "location": "output:entry (param validation):168-169",
+          "recommendation": "Validate that memref sizes are sufficient and that outputs are only written to authorized buffers; consider tightening param semantics to reject MEMREF_OUTPUT when sensitive data would be exposed."
+        }
+      ],
+      "decision_rationales": [
+        "Lines 176, 184, 185 copy a TA-local variable named 'key' (sensitive by name) into REE-visible buffers before any encryption call; this meets promotion conditions for unencrypted_output and constitutes a confidentiality vulnerability. Later snprintf calls occur after enc(key) and are treated as safe."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0019",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 208,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-120",
+      "functions": [
+        "produce_i2"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "CWE-120"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "TEE_MemMove uses params[3].memref.size (REE-controlled) to copy into TA 'str' (size 1000) without bounds check."
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "input",
+          "produce_i0",
+          "produce_i2",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-provided memref buffers and sizes (params[].memref.buffer, params[].memref.size)",
+          "propagation_path": [
+            "params (TA_InvokeCommandEntryPoint) -> input(param_types, params) @ entry.c:510",
+            "input forwards params[...] into produce_i0(...) -> produce_i2(...) @ entry.c:311/229",
+            "produce_i2: TEE_MemMove(str, params[3].memref.buffer, params[3].memref.size) @ entry.c:208 (sink)"
+          ],
+          "sink": "TEE_MemMove copies src into TA buffer 'str' using caller-controlled length"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker-controlled REE supplies params[].memref.size > 1000",
+            "Attacker supplies memref.buffer pointer and content"
+          ],
+          "attack_scenario": "Provide a memref.size exceeding 1000 so TEE_MemMove writes beyond 'str' into adjacent TA memory, enabling corruption or code/control-data modification.",
+          "impact": "Heap/stack memory corruption within TA, potential crash or arbitrary code/data modification leading to privilege escalation or data disclosure."
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "produce_i2:208|produce_i2:212",
+          "recommendation": "Validate params[N].memref.size <= 1000 (or dst buffer size) before calling TEE_MemMove; use min(dst_size, src_size) and explicit error on overflow."
+        },
+        {
+          "type": "range_check",
+          "location": "input:286|produce_i2:204",
+          "recommendation": "Sanitize loop bounds and indices derived from REE-provided sizes/values before per-byte copies."
+        }
+      ],
+      "decision_rationales": [
+        "Memory-safety precedence: tainted length values from REE are used directly as copy lengths into a fixed-size TA buffer without prior bounds checks on the path, creating a clear overflow risk."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0020",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 212,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-120",
+      "functions": [
+        "produce_i2"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "CWE-120"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "TEE_MemMove uses params[2].memref.size (REE-controlled) to copy into TA 'str' (size 1000) without bounds check."
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "input",
+          "produce_i0",
+          "produce_i2",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-provided memref buffers and sizes (params[].memref.buffer, params[].memref.size)",
+          "propagation_path": [
+            "params (TA_InvokeCommandEntryPoint) -> input(param_types, params) @ entry.c:510",
+            "input forwards params[...] into produce_i0(...) -> produce_i2(...) @ entry.c:311/229",
+            "produce_i2: TEE_MemMove(str, params[3].memref.buffer, params[3].memref.size) @ entry.c:208 (sink)"
+          ],
+          "sink": "TEE_MemMove copies src into TA buffer 'str' using caller-controlled length"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker-controlled REE supplies params[].memref.size > 1000",
+            "Attacker supplies memref.buffer pointer and content"
+          ],
+          "attack_scenario": "Provide a memref.size exceeding 1000 so TEE_MemMove writes beyond 'str' into adjacent TA memory, enabling corruption or code/control-data modification.",
+          "impact": "Heap/stack memory corruption within TA, potential crash or arbitrary code/data modification leading to privilege escalation or data disclosure."
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "produce_i2:208|produce_i2:212",
+          "recommendation": "Validate params[N].memref.size <= 1000 (or dst buffer size) before calling TEE_MemMove; use min(dst_size, src_size) and explicit error on overflow."
+        },
+        {
+          "type": "range_check",
+          "location": "input:286|produce_i2:204",
+          "recommendation": "Sanitize loop bounds and indices derived from REE-provided sizes/values before per-byte copies."
+        }
+      ],
+      "decision_rationales": [
+        "Memory-safety precedence: tainted length values from REE are used directly as copy lengths into a fixed-size TA buffer without prior bounds checks on the path, creating a clear overflow risk."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0021",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 227,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-120",
+      "functions": [
+        "produce_i0"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "CWE-120"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "TEE_MemMove copies caller-controlled size3 into TA 'str' before the later size3 check, allowing overflow."
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "input",
+          "produce_i0",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-provided memref buffers and size fields (params/.../buf2/buf3/size2/size3)",
+          "propagation_path": [
+            "params[...] -> input:param passing -> produce_i0(a,b,buf2,size2,buf3,size3,params) @ entry.c:311",
+            "produce_i0: TEE_MemMove(str, buf3, size3) @ entry.c:227",
+            "produce_i0: TEE_MemMove(str, buf2, size2) @ entry.c:238"
+          ],
+          "sink": "TEE_MemMove copying untrusted lengths into fixed-size TA buffer 'str' (size 1000)"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker supplies params[2]/params[3] memrefs with size fields >1000 or >1000 as needed",
+            "TA is reachable and calls produce_i0 with those params"
+          ],
+          "attack_scenario": "Malicious REE crafts memref sizes (size2 or size3) >1000 to trigger writes exceeding 'str' buffer, causing heap/stack corruption or code execution inside TA.",
+          "impact": "Memory corruption inside secure world TA — potential crash or arbitrary code execution with high privilege; confidentiality/integrity compromise."
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "produce_i0:227",
+          "recommendation": "Validate 'size3' <= sizeof(str) before calling TEE_MemMove; perform size checks before any copy."
+        },
+        {
+          "type": "bounds_check",
+          "location": "produce_i0:238",
+          "recommendation": "Validate 'size2' <= sizeof(str) before copying; avoid relying on checks placed after copies."
+        },
+        {
+          "type": "type_validation",
+          "location": "input:277",
+          "recommendation": "Ensure param type checks are sufficient and validate individual memref sizes and value ranges before usage."
+        }
+      ],
+      "decision_rationales": [
+        "Memory-safety issues take precedence: untrusted length values are used directly in copies into a fixed-size buffer before any effective check, demonstrating clear overflow risk at lines 227 and 238."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0022",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 238,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-120",
+      "functions": [
+        "produce_i0"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "CWE-120"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "TEE_MemMove copies caller-controlled size2 into TA 'str' before the later size2 check, allowing overflow."
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "input",
+          "produce_i0",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-provided memref buffers and size fields (params/.../buf2/buf3/size2/size3)",
+          "propagation_path": [
+            "params[...] -> input:param passing -> produce_i0(a,b,buf2,size2,buf3,size3,params) @ entry.c:311",
+            "produce_i0: TEE_MemMove(str, buf3, size3) @ entry.c:227",
+            "produce_i0: TEE_MemMove(str, buf2, size2) @ entry.c:238"
+          ],
+          "sink": "TEE_MemMove copying untrusted lengths into fixed-size TA buffer 'str' (size 1000)"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker supplies params[2]/params[3] memrefs with size fields >1000 or >1000 as needed",
+            "TA is reachable and calls produce_i0 with those params"
+          ],
+          "attack_scenario": "Malicious REE crafts memref sizes (size2 or size3) >1000 to trigger writes exceeding 'str' buffer, causing heap/stack corruption or code execution inside TA.",
+          "impact": "Memory corruption inside secure world TA — potential crash or arbitrary code execution with high privilege; confidentiality/integrity compromise."
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "produce_i0:227",
+          "recommendation": "Validate 'size3' <= sizeof(str) before calling TEE_MemMove; perform size checks before any copy."
+        },
+        {
+          "type": "bounds_check",
+          "location": "produce_i0:238",
+          "recommendation": "Validate 'size2' <= sizeof(str) before copying; avoid relying on checks placed after copies."
+        },
+        {
+          "type": "type_validation",
+          "location": "input:277",
+          "recommendation": "Ensure param type checks are sufficient and validate individual memref sizes and value ranges before usage."
+        }
+      ],
+      "decision_rationales": [
+        "Memory-safety issues take precedence: untrusted length values are used directly in copies into a fixed-size buffer before any effective check, demonstrating clear overflow risk at lines 227 and 238."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0023",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 290,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-120/CWE-121 (stack/heap buffer overflow) and CWE-125 (out-of-bounds write to shared memory)",
+      "functions": [
+        "input"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "CWE-120/CWE-121 (stack/heap buffer overflow) and CWE-125 (out-of-bounds write to shared memory)"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "Copies REE-controlled params[3].memref.size into TA buffer 'str' (1000) without checking bounds."
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "input",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-provided memref buffers and sizes (params[2].memref.buffer/size, params[3].memref.buffer/size)",
+          "propagation_path": [
+            "params (TEE_Param) -> input @ /workspace/benchmark/bad-partitioning/ta/entry.c:267..315",
+            "params[3].memref.buffer/size -> TEE_MemMove(str, params[3].memref.buffer, params[3].memref.size) @ :290",
+            "str -> TEE_MemMove(params[2].memref.buffer, str, 1000) @ :291"
+          ],
+          "sink": "TEE_MemMove calls at lines 290,291,306,307,309 performing copies with REE-controlled sizes or fixed 1000-byte writes"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker controls REE-side params[*].memref.size and/or buffer contents",
+            "No additional bounds checks limiting params[2/3].memref.size ≤ 1000"
+          ],
+          "attack_scenario": "Send oversized memref.size and crafted data so that TEE_MemMove copies exceed TA buffer capacity (overflow TA memory) or cause writes beyond REE buffer bounds when TA writes 1000 bytes back.",
+          "impact": "Arbitrary memory corruption within the TA (possible code execution) or corruption of REE-visible memory leading to integrity compromise or data leakage."
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "input:286|290|306|307",
+          "recommendation": "Validate params[2].memref.size and params[3].memref.size ≤ allocated TA buffer size (e.g., 1000) before copying."
+        },
+        {
+          "type": "range_check",
+          "location": "input:291|309",
+          "recommendation": "Use destination size (params[2].memref.size) as upper bound and copy min(src_sz,dst_sz) instead of fixed 1000."
+        },
+        {
+          "type": "type_validation",
+          "location": "input:277",
+          "recommendation": "Extend validation to check memref sizes against expected maxima per param, not just param types."
+        }
+      ],
+      "decision_rationales": [
+        "Memory-safety issues take precedence: REE-provided sizes drive copies into fixed-size TA buffers and fixed-size writes back to REE buffers without adequate bounds checks, producing high-confidence overflow/overwrite vulnerabilities."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0024",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 291,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-120/CWE-121 (stack/heap buffer overflow) and CWE-125 (out-of-bounds write to shared memory)",
+      "functions": [
+        "input"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "CWE-120/CWE-121 (stack/heap buffer overflow) and CWE-125 (out-of-bounds write to shared memory)"
+      ],
+      "rule_ids": [
+        "shared_memory_overwrite"
+      ],
+      "descriptions": [
+        "Writes fixed 1000 bytes from TA 'str' into REE-visible params[2].memref.buffer whose size may be smaller."
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "input",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-provided memref buffers and sizes (params[2].memref.buffer/size, params[3].memref.buffer/size)",
+          "propagation_path": [
+            "params (TEE_Param) -> input @ /workspace/benchmark/bad-partitioning/ta/entry.c:267..315",
+            "params[3].memref.buffer/size -> TEE_MemMove(str, params[3].memref.buffer, params[3].memref.size) @ :290",
+            "str -> TEE_MemMove(params[2].memref.buffer, str, 1000) @ :291"
+          ],
+          "sink": "TEE_MemMove calls at lines 290,291,306,307,309 performing copies with REE-controlled sizes or fixed 1000-byte writes"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker controls REE-side params[*].memref.size and/or buffer contents",
+            "No additional bounds checks limiting params[2/3].memref.size ≤ 1000"
+          ],
+          "attack_scenario": "Send oversized memref.size and crafted data so that TEE_MemMove copies exceed TA buffer capacity (overflow TA memory) or cause writes beyond REE buffer bounds when TA writes 1000 bytes back.",
+          "impact": "Arbitrary memory corruption within the TA (possible code execution) or corruption of REE-visible memory leading to integrity compromise or data leakage."
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "input:286|290|306|307",
+          "recommendation": "Validate params[2].memref.size and params[3].memref.size ≤ allocated TA buffer size (e.g., 1000) before copying."
+        },
+        {
+          "type": "range_check",
+          "location": "input:291|309",
+          "recommendation": "Use destination size (params[2].memref.size) as upper bound and copy min(src_sz,dst_sz) instead of fixed 1000."
+        },
+        {
+          "type": "type_validation",
+          "location": "input:277",
+          "recommendation": "Extend validation to check memref sizes against expected maxima per param, not just param types."
+        }
+      ],
+      "decision_rationales": [
+        "Memory-safety issues take precedence: REE-provided sizes drive copies into fixed-size TA buffers and fixed-size writes back to REE buffers without adequate bounds checks, producing high-confidence overflow/overwrite vulnerabilities."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0025",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 306,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-120/CWE-121 (stack/heap buffer overflow) and CWE-125 (out-of-bounds write to shared memory)",
+      "functions": [
+        "input"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "CWE-120/CWE-121 (stack/heap buffer overflow) and CWE-125 (out-of-bounds write to shared memory)"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "Copies REE-controlled params[2].memref.size into TA buffer 'str' (1000) without checking bounds."
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "input",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-provided memref buffers and sizes (params[2].memref.buffer/size, params[3].memref.buffer/size)",
+          "propagation_path": [
+            "params (TEE_Param) -> input @ /workspace/benchmark/bad-partitioning/ta/entry.c:267..315",
+            "params[3].memref.buffer/size -> TEE_MemMove(str, params[3].memref.buffer, params[3].memref.size) @ :290",
+            "str -> TEE_MemMove(params[2].memref.buffer, str, 1000) @ :291"
+          ],
+          "sink": "TEE_MemMove calls at lines 290,291,306,307,309 performing copies with REE-controlled sizes or fixed 1000-byte writes"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker controls REE-side params[*].memref.size and/or buffer contents",
+            "No additional bounds checks limiting params[2/3].memref.size ≤ 1000"
+          ],
+          "attack_scenario": "Send oversized memref.size and crafted data so that TEE_MemMove copies exceed TA buffer capacity (overflow TA memory) or cause writes beyond REE buffer bounds when TA writes 1000 bytes back.",
+          "impact": "Arbitrary memory corruption within the TA (possible code execution) or corruption of REE-visible memory leading to integrity compromise or data leakage."
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "input:286|290|306|307",
+          "recommendation": "Validate params[2].memref.size and params[3].memref.size ≤ allocated TA buffer size (e.g., 1000) before copying."
+        },
+        {
+          "type": "range_check",
+          "location": "input:291|309",
+          "recommendation": "Use destination size (params[2].memref.size) as upper bound and copy min(src_sz,dst_sz) instead of fixed 1000."
+        },
+        {
+          "type": "type_validation",
+          "location": "input:277",
+          "recommendation": "Extend validation to check memref sizes against expected maxima per param, not just param types."
+        }
+      ],
+      "decision_rationales": [
+        "Memory-safety issues take precedence: REE-provided sizes drive copies into fixed-size TA buffers and fixed-size writes back to REE buffers without adequate bounds checks, producing high-confidence overflow/overwrite vulnerabilities."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0026",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 307,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-120/CWE-121 (stack/heap buffer overflow) and CWE-125 (out-of-bounds write to shared memory)",
+      "functions": [
+        "input"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "CWE-120/CWE-121 (stack/heap buffer overflow) and CWE-125 (out-of-bounds write to shared memory)"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "Copies REE-controlled params[3].memref.size into TA buffer 'str' (1000) without checking bounds."
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "input",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-provided memref buffers and sizes (params[2].memref.buffer/size, params[3].memref.buffer/size)",
+          "propagation_path": [
+            "params (TEE_Param) -> input @ /workspace/benchmark/bad-partitioning/ta/entry.c:267..315",
+            "params[3].memref.buffer/size -> TEE_MemMove(str, params[3].memref.buffer, params[3].memref.size) @ :290",
+            "str -> TEE_MemMove(params[2].memref.buffer, str, 1000) @ :291"
+          ],
+          "sink": "TEE_MemMove calls at lines 290,291,306,307,309 performing copies with REE-controlled sizes or fixed 1000-byte writes"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker controls REE-side params[*].memref.size and/or buffer contents",
+            "No additional bounds checks limiting params[2/3].memref.size ≤ 1000"
+          ],
+          "attack_scenario": "Send oversized memref.size and crafted data so that TEE_MemMove copies exceed TA buffer capacity (overflow TA memory) or cause writes beyond REE buffer bounds when TA writes 1000 bytes back.",
+          "impact": "Arbitrary memory corruption within the TA (possible code execution) or corruption of REE-visible memory leading to integrity compromise or data leakage."
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "input:286|290|306|307",
+          "recommendation": "Validate params[2].memref.size and params[3].memref.size ≤ allocated TA buffer size (e.g., 1000) before copying."
+        },
+        {
+          "type": "range_check",
+          "location": "input:291|309",
+          "recommendation": "Use destination size (params[2].memref.size) as upper bound and copy min(src_sz,dst_sz) instead of fixed 1000."
+        },
+        {
+          "type": "type_validation",
+          "location": "input:277",
+          "recommendation": "Extend validation to check memref sizes against expected maxima per param, not just param types."
+        }
+      ],
+      "decision_rationales": [
+        "Memory-safety issues take precedence: REE-provided sizes drive copies into fixed-size TA buffers and fixed-size writes back to REE buffers without adequate bounds checks, producing high-confidence overflow/overwrite vulnerabilities."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0027",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 309,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-120/CWE-121 (stack/heap buffer overflow) and CWE-125 (out-of-bounds write to shared memory)",
+      "functions": [
+        "input"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "vulnerability_types": [
+        "CWE-120/CWE-121 (stack/heap buffer overflow) and CWE-125 (out-of-bounds write to shared memory)"
+      ],
+      "rule_ids": [
+        "shared_memory_overwrite"
+      ],
+      "descriptions": [
+        "Writes fixed 1000 bytes from TA 'str' into REE-visible params[2].memref.buffer; destination size is REE-controlled."
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "input",
+          "TEE_MemMove"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "REE-provided memref buffers and sizes (params[2].memref.buffer/size, params[3].memref.buffer/size)",
+          "propagation_path": [
+            "params (TEE_Param) -> input @ /workspace/benchmark/bad-partitioning/ta/entry.c:267..315",
+            "params[3].memref.buffer/size -> TEE_MemMove(str, params[3].memref.buffer, params[3].memref.size) @ :290",
+            "str -> TEE_MemMove(params[2].memref.buffer, str, 1000) @ :291"
+          ],
+          "sink": "TEE_MemMove calls at lines 290,291,306,307,309 performing copies with REE-controlled sizes or fixed 1000-byte writes"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker controls REE-side params[*].memref.size and/or buffer contents",
+            "No additional bounds checks limiting params[2/3].memref.size ≤ 1000"
+          ],
+          "attack_scenario": "Send oversized memref.size and crafted data so that TEE_MemMove copies exceed TA buffer capacity (overflow TA memory) or cause writes beyond REE buffer bounds when TA writes 1000 bytes back.",
+          "impact": "Arbitrary memory corruption within the TA (possible code execution) or corruption of REE-visible memory leading to integrity compromise or data leakage."
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "input:286|290|306|307",
+          "recommendation": "Validate params[2].memref.size and params[3].memref.size ≤ allocated TA buffer size (e.g., 1000) before copying."
+        },
+        {
+          "type": "range_check",
+          "location": "input:291|309",
+          "recommendation": "Use destination size (params[2].memref.size) as upper bound and copy min(src_sz,dst_sz) instead of fixed 1000."
+        },
+        {
+          "type": "type_validation",
+          "location": "input:277",
+          "recommendation": "Extend validation to check memref sizes against expected maxima per param, not just param types."
+        }
+      ],
+      "decision_rationales": [
+        "Memory-safety issues take precedence: REE-provided sizes drive copies into fixed-size TA buffers and fixed-size writes back to REE buffers without adequate bounds checks, producing high-confidence overflow/overwrite vulnerabilities."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1
+      }
+    }
+  ],
+  "total_finding_lines": 45,
+  "structural_risks": [
+    {
+      "finding_id": "RISK-0001",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 116,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "produce_2",
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "TEE_MemMove",
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "TEE_MemMove copies local 'key2' into REE-visible memref buffer (name suggests secret-like data)",
+        "binding at call-site: destination is params[1].memref.buffer (REE-visible) and source is local 'key2' (TEE-private); shared buffer aliasing",
+        "Potential memory-safety risk if params[1].memref.size is smaller than strlen(key2); no bounds check observed on this path"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(params[1].memref.buffer, key2, strlen(key2));"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:key",
+          "size_triplet:copy_len=strlen(key2),src_sz=1000,dst_sz=params[1].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0002",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 117,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "produce_2",
+        "snprintf"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "snprintf writes local 'key2' into REE-visible memref buffer",
+        "snprintf writes local 'key2' into REE-visible memref buffer (destination is REE-shared)"
+      ],
+      "code_excerpts": [
+        "snprintf(params[2].memref.buffer, params[2].memref.size, \"%s\", key2);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:key",
+          "size_triplet:copy_len=<=params[2].memref.size,src_sz=1000,dst_sz=params[2].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0003",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 121,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "produce_2",
+        "snprintf"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "snprintf composes local 'key2' and 'vi' into REE-visible memref buffer"
+      ],
+      "code_excerpts": [
+        "snprintf(params[2].memref.buffer, params[2].memref.size, \"%s-%s\", key2, vi);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:key",
+          "size_triplet:copy_len=<=params[2].memref.size,src_sz=1000,dst_sz=params[2].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0004",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 122,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "produce_2",
+        "snprintf"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "snprintf composes local 'key2','vi', and local int 'v' into REE-visible memref buffer",
+        "snprintf composes local 'key2','vi', and 'v' into REE-visible memref buffer"
+      ],
+      "code_excerpts": [
+        "snprintf(params[2].memref.buffer, params[2].memref.size, \"%s-%s-%d\", key2, vi, v);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:key",
+          "size_triplet:copy_len=<=params[2].memref.size,src_sz=1000,dst_sz=params[2].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0005",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 125,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "produce_2"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "snprintf writes (possibly transformed) 'key2' into REE-visible memref buffer"
+      ],
+      "code_excerpts": [
+        "snprintf(params[2].memref.buffer, params[2].memref.size, \"%s\", key2);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:key",
+          "size_triplet:copy_len=<=params[2].memref.size,src_sz=1000,dst_sz=params[2].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0006",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 126,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "produce_2"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "snprintf composes local 'key2' and 'vi' into REE-visible memref buffer after enc"
+      ],
+      "code_excerpts": [
+        "snprintf(params[2].memref.buffer, params[2].memref.size, \"%s-%s\", key2, vi);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:key",
+          "size_triplet:copy_len=<=params[2].memref.size,src_sz=1000,dst_sz=params[2].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0007",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 136,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "produce",
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "TEE_MemMove",
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "TEE_MemMove copies local 'key1' into REE-visible memref buffer (named 'key1' suggests secret-like data)",
+        "binding: destination callee parameter aliases caller-provided REE memref buffer",
+        "TEE_MemMove copies local 'key1' into REE-visible params[1].memref.buffer enabling disclosure"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(params[1].memref.buffer, key1, strlen(key1));"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:key",
+          "size_triplet:copy_len=strlen(key1),src_sz=1000,dst_sz=params[1].memref.size",
+          "flow_dir:REE->TA"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0008",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 137,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "produce",
+        "snprintf"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "snprintf writes local 'key1' into REE-visible memref buffer",
+        "snprintf writes local 'key1' into caller-provided memref buffer (REE-visible) enabling TA->REE disclosure"
+      ],
+      "code_excerpts": [
+        "snprintf(params[2].memref.buffer, params[2].memref.size, \"%s\", key1);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:key",
+          "size_triplet:copy_len=<=params[2].memref.size,src_sz=1000,dst_sz=params[2].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0009",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 143,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "produce",
+        "snprintf"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "snprintf composes local 'key1' and 'vi' into REE-visible memref buffer",
+        "snprintf composes key1 and vi into caller memref buffer (REE-visible)"
+      ],
+      "code_excerpts": [
+        "snprintf(params[2].memref.buffer, params[2].memref.size, \"%s-%s\", key1, vi);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:key",
+          "size_triplet:copy_len=<=params[2].memref.size,src_sz=1000,dst_sz=params[2].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0010",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 144,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "produce"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "snprintf composes local 'key1','vi', and local int 'v' into REE-visible memref buffer"
+      ],
+      "code_excerpts": [
+        "snprintf(params[2].memref.buffer, params[2].memref.size, \"%s-%s-%d\", key1, vi, v);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:key",
+          "size_triplet:copy_len=<=params[2].memref.size,src_sz=1000,dst_sz=params[2].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0011",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 147,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "produce"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "snprintf writes (possibly encrypted) 'key1' into REE-visible memref buffer"
+      ],
+      "code_excerpts": [
+        "snprintf(params[2].memref.buffer, params[2].memref.size, \"%s\", key1);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:key",
+          "size_triplet:copy_len=<=params[2].memref.size,src_sz=1000,dst_sz=params[2].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0012",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 148,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "produce"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "snprintf composes local 'key1' and 'vi' into REE-visible memref buffer after enc"
+      ],
+      "code_excerpts": [
+        "snprintf(params[2].memref.buffer, params[2].memref.size, \"%s-%s\", key1, vi);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:key",
+          "size_triplet:copy_len=<=params[2].memref.size,src_sz=1000,dst_sz=params[2].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0013",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 154,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_MemMove",
+        "produce_3"
+      ],
+      "sink_functions": [
+        "=",
+        "TEE_MemMove"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "binding: destination is local buffer, source is local 'key' (both TEE-private) at call-site",
+        "TEE_MemMove copies local 'key' into caller-provided buffer (buf may be REE-visible)",
+        "binding: dst parameter aliases caller-provided buffer (possible REE-visible) passed into TEE_MemMove",
+        "TEE_MemMove invoked to copy local 'key' into caller buffer; potential disclosure of named 'key' into REE-visible memory",
+        "TEE_MemMove copies TA-local 'key' into caller-provided buffer 'buf' which is REE-visible"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(buf, key, strlen(key));"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->TA",
+          "src_region:TEE-private",
+          "dst_region:TEE-private",
+          "sensitivity_label:key",
+          "size_triplet:copy_len=strlen(key),src_sz=1000,dst_sz=size",
+          "flow_dir:TA->REE",
+          "dst_region:REE-visible",
+          "flow_dir:REE->TA"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0014",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 155,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "snprintf",
+        "produce_3"
+      ],
+      "sink_functions": [
+        "snprintf"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "snprintf writes local 'key' into 'buf' which may be REE-visible (binding at call-site uncertain)",
+        "snprintf writes local 'key' into local buf (likely TEE-private) at produce_3; binding depends on caller",
+        "snprintf writes local 'key' into caller-provided buffer using caller-supplied size (no bounds check here)",
+        "snprintf writes local 'key' into caller-provided buffer 'buf' using caller-supplied size (buffer may be REE-visible)"
+      ],
+      "code_excerpts": [
+        "snprintf(buf, size, \"%s\", key);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:unknown",
+          "sensitivity_label:key",
+          "size_triplet:copy_len=<=size,src_sz=1000,dst_sz=size",
+          "flow_dir:TA->TA",
+          "dst_region:TEE-private",
+          "dst_region:REE-visible"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0015",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 175,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "output",
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "TEE_MemMove",
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "TEE_MemMove copies local 'key' into REE-visible memref buffer (possible disclosure of named 'key')",
+        "binding: copies local 'key' into caller memref.buffer (caller-provided shared buffer)",
+        "TEE_MemMove copies TA-local 'key' into params[1].memref.buffer (REE-visible)",
+        "call copies local 'key' into REE-visible memref buffer (alias of shared buffer passed into helper); named 'key' suggests sensitive material",
+        "TEE_MemMove copies local 'key' into REE-visible memref buffer prior to snprintfs; shows additional disclosure path."
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(params[1].memref.buffer, key, strlen(key));"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:key",
+          "size_triplet:copy_len=strlen(key),src_sz=1000,dst_sz=params[1].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0016",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 176,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "output",
+        "snprintf"
+      ],
+      "sink_functions": [
+        "snprintf",
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "snprintf writes local 'key' into REE-visible memref buffer",
+        "snprintf copies local 'key' into REE-visible params[2].memref.buffer using params[2].memref.size",
+        "snprintf writes TA-local 'key' into params[2].memref.buffer (REE-visible)",
+        "Subsequent snprintf writes the same local 'key' into params[2].memref.buffer (REE-visible); structural disclosure risk.",
+        "binding: destination buffer argument is alias of REE-provided memref passed into output",
+        "snprintf writes local 'key' into REE-visible memref buffer (possible disclosure of named 'key')"
+      ],
+      "code_excerpts": [
+        "snprintf(params[2].memref.buffer, params[2].memref.size, \"%s\", key);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:key",
+          "size_triplet:copy_len=<=params[2].memref.size,src_sz=1000,dst_sz=params[2].memref.size",
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=params[2].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0017",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 184,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "output",
+        "snprintf"
+      ],
+      "sink_functions": [
+        "snprintf",
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "snprintf composes local 'key' and 'vi' into REE-visible memref buffer",
+        "snprintf composes local 'key' and 'vi' into REE-visible buffer using caller size",
+        "binding: destination buffer argument is alias of REE-provided memref passed into output"
+      ],
+      "code_excerpts": [
+        "snprintf(params[2].memref.buffer, params[2].memref.size, \"%s-%s\", key, vi);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:key",
+          "size_triplet:copy_len=<=params[2].memref.size,src_sz=1000,dst_sz=params[2].memref.size",
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=params[2].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0018",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 185,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "output",
+        "snprintf"
+      ],
+      "sink_functions": [
+        "snprintf",
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "snprintf composes local 'key','vi', and local int 'v' into REE-visible memref buffer",
+        "snprintf composes key/vi/v into caller memref buffer (REE-visible), possible TA->REE disclosure of key-derived data",
+        "snprintf composes local 'key','vi', and 'v' into REE-visible buffer using caller size",
+        "binding: destination buffer argument is alias of REE-provided memref passed into output",
+        "snprintf composes local 'key','vi', and int 'v' into REE-visible memref buffer"
+      ],
+      "code_excerpts": [
+        "snprintf(params[2].memref.buffer, params[2].memref.size, \"%s-%s-%d\", key, vi, v);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:key",
+          "size_triplet:copy_len=<=params[2].memref.size,src_sz=1000,dst_sz=params[2].memref.size",
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=params[2].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0019",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 189,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "snprintf"
+      ],
+      "sink_functions": [
+        "snprintf",
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "snprintf writes (possibly transformed) 'key' into REE-visible memref buffer after enc",
+        "snprintf writes (possibly transformed by enc) 'key' into caller memref buffer (REE-visible)",
+        "snprintf writes possibly encrypted/modified 'key' into REE-visible buffer using caller size",
+        "binding: destination buffer argument is alias of REE-provided memref passed into output",
+        "snprintf writes possibly-encrypted 'key' into REE-visible memref buffer after enc(key)"
+      ],
+      "code_excerpts": [
+        "snprintf(params[2].memref.buffer, params[2].memref.size, \"%s\", key);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:key",
+          "size_triplet:copy_len=<=params[2].memref.size,src_sz=1000,dst_sz=params[2].memref.size",
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=params[2].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0020",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 190,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "snprintf"
+      ],
+      "sink_functions": [
+        "snprintf",
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "snprintf composes local 'key' and 'vi' into REE-visible buffer using caller size",
+        "binding: destination buffer argument is alias of REE-provided memref passed into output",
+        "snprintf composes possibly-modified 'key' and 'vi' into REE-visible memref buffer"
+      ],
+      "code_excerpts": [
+        "snprintf(params[2].memref.buffer, params[2].memref.size, \"%s-%s\", key, vi);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:key",
+          "size_triplet:copy_len=<=params[2].memref.size,src_sz=1000,dst_sz=params[2].memref.size",
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=params[2].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0021",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 191,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "snprintf"
+      ],
+      "sink_functions": [
+        "snprintf",
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "snprintf composes local 'key','vi', and 'v' into REE-visible memref buffer (size controlled by REE-provided param)",
+        "snprintf composes local 'key','vi', and 'v' into REE-visible buffer using caller size",
+        "binding: destination buffer argument is alias of REE-provided memref passed into output",
+        "snprintf composes possibly-modified 'key', 'vi', and 'v' into REE-visible memref buffer"
+      ],
+      "code_excerpts": [
+        "snprintf(params[2].memref.buffer, params[2].memref.size, \"%s-%s-%d\", key, vi, v);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:key",
+          "size_triplet:copy_len=<=params[2].memref.size,src_sz=1000,dst_sz=params[2].memref.size",
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=params[2].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0022",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 203,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "produce_i2"
+      ],
+      "sink_functions": [
+        "array_write"
+      ],
+      "rules": [
+        "weak_input_validation",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "array write into tmp_arr using tainted index 'a' with no bounds check on this path",
+        "tmp_arr[a] = 43 uses tainted 'a' as index with no bounds check"
+      ],
+      "code_excerpts": [
+        "tmp_arr[a] = 43;"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=1,src_sz=?,dst_sz=20"
+        ]
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1,
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0023",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 204,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "produce_i2"
+      ],
+      "sink_functions": [
+        "array_write"
+      ],
+      "rules": [
+        "weak_input_validation",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "per-byte copy into TA buffer 'str' using tainted size2 as loop bound without local check",
+        "per-byte copy from buf2 into 'str' uses tainted size2 as loop bound without check"
+      ],
+      "code_excerpts": [
+        "for (int i = 0; i < size2; i++) { str[i] = ((char *)buf2)[i]; }"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=size2,src_sz=size2,dst_sz=1000"
+        ]
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1,
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0024",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 208,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_MemMove",
+        "produce_i2"
+      ],
+      "sink_functions": [
+        "TEE_MemMove",
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "call copies from REE-visible params[3].memref.buffer into TA-local 'str' (potential tainted input)",
+        "binding: destination 'str' (TEE-private) receives data from REE-visible params[3].memref.buffer",
+        "binding: copies from REE-visible params[3].memref.buffer into TA buffer 'str' (possible tainted src)",
+        "call copies REE-visible params[3].memref.buffer into local 'str' (alias of shared buffer passed into helper)",
+        "TEE_MemMove copies params[3].memref.buffer (REE) into TA 'str' using caller-controlled size3",
+        "copying REE-provided params[3].memref.buffer into TA buffer 'str' using caller-controlled length",
+        "call-site binding: dst argument 'str' is TA-private while src is REE-visible buffer forwarded from caller"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(str, params[3].memref.buffer, params[3].memref.size);",
+        "call at entry.c:208 (str <- params[3].memref.buffer)"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=params[3].memref.size,src_sz=params[3].memref.size,dst_sz=?",
+          "size_triplet:copy_len=params[3].memref.size,src_sz=params[3].memref.size,dst_sz=1000",
+          "size_triplet:copy_len=params[3].memref.size,src_sz=params[3].memref.size,dst_sz=unknown"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0025",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 210,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "produce_i2"
+      ],
+      "sink_functions": [
+        "unknown"
+      ],
+      "rules": [
+        "weak_input_validation"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "read from TA buffer 'str' using index derived from tainted params[0].value.a (possible OOB)"
+      ],
+      "code_excerpts": [
+        "char c = str[params[0].value.a - 3];"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:TEE-private",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=1,src_sz=1000,dst_sz=1"
+        ]
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0026",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 212,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_MemMove",
+        "produce_i2"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "call copies REE-visible params[2].memref.buffer into local 'str' (alias of shared buffer passed into helper)",
+        "TEE_MemMove copies params[2].memref.buffer (REE) into TA 'str' using caller-controlled size",
+        "copying REE-provided params[2].memref.buffer into TA 'str' using caller-controlled length"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(str, params[2].memref.buffer, params[2].memref.size);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=params[2].memref.size,src_sz=params[2].memref.size,dst_sz=unknown",
+          "size_triplet:copy_len=params[2].memref.size,src_sz=params[2].memref.size,dst_sz=1000"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0027",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 222,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "produce_i0"
+      ],
+      "sink_functions": [
+        "array_write"
+      ],
+      "rules": [
+        "weak_input_validation",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "array write into tmp_arr using tainted index 'a' with no local bounds check on 'a'",
+        "tmp_arr indexed by tainted 'a' without bounds check"
+      ],
+      "code_excerpts": [
+        "tmp_arr[a] = 43;"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=1,src_sz=?,dst_sz=20"
+        ]
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1,
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0028",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 223,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "produce_i0"
+      ],
+      "sink_functions": [
+        "array_write"
+      ],
+      "rules": [
+        "weak_input_validation",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "per-byte copy into TA buffer 'str' using tainted size2 as loop bound without an enclosing check on this path",
+        "per-byte copy from caller buffer into TA 'str' using tainted size2 before checks"
+      ],
+      "code_excerpts": [
+        "for (int i = 0; i < size2; i++) { str[i] = ((char *)buf2)[i]; }"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=size2,src_sz=size2,dst_sz=1000"
+        ]
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1,
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0029",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 227,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_MemMove",
+        "produce_i0"
+      ],
+      "sink_functions": [
+        "TEE_MemMove",
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "call copies local 'str' into buf3 (destination may be REE-visible or unknown) without visible bounds check here",
+        "TEE_MemMove copies caller-provided buf3 into TA buffer 'str' using size3 (caller-controlled)",
+        "copying caller-provided buf3 into TA 'str' using size3 (caller-controlled)",
+        "call-site binding: dst 'str' is TA-private, src 'buf3' and len 'size3' originate from REE and are forwarded into TEE_MemMove"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(str, buf3, size3);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=size3,src_sz=unknown,dst_sz=size3",
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "size_triplet:copy_len=size3,src_sz=size3,dst_sz=1000"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0030",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 246,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_MemMove",
+        "produce_i0"
+      ],
+      "sink_functions": [
+        "TEE_MemMove",
+        "="
+      ],
+      "rules": [
+        "other",
+        "shared_memory_overwrite"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "call copies TA-local 'str' into buf2 with fixed len 1000 (caller-provided buf2 region unknown; potential overwrite)",
+        "binding: destination buf2 (unknown origin) receives local 'str' data",
+        "binding: copies TA-local 'str' into caller-provided buf2 (dst may be REE-visible)",
+        "call copies local 'str' into buf2 with constant length 1000; destination origin unknown (possible overwrite)",
+        "TEE_MemMove writes 1000 bytes from TA 'str' into caller-provided buf2 (REE-visible) where dst size is size2 (caller-controlled) and no effective bounds check on this path",
+        "writing 1000 bytes from TA 'str' into caller-provided buf2 (REE-visible) where destination size is caller-controlled and no local check on this path",
+        "call-site binding: dst argument 'buf2' aliases caller-provided REE buffer (destination of TA->REE copy)",
+        "TEE_MemMove writes 1000 bytes from TA 'str' into caller buffer buf2 where destination size is caller-controlled",
+        "writing 1000 bytes from TA-private 'str' into caller-provided buf2 (REE-visible) with destination size controlled by caller earlier (size2) and no effective bounds check on this path"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(buf2, str, 1000);",
+        "call at entry.c:246 (buf2 <- str)"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other",
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "flow_dir:TA->unknown",
+          "src_region:TEE-private",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=1000,src_sz=?,dst_sz=?",
+          "flow_dir:TA->TA",
+          "size_triplet:copy_len=1000,src_sz=1000,dst_sz=?",
+          "flow_dir:TA->REE",
+          "dst_region:REE-visible",
+          "size_triplet:copy_len=1000,src_sz=1000,dst_sz=buf2_size",
+          "size_triplet:copy_len=1000,src_sz=unknown,dst_sz=unknown",
+          "size_triplet:copy_len=1000,src_sz=1000,dst_sz=size2"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1,
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0031",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 283,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "input"
+      ],
+      "sink_functions": [
+        "unknown"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "TEE_Malloc invoked with tainted size params[0].value.a (allocation size influence by REE)"
+      ],
+      "code_excerpts": [
+        "int *arr_a = TEE_Malloc(params[0].value.a, 0);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=params[0].value.a,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0032",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 284,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "input"
+      ],
+      "sink_functions": [
+        "unknown"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "TEE_Malloc invoked with tainted size params[1].memref.size (allocation size influenced by REE)"
+      ],
+      "code_excerpts": [
+        "int *arr_ref = TEE_Malloc(params[1].memref.size, 0);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=params[1].memref.size,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0033",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 285,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "input"
+      ],
+      "sink_functions": [
+        "array_write"
+      ],
+      "rules": [
+        "weak_input_validation",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "per‑element write to tmp_arr using tainted params[0].value.a as index with no bounds check on that value",
+        "Per-element write to tmp_arr using tainted params[0].value.a as index with no bounds check on that value"
+      ],
+      "code_excerpts": [
+        "tmp_arr[params[0].value.a] = 43;"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=1,src_sz=?,dst_sz=20"
+        ]
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1,
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0034",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 286,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "weak_input_validation",
+      "functions": [
+        "input"
+      ],
+      "sink_functions": [
+        "array_write"
+      ],
+      "rules": [
+        "weak_input_validation",
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "per‑byte copy into TA heap 'str' using params[2].memref.size (REE-tainted) as loop bound without additional check",
+        "Per-byte loop copies params[2].memref.size bytes into TA buffer 'str' without checking against 'str' capacity"
+      ],
+      "code_excerpts": [
+        "for (int i = 0; i < params[2].memref.size; i++) { str[i] = ((char *)params[2].memref.buffer)[i]; }"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "weak_input_validation"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=params[2].memref.size,src_sz=params[2].memref.size,dst_sz=1000"
+        ]
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1,
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0035",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 290,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_MemMove",
+        "input"
+      ],
+      "sink_functions": [
+        "=",
+        "TEE_MemMove"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "binding: copies from REE-visible params[3].memref.buffer into TA-local 'str' (tainted src)",
+        "TEE_MemMove moves REE-visible params[3].memref.buffer into TA buffer 'str' using REE-provided size",
+        "call-site binding: src params[3].memref.buffer and len params[3].memref.size are REE-originated and copied into TA-private 'str'",
+        "call-site binding: destination 'str' is TA-private buffer passed as first arg",
+        "call-site binding: source params[3].memref.buffer originates from REE (shared)",
+        "TEE_MemMove copying REE buffer into TA heap using REE-controlled size"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(str, params[3].memref.buffer, params[3].memref.size);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=params[3].memref.size,src_sz=params[3].memref.size,dst_sz=1000",
+          "flow_dir:unknown",
+          "src_region:unknown"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0036",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 291,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_MemMove",
+        "input"
+      ],
+      "sink_functions": [
+        "TEE_MemMove",
+        "="
+      ],
+      "rules": [
+        "other",
+        "shared_memory_overwrite"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "TEE_MemMove writes local 'str' into REE-visible params[2].memref.buffer (possible disclosure)",
+        "binding: copies TA-local 'str' into params[2].memref.buffer (caller-provided dst, possible REE-visible)",
+        "call copies local 'str' into REE-visible params[2].memref.buffer (possible disclosure of TA data to REE)",
+        "TEE_MemMove writes TA-private 'str' into REE-visible params[2].memref.buffer with fixed length 1000 (possible overflow of destination)",
+        "writing 1000 bytes from TA 'str' into params[2].memref.buffer (REE-visible) with destination size controlled by params[2].memref.size",
+        "TEE_MemMove writes fixed 1000 bytes from TA-private 'str' into REE-visible params[2].memref.buffer (destination size is REE-controlled) without an effective check on this path",
+        "Fixed-size write of 1000 bytes into REE-visible params[2].memref.buffer where destination size is REE-controlled",
+        "TEE_MemMove writes TA-private 'str' into REE-visible params[2].memref.buffer with fixed length 1000; destination size is REE-controlled and may be smaller",
+        "call-site binding: destination params[2].memref.buffer is REE-visible alias"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(params[2].memref.buffer, str, 1000);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other",
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=1000,src_sz=1000,dst_sz=params[2].memref.size",
+          "size_triplet:copy_len=1000,src_sz=unknown,dst_sz=params[2].memref.size",
+          "flow_dir:unknown",
+          "src_region:unknown"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1,
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0037",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 293,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "input"
+      ],
+      "sink_functions": [
+        "unknown"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "read from REE buffer using params[3].memref.size-derived index (possible OOB read if size small)"
+      ],
+      "code_excerpts": [
+        "char c = ((char *)params[3].memref.buffer)[params[3].memref.size - 3];"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=1,src_sz=params[3].memref.size,dst_sz=1"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0038",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 306,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "input",
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "TEE_MemMove",
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "TEE_MemMove copies params[2].memref.buffer into TA 'str' using REE-provided size",
+        "copying params[2].memref.buffer into TA 'str' using caller-controlled size",
+        "call-site binding: source params[2].memref.buffer originates from REE",
+        "TEE_MemMove copies REE buffer into TA buffer using REE-provided size"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(str, params[2].memref.buffer, params[2].memref.size);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=params[2].memref.size,src_sz=params[2].memref.size,dst_sz=1000"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0039",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 307,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "input",
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "TEE_MemMove copies params[3].memref.buffer into TA 'str' using REE-provided size",
+        "TEE_MemMove copies REE buffer into TA buffer using REE-provided size"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(str, params[3].memref.buffer, params[3].memref.size);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=params[3].memref.size,src_sz=params[3].memref.size,dst_sz=1000"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0040",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 309,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "other",
+      "functions": [
+        "input",
+        "TEE_MemMove"
+      ],
+      "sink_functions": [
+        "TEE_MemMove"
+      ],
+      "rules": [
+        "other",
+        "shared_memory_overwrite"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "TEE_MemMove writes TA 'str' into REE-visible params[2].memref.buffer with fixed length 1000 (destination size is REE-controlled)",
+        "repeat call: writing 1000 bytes from TA 'str' into REE-visible params[2].memref.buffer where destination size is controlled by caller",
+        "Repeat fixed-size write into REE buffer with destination size controlled by REE",
+        "TEE_MemMove writes TA-private 'str' into REE-visible params[2].memref.buffer with fixed 1000 bytes; destination size is REE-controlled"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(params[2].memref.buffer, str, 1000);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other",
+          "shared_memory_overwrite"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=1000,src_sz=1000,dst_sz=params[2].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "shared_memory_overwrite": 1,
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0041",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 350,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_MemMove",
+        "produce_s"
+      ],
+      "sink_functions": [
+        "TEE_MemMove",
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "call copies buf (caller-provided) into TA-local 'str' using size variable 'size' (size tainted/unknown)",
+        "binding: copies caller-provided buf into TA-local 'str' (src may be REE-visible)",
+        "call copies buf into local 'str' (aliasing/shared origin unknown); origin of buf unknown",
+        "copying caller buffer 'buf' into local str[1000] using caller-controlled size",
+        "call-site binding: source 'buf' provided by REE and forwarded into TEE_MemMove",
+        "TEE_MemMove copying caller-controlled buffer into TA stack 'str' using caller size",
+        "TEE_MemMove copies potentially REE-originated buf into local stack buffer str; guarded by size<=1000 check",
+        "Binding at call-site: dst=str (local), src=buf aliases REE-visible memref; caller has size bounds check at 346-348",
+        "TEE_MemMove copies REE-originated buf into local str; guarded by size<=1000 check"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(str, buf, size);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:unknown",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=size,src_sz=?,dst_sz=1000",
+          "src_region:REE-visible",
+          "size_triplet:copy_len=size,src_sz=size,dst_sz=1000",
+          "flow_dir:unknown",
+          "size_triplet:copy_len=size,src_sz=unknown,dst_sz=1000"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0042",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 357,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "produce_s3"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "local buf is alias of REE-visible params[0].memref.buffer"
+      ],
+      "code_excerpts": [
+        "void *buf = params[0].memref.buffer;"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=params[0].memref.size,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0043",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 401,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_MemMove",
+        "produce_s3"
+      ],
+      "sink_functions": [
+        "=",
+        "TEE_MemMove"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "binding: copying params[0].memref.buffer (REE-visible) into TA-local 'str' may introduce tainted data",
+        "binding: destination 'str' (local) aliases REE-visible params[0].memref.buffer as source",
+        "binding: copies from REE-visible params[0].memref.buffer into TA-local 'str' (src tainted)",
+        "call copies REE-visible params[0].memref.buffer into local 'str' (alias of shared buffer passed into helper)",
+        "TEE_MemMove copies params[0].memref.buffer into TA stack 'str' using REE-provided size",
+        "call-site binding: params[0].memref.buffer is REE-visible and passed to TEE_MemMove",
+        "Binding at call-site: dst=str (local), src=params[0].memref.buffer (REE-visible); caller path has a bounds check near 481-483 covering similar usage",
+        "TEE_MemMove copies REE-originated memref into local str; caller includes bounds check (see 481-483)",
+        "TEE_MemMove copies REE-originated memref into local stack buffer; guarded by sz<=1000 check",
+        "call-site binds dest 'str' to local stack buffer and src to REE-visible memref (pointer binding)",
+        "TEE_MemMove copies REE-originated buffer into TA-stack; guarded by prior bounds check"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(str, params[0].memref.buffer, params[0].memref.size);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=params[0].memref.size,src_sz=params[0].memref.size,dst_sz=1000"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0044",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 422,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "shared_memory"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "local pointer buf is an alias of params[0].memref.buffer (REE-visible shared buffer)",
+        "buf is an alias of REE-visible params[0].memref.buffer and used for subsequent operations",
+        "buf is alias of params[0].memref.buffer (REE-visible shared buffer)",
+        "Local pointer 'buf' aliases params[0].memref.buffer (REE-visible shared buffer)."
+      ],
+      "code_excerpts": [
+        "void *buf = params[0].memref.buffer;"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=params[0].memref.size,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0045",
+      "file": "/workspace/benchmark/bad-partitioning/ta/entry.c",
+      "line": 485,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TEE_MemMove",
+        "shared_memory"
+      ],
+      "sink_functions": [
+        "=",
+        "TEE_MemMove"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "binding: copies from REE-visible params[0].memref.buffer into TA-local 'str' (src tainted)",
+        "call copies REE-visible params[0].memref.buffer into local 'str' (used in subsequent strcmp)",
+        "TEE_MemMove copies params[0].memref.buffer into TA stack 'str' using REE-provided size",
+        "call-site binding: params[0].memref.buffer is REE-visible and passed as source",
+        "TEE_MemMove copies REE-originated memref into local stack buffer str; guarded by sz<=1000 check",
+        "Binding at call-site: dst=str local, src=params[0].memref.buffer (REE-visible); caller checked sz<=1000 at 481-483",
+        "TEE_MemMove copies REE-originated memref into local str; guarded by sz<=1000 check",
+        "call-site binds dest 'str' to local stack buffer and src to REE-visible memref (pointer binding)",
+        "TEE_MemMove copies REE-originated buffer into TA-stack; guarded by prior bounds check",
+        "binding: destination 'str' is a local TEE-private buffer receiving data from REE-originated memref",
+        "binding: source argument is params[0].memref.buffer which is REE-visible shared memory",
+        "call to TEE_MemMove copies REE-originated data into local buffer; guarded by prior sz<=1000 check"
+      ],
+      "code_excerpts": [
+        "TEE_MemMove(str, params[0].memref.buffer, params[0].memref.size);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=params[0].memref.size,src_sz=params[0].memref.size,dst_sz=1000",
+          "size_triplet:copy_len=params[0].memref.size,src_sz=params[0].memref.size,dst_sz=unknown"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    }
+  ]
+}
