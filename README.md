@@ -11,6 +11,7 @@ OP‑TEEの**Trusted Application (TA)** を対象に、LLM・RAG・ルール（D
 * [System_README.md](Document/System_README.md) … 各フェーズの内部処理・入出力契約・フロー
 * [RAG.md](Document/RAG.md) … RAG のインデックス構築・検索戦略・コンテキスト生成
 * [LLM.md](Document/LLM.md) … LLM設定レイヤ（CLI/プログラム利用/エラーハンドリング）
+* [prompt.md](Document/prompt.md)  … 使用プロンプトの記述内容まとめ
 
 ---
 
@@ -219,5 +220,6 @@ python3 ./src/main.py \
 ---
 
 本READMEは研究開発の進捗に合わせて更新します。運用・発展的な話題（評価指標、検知サンプル集、CI連携）は別紙として追加予定です。
+
 
 
