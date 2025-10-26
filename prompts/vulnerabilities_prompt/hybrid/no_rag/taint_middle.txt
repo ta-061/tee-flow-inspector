@@ -12,18 +12,6 @@ DOMAIN FACTS (soft defaults; same as START)
 [MANDATORY — CALL‑SITE BINDING FACTS]
 - For each pointer argument at this call-site, emit one structural_risk (sink_function "=") that binds the callee parameter to its origin region (REE-visible / TEE-private / unknown). Include the 5 tags and a one‑line why (e.g., "alias of shared buffer passed into helper"). Do this even if "obvious".
 
-[MUST — PER‑BYTE ARRAY WRITES]
-- If you see a per‑byte array write in user code (e.g., buf[i] = ...), and the bound/index/length is tainted OR unknown, emit a structural_risk with rule="weak_input_validation" and sink_function="array_write".
-- Assume "no effective bounds check" unless you can cite a concrete IF on the same path (provide the file:line in the sanitizer if it exists).
-- Do NOT rewrite external API calls to "array_write"; handle them per the next rule.
-
-Calls to external APIs (e.g., TEE_MemMove):
-- Record the callee line as a structural risk with sink_function "<callee name>" (e.g., "TEE_MemMove"). Never emit the placeholder "external_fn".
-- Do NOT analyze the callee internals here.
-
-Shared-memory overwrite (structural signal at mid-hop):
-- If writing into REE-visible memory (e.g., memref.buffer) via tainted index/offset (or pointer arithmetic) without an effective bounds check on the same path, add a structural risk candidate for `shared_memory_overwrite` (use host rule_id or "other" if none fits).
-
 CLASSIFICATION (rules)
 - Use only host‑provided rule identifiers; otherwise "other".
 
