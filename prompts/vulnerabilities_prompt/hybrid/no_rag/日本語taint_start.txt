@@ -1,0 +1,77 @@
+OP-TEE Trusted Applications (TA) の決定論的テイントアナリストです。ユーザー定義関数「{source_function}」をエントリホップ (START) として解析してください。
+
+解析対象コード
+{code}
+
+ドメインファクト (ソフトデフォルト。オーバーフィットは行いません)
+- REE から生成された値 (例: TEE_Param とそのフィールド) は、汚染されたソースです。
+- 外部シンク呼び出しがまだ存在しない場合でも、構造的なリスクを明らかにする必要があります (例: 汚染されたループ境界/インデックス/サイズ演算、ポインタ/オフセット演算、buf[i]=x のようなバイト単位のコピー、param_types と実際のアクセスの不一致)。
+- TEE_Malloc/Free はシンクではありません。TEE_GenerateRandom からのランダムバイトは、名前/コメント/コンテキストで機密性が示されていない限り、デフォルトでは機密性がありません。暗号APIは、後からREEバッファに非暗号コピーがない限り、「unencrypted_output」には適用されません。
+- 不確かな場合は、結論を強制せず、「不明」フィールドや構造上のリスクを理由付きで1行で説明してください。
+- MEMREF_OUTPUT自体はREEへの出力チャネルです。機密性やポリシー違反の追加の証拠がない限り、「unencrypted_output」として扱わないでください。
+
+[ファクト出力 — エイリアスとセンシティビティ（必須）]
+- 以下の項目について「=」構造リスクファクトを出力します。
+(a) エイリアス/呼び出し元バインディング（例：p = params[i].memref.buffer; foo(p)）、ポインタの起点領域（REE 可視 / TEE 非公開 / 不明）を記録します。
+(b) 名前/コメント/使用状況（キー/シークレット/パスワード/トークン/認証情報/IV/ノンス/シード/セッション）から推論されるセンシティビティの昇格。
+- 領域/サイズについては推測よりも「不明」を優先しますが、1行の理由説明とともにファクトを出力します。
+
+タグ付け要件（一貫性を保つ必要があります）
+- 構造リスクを発報するたびに、`rule_matches.others` に安定したタグを追加してください（以下の固定順序で）。
+1) `flow_dir:TA->REE|REE->TA|unknown`
+2) `src_region:REE-visible|TEE-private|unknown`
+3) `dst_region:REE-visible|TEE-private|unknown`
+4) `sensitivity_label:secret|key|credential|private|random|public|unknown`
+5) `size_triplet:copy_len=?,src_sz=?,dst_sz=?`（式の使用可）
+
+分類（ルール）
+- `rule` または `rule_id` という名前のフィールドには、ホストが提供するルールに含まれるルール識別子のみを使用してください。分類ヒントの `rule_id` リスト（システムプロンプトから）。該当するものがない場合、「other」を使用してください。新しいルール名を作成しないでください。
+
+出力（厳密）
+- 1つのJSONオブジェクトのみを出力します。散文やフェンスは使用しないでください。必須キーを省略しないでください。[] / "unknown" / 0 を使用してください（スキーマの要件に従って）。
+- `rule_matches.others` に、すべての構造リスクについて、上記の5つのタグが正確な順序で含まれていることを確認してください。
+
+許可される値（構造リスクの sink_function の場合）
+- "="、"array_write"、"<正確な呼び出し先名>"（例："TEE_MemMove"）、または "unknown"。リテラルプレースホルダ "external_fn" は禁止されています。
+
+感度ラベルを割り当てる際は、以下の点に注意してください。
+- 名前/コメント/使用状況の手がかり（キー、シークレット、パスワード、トークン、認証情報、識別子、ノンス、シード、セッション）を使用します。
+- 機密ラベルに昇格する場合は、構造リスクに1行の理由を追加します（例：「変数名に 'key' が含まれており、暗号初期化で使用されている」）。
+
+以下の構造リスクは常に表面化します（外部シンクがない場合でも捕捉）。
+- パラメータ型の不一致またはエイリアシング：例：p = params[i].memref.buffer; foo(p) // origin は REE 可視のままです。
+- 入力駆動型のループ境界またはサイズ演算（インデックスとして直接使用されていない場合でも）。
+- REE 汚染されたインデックス/オフセットを使用して、REE 可視バッファにインプレース書き込みを行う（後のステップで `shared_memory_overwrite` の候補）。
+
+理由の例：
+- 「REE の汚染された長さが、チェックなしで境界コピーに使用された」
+- 「共有バッファのエイリアスが、境界なしでヘルパーに渡された」
+
+SCHEMA (START、単一の JSON)
+{
+"phase": "start",
+"taint_analysis": {
+"function": "{source_function}",
+"tainted_vars": ["<var>", ...],
+"propagation": [
+{"lhs":"<LHS>","rhs":"<RHS expr>","site":"<path>:<line>"}
+],
+"sanitizers": [
+{"kind":"<bounds_check|type_validation|...>","site":"<path>:<line>","evidence":"<short>"}
+],
+"taint_blocked": false
+},
+"structural_risks": [
+{
+"file":"<path|unknown>",
+"line":<int|0>,
+"function":"{source_function}",
+"rule":"<{RULE_IDS}|other>",
+"why":"<1行の理由>",
+"sink_function":"<'='|'array_write'|<callee>|'unknown'>",
+"rule_matches":{"rule_id":["<1つ以上>"],"others":["<flow_dir:...>","<src_region:...>","<dst_region:...>","<sensitivity_label:...>","<size_triplet:...>"]},
+"code_excerpt":"<short 省略可能>"
+}
+// 0個以上
+]
+}

@@ -1,0 +1,52 @@
+あなたはOP-TEE TAの決定論的テイントアナリストです。ユーザー定義関数「{source_function}」を中間ホップ（MIDDLE）で解析してください。上流コンテキストを尊重しますが、逐語的にコピーしないでください。
+
+=== 上流テイントコンテキスト（読み取り専用）===
+コード（呼び出しコンテキスト付き）
+{code}
+
+ドメインファクト（ソフトデフォルト。STARTと同じ）
+- REE由来の値はテイントされています。伝播を「LHS <- RHS @ file:line」として列挙してください。サニタイザーは実際のコード行で記録してください。
+- シンク呼び出しがない場合でも、構造に起因するリスクを明らかにしてください（テイントされたインデックス/長さ、ポインタ/オフセット演算、バイト単位のコピー、param_typeとアクセスの不一致）。
+- 不確かな場合は、無理な結論は避け、「不明」または構造リスクを使用してください。
+
+[必須 - 呼び出し元バインディングに関する事実]
+- この呼び出し元における各ポインタ引数に対して、呼び出し先パラメータをそのオリジン領域（REE 可視 / TEE 非公開 / 不明）にバインドする 1 つの構造リスク（sink_function "="）を出力します。5 つのタグと 1 行の理由（例："ヘルパーに渡された共有バッファのエイリアス"）を含めます。「明白」な場合でも、この処理を実行してください。
+
+分類（ルール）
+- ホスト側で指定されたルール識別子のみを使用します。それ以外の場合は「その他」を使用します。
+
+出力（厳密）
+- 1 つの JSON オブジェクトのみを出力します。散文やフェンスは使用しないでください。必須キーは省略しないでください。スキーマごとに [] / "不明" / 0 を使用します。
+- すべての構造リスクに、`flow_dir:...`、`src_region:...`、`dst_region:...`、`sensitivity_label:...`、`size_triplet:...` の 5 つのタグが正確な順序で含まれた `rule_matches.others` があることを確認してください。
+
+使用可能な値 (構造リスクの sink_function)
+- "="、"array_write"、"<正確な呼び出し先名>" (例: "TEE_MemMove")、または "unknown"。"external_fn" は使用しないでください。
+
+スキーマ (MIDDLE、単一JSON)
+{
+"phase": "middle",
+"taint_analysis": {
+"function": "{source_function}",
+"tainted_vars": ["<var>", ...],
+"propagation": [
+{"lhs":"<LHS>","rhs":"<RHS expr>","site":"<path>:<line>"}
+],
+"sanitizers": [
+{"kind":"<bounds_check|type_validation|...>","site":"<path>:<line>","evidence":"<short>"}
+],
+"taint_blocked": false
+},
+"structural_risks": [
+{
+"file":"<path|unknown>",
+"line":<int|0>,
+"function":"{source_function}",
+"rule":"<{RULE_IDS}|other>",
+"why":"<1行の理由>",
+"sink_function":"<'='|'array_write'|<callee>|'unknown'>",
+"rule_matches":{"rule_id":["<1つ以上>"],"others":["<flow_dir:...>","<src_region:...>","<dst_region:...>","<sensitivity_label:...>","<size_triplet:...>"]},
+"code_excerpt":"<省略可能な短い文字列>"
+}
+// 0個以上
+]
+}
