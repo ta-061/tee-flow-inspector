@@ -631,7 +631,7 @@ class GeminiClient(BaseLLMClient):
         try:
             import google.generativeai as genai
             
-            genai.configure(api_key=config.get("api_key"))
+            genai.configure(api_key=config.get("api_key"), transport='rest')
             self.model = genai.GenerativeModel(
                 model_name=config.get("model", "gemini-1.5-pro"),
                 generation_config={

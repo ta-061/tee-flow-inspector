@@ -132,7 +132,7 @@ python3 src/analyze_vulnerabilities/taint_analyzer.py \
 
 ## 参考
 
-- `Document/Phase3_SinkDetection.md`: フェーズ 3 のシンク抽出設計
+- `Document/Process_Flow.md`: フェーズ 3 のシンク抽出を含む全体フロー概要
 - `src/identify_sinks/identify_sinks.py`: シンク分類の最新実装（単一 JSON 出力）
 - `README.md`: プロジェクト全体のセットアップや実行手順
 

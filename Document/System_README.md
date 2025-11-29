@@ -24,8 +24,10 @@ flowchart LR
 * `ta/compile_commands.json`
 * `ta/results/<TA>_phase12.json`
 * `ta/results/<TA>_sinks.json`
+* `ta/results/<TA>_candidate_flows.json`
 * `ta/results/<TA>_vulnerabilities.json`
 * `ta/results/<TA>_vulnerability_report.html`
+* `ta/results/conversations.jsonl`（Phase5 の LLM 対話ログ）
 * `ta/results/time.txt`（実行時間記録）
 
 > 用語: **CDF (Candidate Data Flows)** = 指定ソース関数から sink までの候補チェーン（最小集合）。
@@ -66,29 +68,16 @@ flowchart LR
 
 ### 目的
 
-* プロジェクト内の **ユーザ定義関数** と **外部宣言/マクロ** を厳密に分離
+* プロジェクト内で **定義されている関数/マクロ** と、宣言のみ存在する **外部宣言/マクロ** を分離（LLM は未使用）
 
   ### 主な処理
   
-  * **対象APIの絞込**: Phase1–2の結果から **実際にユーザ関数内で呼ばれている外部関数のみ**を候補に。
-  * **判定モード**:
-  
-    * 既定: **ハイブリッド**（既知シンクはルール/パターンで確定、未知/曖昧はLLMへ）
-    * `--llm-only`: ルールを用いず**LLM単独**。
-  * **RAG**: 任意で有効化可能。OP‑TEE API 仕様PDFなどのベクトル検索で**根拠片**をプロンプトに添付。
-  * **LLM呼出**: `llm_settings/*`（プロバイダ抽象化） + `llm_error_handler.py`（リトライ/診断）。
-  * **出力**: `*_sinks.json`
-  
-  ```json
-  {
-    "sinks": [
-      {"name": "TEE_MemMove", "param_index": 1, "reason": "destination may overflow", "by": "llm|rule"},
-      ...
-    ],
-    "analysis_mode": "hybrid|llm_only",
-    "token_usage": {"input": 1234, "output": 567}
-  }
-  ```
+  * `compile_commands.json` を読み込み、libclang で全ソースをパース
+  * **定義の抽出**: プロジェクト配下で定義されている関数を収集（static はファイルパス込みで識別）
+  * **宣言の分類**:
+    * プロジェクト外の宣言、`include/` 配下のマクロ、関数マクロは外部扱い
+    * 同名の前方宣言や重複マクロは情報が多い方を採用してユニーク化
+  * **出力**: `*_phase12.json`（`user_defined_functions` と `external_declarations` を保持）
 
   ---
 
@@ -273,7 +262,7 @@ Trusted Application (TA) の関数チェーンを GPT-5 系 LLM で逐次解析�
 
 - **プレフィックスキャッシュ**: 同一チェーンの先頭が再解析された場合、過去の START/MIDDLE 結果と会話履歴を復元して LLM 呼び出し回数を削減。
 - **部分的な再試行**: 必須フィールドが不足している場合に限り、レスポンスを補完する追加プロンプトを送出。
-- **TokenTrackingClient** (任意): `--no-track-tokens` 未指定時は LLM API のトークン使用量を集計し `statistics.token_usage` に記録。
+- **会話ログ**: `conversations.jsonl` に START/MIDDLE/END のプロンプト・応答と付帯メタデータを逐次追記。
 # Phase6 — HTMLレポート生成（`src/report/generate_report.py`）
 
 ### 目的

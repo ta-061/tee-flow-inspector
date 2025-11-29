@@ -292,6 +292,10 @@ def test_connection(provider: str = None):
         
         current = client.get_current_provider()
         print(f"\n{current} への接続をテスト中...")
+
+        config = client.config_manager.get_provider_config(current)
+        model_name = config.get("model", "(不明)")
+        print(f"使用モデル: {model_name}")
         
         if client.validate_connection():
             print("✓ 接続成功！")
@@ -300,7 +304,7 @@ def test_connection(provider: str = None):
             if input("\nテストメッセージを送信しますか？ [y/N]: ").lower() == 'y':
                 print("メッセージ送信中...")
                 response = client.chat_completion([
-                    {"role": "user", "content": "Hello! Please respond with 'Connection successful'."}
+                    {"role": "user", "content": "Please respond with a valid json object like {\"message\": \"Connection successful\"}."}
                 ])
                 print(f"応答: {response}")
         else:

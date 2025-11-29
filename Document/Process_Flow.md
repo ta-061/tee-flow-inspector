@@ -288,7 +288,7 @@ graph TB
     style SaveResults fill:#c8e6c9
 ```
 
-## Phase 4: 候補フロー生成
+## Phase 4: 統合版候補フロー生成（旧Phase3.1〜3.4を統合）
 
 ### 処理フロー
 
@@ -429,92 +429,27 @@ graph LR
 
 ```mermaid
 graph TB
-    Start([開始]) --> LoadInputs[入力ファイル読込<br/>・vulnerabilities.json<br/>・phase12.json<br/>・sinks.json 任意]
+    Start([開始]) --> LoadInputs[入力ファイル読込<br/>vulnerabilities.json<br/>phase12.json<br/>sinks.json<br/>candidate_flows.json]
     
-    LoadInputs --> CheckLogFile{ログファイル<br/>存在?}
+    LoadInputs --> CheckConv{conversations.jsonl<br/>存在?}
+    CheckConv -->|Yes| ParseConv[対話履歴読込<br/>parse_conversations_jsonl]
+    CheckConv -->|No| EmptyConv[空の対話履歴]
     
-    CheckLogFile -->|Yes| ParseLog[ログ解析<br/>taint_analysis_log.txt]
-    CheckLogFile -->|No| EmptyConv[空の対話履歴]
+    ParseConv --> MapChains
+    EmptyConv --> MapChains
     
-    ParseLog --> ExtractConv[対話履歴抽出<br/>・チェーン名検出<br/>・プロンプト/応答<br/>・整合性メッセージ]
-    EmptyConv --> ExtractConv
+    MapChains[チェーンマッピング<br/>flows + 脆弱性結果を結合] --> CalculateStats[統計情報計算<br/>チェーン数/LLM呼び出し等]
     
-    ExtractConv --> LoadFlows{candidate_flows<br/>存在?}
-    
-    LoadFlows -->|Yes| ExtractAllChains[全チェーン抽出<br/>・解析済みチェーン<br/>・未解析チェーン]
-    LoadFlows -->|No| UseVulnChains[脆弱性チェーンのみ使用]
-    
-    ExtractAllChains --> CalculateStats
-    UseVulnChains --> CalculateStats
-    
-    CalculateStats[統計情報計算<br/>・チェーン数<br/>・関数数<br/>・LLM呼び出し数]
-    
-    CalculateStats --> MapVulnToChain[脆弱性マッピング<br/>チェーン名→脆弱性情報]
-    
-    MapVulnToChain --> GenerateChainHTML[チェーンHTML生成（ループ）]
-    
-    GenerateChainHTML --> CheckConversation{対話履歴<br/>あり?}
-    
-    CheckConversation -->|Yes| FormatMessages[メッセージ整形<br/>・JSON検出/整形<br/>・コードブロック処理<br/>・HTMLエスケープ]
-    CheckConversation -->|No| NoAnalysisHTML[未解析表示]
-    
-    FormatMessages --> CheckVuln{脆弱性<br/>あり?}
-    NoAnalysisHTML --> CheckVuln
-    
-    CheckVuln -->|Yes| AddVulnInfo[脆弱性情報追加<br/>・タイプ<br/>・深刻度<br/>・説明]
-    CheckVuln -->|No| SafeStatus[安全ステータス]
-    
-    AddVulnInfo --> CreateChainItem
-    SafeStatus --> CreateChainItem
-    
-    CreateChainItem[チェーン要素作成<br/>・フロー表示<br/>・対話履歴<br/>・折りたたみ機能]
-    
-    CreateChainItem --> MoreChains{他のチェーン<br/>ある?}
-    MoreChains -->|Yes| GenerateChainHTML
-    MoreChains -->|No| GenerateSections
-    
-    GenerateSections[セクション生成]
-    
-    GenerateSections --> GenTimeline[実行タイムライン生成<br/>・Phase3時間<br/>・Phase5時間<br/>・プログレスバー]
-    
-    GenTimeline --> GenTokenUsage[トークン使用量生成<br/>・シンク特定<br/>・テイント解析<br/>・合計統計]
-    
-    GenTokenUsage --> GenSinksSummary[シンクサマリー生成<br/>・特定シンク一覧<br/>・判定方法（LLM/Rule）<br/>・パラメータ情報]
-    
-    GenSinksSummary --> GenVulnDetails[脆弱性詳細生成<br/>・検出脆弱性リスト<br/>・深刻度表示<br/>・場所情報]
-    
-    GenVulnDetails --> GenFindings[Findings生成<br/>・インライン検出<br/>・カテゴリ分類<br/>・ルールマッチ]
-    
-    GenFindings --> LoadTemplate[HTMLテンプレート読込<br/>・CSS/JS組み込み<br/>・プレースホルダー定義]
-    
-    LoadTemplate --> FillTemplate[テンプレート埋込<br/>・プロジェクト情報<br/>・統計データ<br/>・各セクションHTML]
-    
-    FillTemplate --> HandlePlaceholder{プレースホルダー<br/>エラー?}
-    
-    HandlePlaceholder -->|Yes| AddDefault[デフォルト値設定<br/>・N/A埋込<br/>・再試行]
-    HandlePlaceholder -->|No| GenerateHTML
-    
-    AddDefault --> RetryFill[埋込再試行]
-    RetryFill --> CheckRetry{成功?}
-    
-    CheckRetry -->|Yes| GenerateHTML
-    CheckRetry -->|No| MinimalHTML[最小HTML生成<br/>・エラーメッセージ]
-    
-    GenerateHTML[完全HTML生成]
-    
-    GenerateHTML --> SaveHTML[HTMLファイル保存]
-    MinimalHTML --> SaveHTML
-    
-    SaveHTML --> AddAssets[アセット処理<br/>・styles.css<br/>・script.js<br/>・埋込/外部参照]
-    
-    AddAssets --> DisplaySummary[サマリー表示<br/>・保存先パス<br/>・検出数<br/>・実行時間]
-    
-    DisplaySummary --> End([終了])
+    CalculateStats --> GenerateChainHTML[チェーンHTML生成<br/>対話履歴付き]
+    GenerateChainHTML --> GenerateSections[セクション組立<br/>タイムライン/サマリー]
+    GenerateSections --> FillTemplate[テンプレート埋込<br/>CSS/JS含む]
+    FillTemplate --> SaveHTML[HTMLファイル保存]
+    SaveHTML --> End([終了])
     
     style LoadInputs fill:#e1f5fe
-    style ParseLog fill:#fff3e0
+    style ParseConv fill:#fff3e0
     style GenerateSections fill:#f3e5f5
-    style LoadTemplate fill:#fce4ec
+    style FillTemplate fill:#fce4ec
     style SaveHTML fill:#e8f5e9
 ```
 
@@ -523,46 +458,23 @@ graph TB
 #### ログ解析プロセス
 ```mermaid
 graph TB
-    LogFile[taint_analysis_log.txt] --> ReadContent[ファイル読込<br/>UTF-8/ignore errors]
+    LogFile[conversations.jsonl] --> ReadLine[1行ずつJSON読込]
     
-    ReadContent --> ScanLines[行スキャン]
+    ReadLine --> CheckType{typeフィールド}
+    CheckType -->|system_prompt| SaveSystem[system_promptを記録]
+    CheckType -->|flow_conversations| ParseFlow[フロー会話を整形]
+    CheckType -->|その他| SkipLine[無視]
     
-    ScanLines --> DetectChain{チェーン開始<br/>検出?}
+    ParseFlow --> BuildMessages[prompt/responseを<br/>role付きで分解]
+    BuildMessages --> SaveFlow[chain名で格納<br/>sink_info/resultも保存]
     
-    DetectChain -->|"Analyzing chain:"| SavePrevious[前チェーン保存]
-    DetectChain -->|No| CheckSection
+    SaveSystem --> NextLine
+    SaveFlow --> NextLine
+    SkipLine --> NextLine
     
-    SavePrevious --> ExtractChainName[チェーン名抽出<br/>正規表現マッチ]
-    
-    ExtractChainName --> InitChain[チェーン初期化<br/>・会話リスト<br/>・セクション情報]
-    
-    CheckSection[セクション判定]
-    CheckSection --> IsFuncSection{Function<br/>セクション?}
-    CheckSection --> IsVulnSection{Vulnerability<br/>セクション?}
-    CheckSection --> IsPrompt{### Prompt?}
-    CheckSection --> IsResponse{### Response?}
-    
-    IsFuncSection -->|Yes| SetFuncContext[関数コンテキスト設定]
-    IsVulnSection -->|Yes| SetVulnContext[脆弱性コンテキスト設定]
-    
-    IsPrompt -->|Yes| CollectPrompt[プロンプト収集<br/>・複数行対応<br/>・終了条件判定]
-    
-    CollectPrompt --> AddUserMsg[userメッセージ追加]
-    
-    IsResponse -->|Yes| CollectResponse[レスポンス収集<br/>・複数行対応<br/>・セクション境界]
-    
-    CollectResponse --> AddAssistantMsg[assistantメッセージ追加]
-    
-    SetFuncContext --> NextLine
-    SetVulnContext --> NextLine
-    AddUserMsg --> NextLine
-    AddAssistantMsg --> NextLine
-    
-    NextLine[次の行へ] --> MoreLines{他の行<br/>ある?}
-    MoreLines -->|Yes| ScanLines
-    MoreLines -->|No| SaveFinal[最終チェーン保存]
-    
-    SaveFinal --> ReturnConv[対話履歴辞書返却]
+    NextLine --> MoreLines{残行?}
+    MoreLines -->|Yes| ReadLine
+    MoreLines -->|No| ReturnConv[(system_prompt, flows)]
 ```
 
 #### HTMLフォーマット処理
