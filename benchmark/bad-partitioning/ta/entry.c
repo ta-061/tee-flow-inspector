@@ -98,12 +98,28 @@ void TA_CloseSessionEntryPoint(void __maybe_unused *sess_ctx)
 
 void enc(char *str)
 {
+	const char key = 0x5A; 
+    if (!str)
+        return;
 
+    size_t len = strlen(str);
+    size_t i;
+
+    for (i = 0; i < len; i++) {
+        str[i] ^= key;
+    }
 }
 
 void dec(char *str)
 {
-
+	const char key = 0x5A; 
+    if (!str)
+        return;
+    size_t len = strlen(str);
+    size_t i;
+    for (i = 0; i < len; i++) {
+        str[i] ^= key;
+    }
 }
 
 void produce_2(TEE_Param params[4])

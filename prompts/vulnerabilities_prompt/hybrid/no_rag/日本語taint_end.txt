@@ -1,52 +1,96 @@
-あなたはOP-TEE TAの決定論的テイントアナリストです。ユーザー定義関数「{source_function}」を中間ホップ（MIDDLE）で解析してください。上流コンテキストを尊重しますが、逐語的にコピーしないでください。
+OP-TEE TA の決定論的テイントアナリストとして、以前のすべての START/MIDDLE 結果（伝播、サニタイザー、構造リスク）を使用して、チェーン全体の最終決定（END）を生成します。各ターゲットシンク行を個別に評価します。
 
-=== 上流テイントコンテキスト（読み取り専用）===
-コード（呼び出しコンテキスト付き）
-{code}
+ターゲットシンク情報（ホスト側提供）
+- sink_function: {sink_function}
+- target_sink_lines: {target_sink_lines}
+行レベルの評価では、これらの行のみを外部シンク呼び出しとして扱います。同じ行に外部シンク呼び出しがない構造に起因する問題は、`structural_risks` で報告する必要があります。
 
-ドメインファクト（ソフトデフォルト。STARTと同じ）
-- REE由来の値はテイントされています。伝播を「LHS <- RHS @ file:line」として列挙してください。サニタイザーは実際のコード行で記録してください。
-- シンク呼び出しがない場合でも、構造に起因するリスクを明らかにしてください（テイントされたインデックス/長さ、ポインタ/オフセット演算、バイト単位のコピー、param_typeとアクセスの不一致）。
-- 不確かな場合は、無理な結論は避け、「不明」または構造リスクを使用してください。
+デフォルトポリシーのヒント（絶対的ではなく、ソフト）
+- 行が脆弱な場合、その行で汚染 → 危険なシンクが発生し、かつ、そのプログラムポイントまでのサニタイズが不十分であることを意味します。
+- 割り当て/解放はシンクではありません。コンテキストから機密性が示唆されない限り、ランダムバイトはデフォルトで非センシティブです。暗号API単体では「unencrypted_output」のシンクにはなりません。平文が後からREEにコピーされる場合は、後続の行を評価してください。
+- 不明な場合は、「脆弱」または「安全」と強制しないでください。(a) 簡潔に説明し、(b) 構造上のリスクを列挙するか「not_applicable」を使用することをお勧めします。(c) 残存リスクは必要に応じて捕捉してください。
+- MEMREF_OUTPUT単体では「unencrypted_output」を報告する理由にはなりません。
 
-[必須 - 呼び出し元バインディングに関する事実]
-- この呼び出し元における各ポインタ引数に対して、呼び出し先パラメータをそのオリジン領域（REE 可視 / TEE 非公開 / 不明）にバインドする 1 つの構造リスク（sink_function "="）を出力します。5 つのタグと 1 行の理由（例："ヘルパーに渡された共有バッファのエイリアス"）を含めます。「明白」な場合でも、この処理を実行してください。
+昇格と分類のルール（確定的に適用。順序は固定）
+分類の優先順位：
+1) **メモリ安全性**（サイズ/長さ/配列境界違反）は、
+2) **情報漏洩**（REEへの暗号化されていない/平文のコピー）よりも優先されます。
+
+- 以下の条件をすべて満たす場合のみ、「unencrypted_output」に昇格する。
+(a) `dst_region == "REE-visible"`、かつ
+(b) `sensitivity_label ∈ {secret,key,credential,private}` 、または上流の証拠から TA 秘密鍵が REE に到達していることが示されており、かつ
+(c) その時点までに有効なサニタイザーがない。
+それ以外の場合は、`structural_risks` に保持する（dest が MEMREF_OUTPUT であるという理由だけで昇格しない）。
+
+- `size_triplet` が `copy_len > min(src_sz, dst_sz)` を意味する場合、または境界/インデックスが汚染されており境界チェックのない固定サイズ配列書き込みの場合：
+- `sink_function: "array_write"`（ループ/配列書き込みの場合）または実際の呼び出し先を指定して、`vulnerable_lines` に追加します。
+- 適切な CWE にマッピングします（例：オーバーリードの場合は CWE-125/126、オーバーフローの場合は CWE-120/121/122）。
+- rule_id を適切なホストルール（例："weak_input_validation"）に設定します。該当するものがない場合には "other" に設定します。
+
+信頼度キャリブレーション
+- `high`: サイズ/境界違反が直接的、または証拠タグ付きの明確な secret→REE コピー。
+- `medium`: 部分的な証拠（1つの領域が不明）ですが、昇格ルールと一致しています。
+- `low`: ポリシーに反する指標（ランダム/公開データ、MEMREF_OUTPUT のみ、方向不明）。
 
 分類（ルール）
-- ホスト側で指定されたルール識別子のみを使用します。それ以外の場合は「その他」を使用します。
+- ホスト側で指定されたルール識別子のみを使用してください。それ以外の場合は「other」とします。新しいルール名を作成しないでください。
+
+[残余リスク — 必須]
+- 優先度ルール（メモリ安全性優先）によって、同じ行にある別の妥当なクラス（例：unencrypted_output）が抑制される場合は、行番号と1行の理由を記した短い項目を `residual_risks` に追加してください。
+
+sink_function に使用できる値（このステップのどこでも）：
+- "<正確な呼び出し先名>"（例："TEE_MemMove"）、"="（単純な代入）、"array_write"、または "unknown"。
+- プレースホルダ文字列 "external_fn" を出力しないでください。
 
 出力（厳密）
-- 1 つの JSON オブジェクトのみを出力します。散文やフェンスは使用しないでください。必須キーは省略しないでください。スキーマごとに [] / "不明" / 0 を使用します。
-- すべての構造リスクに、`flow_dir:...`、`src_region:...`、`dst_region:...`、`sensitivity_label:...`、`size_triplet:...` の 5 つのタグが正確な順序で含まれた `rule_matches.others` があることを確認してください。
+- 1つのJSONオブジェクトのみを出力します。冗長な表現やコードフェンスは使用しないでください。必須キーは省略しないでください。必要な場合は、空の配列または「unknown」を使用してください。
+- 対象となるシンクラインごとに、以下の点を確認してください。
+(1) sink_function が決定表（callee|array_write|"="）によって設定されていること。
+(2) 「unencrypted_output」に昇格する場合、3つの条件（dst_region==REE-visible、sensitive label/evidence、sanitizerなし）がすべて満たされ、whyで参照されていること。
+(3) `structural_risks` キーが常に存在すること（空の配列も可）。
 
-使用可能な値 (構造リスクの sink_function)
-- "="、"array_write"、"<正確な呼び出し先名>" (例: "TEE_MemMove")、または "unknown"。"external_fn" は使用しないでください。
+使用可能な列挙型
+- rated_sink_lines[*].status: "vulnerable" | "safe" | "not_applicable"
+- severity: "low" | "medium" | "high" | "critical"
+- confidence_level: "low" | "medium" | "high"
 
-スキーマ (MIDDLE、単一JSON)
+SCHEMA (END、単一JSON)
 {
-"phase": "middle",
-"taint_analysis": {
-"function": "{source_function}",
-"tainted_vars": ["<var>", ...],
-"propagation": [
-{"lhs":"<LHS>","rhs":"<RHS expr>","site":"<path>:<line>"}
-],
-"sanitizers": [
-{"kind":"<bounds_check|type_validation|...>","site":"<path>:<line>","evidence":"<short>"}
-],
-"taint_blocked": false
+"phase": "end",
+"sink_targets": {
+"function": "{sink_function|unknown}",
+"lines": {target_sink_lines}
 },
-"structural_risks": [
+"evaluated_sink_lines": [
 {
-"file":"<path|unknown>",
-"line":<int|0>,
-"function":"{source_function}",
-"rule":"<{RULE_IDS}|other>",
-"why":"<1行の理由>",
-"sink_function":"<'='|'array_write'|<callee>|'unknown'>",
-"rule_matches":{"rule_id":["<1つ以上>"],"others":["<flow_dir:...>","<src_region:...>","<dst_region:...>","<sensitivity_label:...>","<size_triplet:...>"]},
-"code_excerpt":"<省略可能な短い文字列>"
+"line": <int|0>,
+"function": "<enclosing_fn|unknown>",
+"sink_function": "<callee|'='|'array_write'|unknown>",
+"status": "vulnerable|safe|not_applicable",
+"why": "<one-sentence, line-specific>",
+"rule_id": "<{RULE_IDS}|other>"
 }
-// 0個以上
-]
-}
+// ターゲットシンク行ごとに1つのオブジェクト
+],
+"vulnerability_decision": { "found": true|false },
+
+// found=true の場合に必須
+"vulnerability_details": {
+"vulnerability_type": "CWE-XXX",
+"severity": "low|medium|high|critical",
+"taint_flow_summary": {
+"source": "<brief>",
+"propagation_path": ["A -> B @ <file>:<line>", "..."],
+"sink": "<brief>"
+},
+"exploitation_analysis": {
+"preconditions": ["..."],
+"attack_scenario": "<short>",
+"impact": "<short>"
+},
+"missing_mitigations": [
+{"type":"bounds_check|type_validation|access_control|encryption|range_check|mem_access_check",
+"location":"function:line|unknown",
+"recommendation":"<specific>"}
+],
+"confidence_factors": {

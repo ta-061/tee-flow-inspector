@@ -207,3 +207,6 @@ tee-flow-inspector % tree -I "optee_client|optee_os|results|benchmark|answers"
 | **secvideo\_demo**                                                      | `ta/Makefile` のみ                         | dev-kit                          | 同上                                          | **◯**                        |
 | **optee-sdp**                                                           | `ta/Makefile` が **TA\_DEV\_KIT\_DIR 依存** | dev-kit を必ず指定                    | `export TA_DEV_KIT_DIR=...` → `make -C ta`  | **△** Dev-kit が無いと空ビルド       |
 | **external\_rk\_tee\_user**                                             | `ta/` に **ソース無し・prebuilt .bin**          | —                                | ―                                           | **✕** TA の再ビルド不可（署名済みバイナリのみ） |
+
+
+DITING,Opus 4.5,Sonnet 4.5,GPT-5.1,Haiku 4.5,DeepSeek v3.2,GPT-5 mini,Gemini 2.5 Flash
