@@ -71,7 +71,7 @@ RUN chmod +x /usr/local/bin/entrypoint
 
 # Python依存関係をインストール
 COPY docker/requirements.txt .
-RUN pip install -r requirements.txt
+RUN pip install --upgrade pip && pip install -r requirements.txt
 
 # LLM設定用スクリプトをコピー
 COPY docker/scripts/llm_config.sh /usr/local/bin/llm_config
