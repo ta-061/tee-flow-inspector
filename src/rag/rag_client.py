@@ -12,7 +12,7 @@ from datetime import datetime
 import os
 import re
 
-from langchain.schema import Document
+from langchain_core.documents import Document
 
 from .document_loader import TEEDocumentLoader
 from .text_processor import TEETextProcessor

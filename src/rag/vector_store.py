@@ -19,7 +19,7 @@ except ImportError:
     from langchain_community.embeddings import HuggingFaceEmbeddings
     
 from langchain_community.vectorstores import FAISS, Chroma
-from langchain.schema import Document
+from langchain_core.documents import Document
 import numpy as np
 
 def sanitize_metadata_for_chroma(metadata: Dict[str, Any]) -> Dict[str, Any]:

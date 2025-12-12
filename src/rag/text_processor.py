@@ -7,8 +7,8 @@ ChromaDB対応のメタデータ正規化を含む
 
 from typing import List, Dict, Any, Optional, Tuple
 import re
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
 
 def sanitize_metadata_for_chroma(metadata: Dict[str, Any]) -> Dict[str, Any]:
     """
