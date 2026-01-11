@@ -1,0 +1,22 @@
+checkpoint_id,function,line,var,role,origin,note
+EP,TA_InvokeCommandEntryPoint,500,param_types,source,REE,NW から渡される型情報 (TEE_InvokeCommand の第1引数)
+EP,TA_InvokeCommandEntryPoint,500,params[0..3],source,REE,"NW から渡される値パラメータ・メモリ参照 (size, buffer など)"
+
+output_entry,output,158,param_types,propagated,REE,TA_InvokeCommandEntryPoint からそのまま渡される
+output_entry,output,158,params[0..3],propagated,REE,params[*].value.* / memref.size / memref.buffer はすべてテイント
+output_entry,output,175,params[1].memref.buffer,propagated,REE,REE 側と共有される出力バッファ
+output_entry,output,176,params[2].memref.buffer,propagated,REE,REE 側と共有されるログ用バッファ
+
+produce_entry,produce,129,params[0..3],propagated,REE,output からそのまま渡される
+produce_entry,produce,136,params[1].memref.buffer,propagated,REE,produce 内で key1 をコピーする出力バッファ
+
+produce_2_entry,produce_2,109,params[0..3],propagated,REE,produce からそのまま渡される
+produce_2_entry,produce_2,112,key2,secret_source,TA,produce_2 内の機密キー (bad partitioning 1 のソース)
+
+sink_memmove_116,produce_2,116,dest=params[1].memref.buffer,sink_arg,REE,機密 key2 がこのバッファにコピーされ NW に露出
+sink_memmove_116,produce_2,116,src=key2,sink_arg,TA,TA 内部秘密 (key2) が出力先に流入
+sink_memmove_116,produce_2,116,len=strlen(key2),sink_arg,TA,コピー長は定数文字列の長さ (サイズ値としてはREE 非依存)
+
+sink_snprintf_125,produce_2,124,key2 (after enc),propagated,TA,enc(key2) によって暗号化された key2 (機密テイントは除去されている扱い)
+sink_snprintf_125,produce_2,125,dest=params[2].memref.buffer,sink_arg,REE,暗号化済み key2 が書き込まれるログバッファ
+sink_snprintf_125,produce_2,125,size=params[2].memref.size,propagated,REE,ログバッファサイズは REE 制御 (サイズテイント)

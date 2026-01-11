@@ -1,198 +1,223 @@
-# OP-TEE TA LLMベース・テイント解析 — README（暫定 / Phase0–4 まで）
+# OP‑TEE TA LLMベース・テイント解析システム
 
-> 本READMEは **Phase5以降（テイント解析・LLM/RAGの詳細・レポート生成）** にも継ぎ足していく前提のドラフトです。LLMやRAGの細かな仕様は、後日 **`docs/LLM.md`**、**`docs/RAG.md`** に分離予定です。
+OP‑TEEの**Trusted Application (TA)** を対象に、LLM・RAG・ルール（DITING/CodeQL）を組み合わせて **シンク特定→候補フロー抽出→テイント解析→HTMLレポート生成** までを自動化する研究用ツールです。
 
----
+* 解析対象: C言語ベースの TA（`ta/` 配下）
+* 目的: TA内の**危険シンク**に至るデータフローをLLMで精査し、**脆弱性候補**と根拠（コード抜粋・推論過程）を提示
+* 付帯機能: RAG（OP‑TEE/TEE関連ドキュメントの近傍検索）、LLMプロバイダ切替、トークン計測、接頭辞キャッシュ
 
-## 目的
+詳細設計は [Documents](Document/) を参照:
 
-このリポジトリは、**OP-TEE の TA（Trusted Application）** を対象に、
-
-* ルール（DITING/CodeQL 由来）と
-* **LLM 補助のテイント解析**（必要に応じて RAG を併用）
-
-を組み合わせて、**危険なデータフロー**と**脆弱性**を自動発見・要約する研究ツールです。
-
----
-
-## 全体フロー（鳥瞰図）
-
-解析は概ね次のフェーズで構成されます（`src/main.py` が一括ドライバ）。
-
-1. **前処理（Phase0）**: `compile_commands.json` を確保。
-
-   * 既存ビルド or `bear` で生成。失敗時は **ダミーDB** を生成して後段を止めない。
-2. **フェーズ1–2**: 関数/マクロの抽出・分類。
-
-   * **プロジェクト内で定義**された関数（ユーザ定義）と、**外部宣言/マクロ**を振り分け。
-3. **フェーズ3（シンク特定と文脈収集）**:
-
-   * 3.1: ルール/LLM で特定した **シンク関数の呼び出し箇所**を抽出。
-   * 3.2: **呼び出しグラフ**（caller/callee + 定義/呼び出し位置）生成。
-   * 3.3: シンク地点（VD）ごとに **関数間データフローを追跡**し、**関数列チェーン**を構築。
-   * 3.7: シンク呼び出し情報とチェーンをマージ。
-4. **フェーズ4（候補フロー生成：CDF）**:
-
-   * **ソース関数**（TAのエントリポイント等）を起点とする**有効サフィックス**のみを抽出。
-   * 重複除去・サブチェーン除去・**`param_indices` の統合**により最小集合へ圧縮。
-5. **フェーズ5（予定）**: CDF を入力に **LLM/RAG + ルール** でテイント解析・脆弱性判定。
-6. **フェーズ6（予定）**: **HTMLレポート**生成（要約・スコア・根拠断片の提示）。
-
-> **用語**: VD (Vulnerable Destination)… シンクの発生位置（`{file, line, sink, param_index}`）。CDF (Candidate Dangerous Flow)… ソース→…→シンクの関数列候補。
+* [System_README.md](Document/System_README.md) … 各フェーズの内部処理・入出力契約・フロー
+* [RAG.md](Document/RAG.md) … RAG のインデックス構築・検索戦略・コンテキスト生成
+* [LLM.md](Document/LLM.md) … LLM設定レイヤ（CLI/プログラム利用/エラーハンドリング）
 
 ---
 
-## 前提・依存関係
+## アーキテクチャ概要（End‑to‑End）
 
-* **Python 3.10+**
-* **libclang**（Python バインディング）
-* **bear**（可能なら）… `compile_commands.json` 生成に利用
-* **OP‑TEE Dev Kit**（インクルード解決用）：`TA_DEV_KIT_DIR` を指しておくと安定します
-* （任意）**Docker**: `docker/` 内にベース環境と LLM 設定の雛形があります
+```mermaid
+flowchart LR
+    A["開始"] --> B["プロジェクト検証<br/>ta/ディレクトリ確認"]
+    B --> C["依存関係クリーンアップ<br/>clean_project_dependencies<br/>.d, .oファイル削除"]
+    
+    C --> D["Phase 0: DB構築<br/>ensure_ta_db<br/>build.py"]
+    
+    D --> E["Phase 1-2: 関数分類<br/>classify_functions<br/>classify/classifier.py<br/>→phase12.json"]
+    
+    E --> F["Phase 3: シンク特定<br/>identify_sinks.py<br/>--llm-only オプション<br/>→sinks.json"]
+    
+    F --> G["Phase 4: 統合版候補フロー生成<br/>generate_candidate_flows.py<br/>旧Phase3.1～3.4を統合<br/>→candidate_flows.json"]
+    
+    G --> H["Phase 5: テイント解析<br/>taint_analyzer.py<br/>脆弱性検査<br/>→vulnerabilities.json"]
+    
+    H --> I["Phase 6: レポート生成<br/>generate_report.py<br/>→vulnerability_report.html"]
+    
+    I --> J["実行時間記録<br/>time.txt生成"]
+    
+    J --> K["完了"]
 
-> 解析中に `parse_sources_unified` が **インクルードパス診断**（✓/✗）を出力するので、失敗時の手がかりになります。
-
----
-
-## クイックスタート
-
-### 1) 環境変数の設定（推奨）
-
-```bash
-export TA_DEV_KIT_DIR=/path/to/export-ta_<version>
+    style A fill:#e1f5e1
+    style K fill:#e1f5e1
+    style D fill:#fff3cd
+    style E fill:#fff3cd
+    style F fill:#fff3cd
+    style G fill:#fff3cd
+    style H fill:#fff3cd
+    style I fill:#fff3cd
 ```
 
-### 2) 単一プロジェクトを解析（既定: Hybrid / No RAG）
+### 主な出力
 
-```bash
-python src/main.py -p /path/to/project --verbose
-```
-
-### 3) モードのバリエーション
-
-* **Hybrid + RAG**: `--rag`
-* **LLM-only**: `--llm-only`（DITINGルール無効）
-* **LLM-only + RAG**: `--llm-only --rag`
-* **トークン追跡オフ**: `--no-track-tokens`
-* **事前クリーンをスキップ**: `--skip-clean`
-* **.d/.o を広く掃除**: `--clean-all`
-
-### 4) 出力（`ta/results/` 配下）※ファイル名は TA ディレクトリ名に依存
-
-* `*_phase12.json`（Phase1–2 の分類結果）
+* `*_phase12.json`（ユーザ定義/外部宣言）
 * `*_sinks.json`（シンク集合）
-* `*_vulnerable_destinations.json`（VD 群）
-* `*_call_graph.json`（呼び出しグラフ）
-* `*_chains.json`（関数列チェーン）
-* `*_candidate_flows.json`（CDF；Phase4）
-* （予定）`*_vulnerabilities.json`（脆弱性）
-* （予定）`*_vulnerability_report.html`（レポート）
+* `*_vulnerable_destinations.json`（VD；最終はチェーン付）
+* `*_call_graph.json` / `*_chains.json`
+* `*_candidate_flows.json`（ソース起点の最小候補フロー）
+* `*_vulnerabilities.json`（脆弱性候補＋統計／途中Findings）
+* `*_vulnerability_report.html`（ダッシュボード型レポート）
 
 ---
 
-## 各フェーズの詳細（Phase0–4）
+## かんたん実行フロー（Quick Run）
 
-### Phase0: `compile_commands.json` の確保
+> **Docker利用を推奨**（依存は `docker/requirements.txt` に集約）。ローカル実行や詳細なLLM/RAG運用は `Document/LLM.md`, `Document/RAG.md` を参照。
 
-* 可能なら `build.sh` / `Makefile` / `ta/Makefile` / `CMakeLists.txt` を `bear` 経由で実行し、`compile_commands.json` を収集。
-* 失敗/空の場合は **ダミーDB** を生成（`ta/**/*.c` を走査して引数を合成）。
-* `ta/` 配下に限定したエントリのみ抽出して保存（`ta/compile_commands.json`）。
-* 実行前に、古い `.d`（依存）/`.o` をクリーニング（不要なツールチェーンパスを含むもの等）。
-
-### Phase1–2: 関数&マクロの抽出・分類
-
-* libclang AST から **関数宣言/定義** と **マクロ** を抽出。
-* **プロジェクト内の定義**はユーザ定義関数として収集。一方、
-
-  * 宣言のみ、あるいは外部で定義されプロジェクト内で定義されない関数は **外部宣言** として整理。
-* `static` 関数は **ファイルパス併用キー** で判別（重複排除/同名対応）。
-
-### Phase3: シンク特定〜チェーン生成
-
-**3.1: シンク呼び出し抽出**
-
-* ルール/LLM で得た `sinks.json` を読み、**各シンクの `param_index`** を展開。
-* `parse_sources_unified` + `find_function_calls` で **呼び出し位置**を列挙し、重複排除。
-
-**3.2: 呼び出しグラフ生成**
-
-* `caller/callee` に加え、**caller の定義位置**と **呼び出し位置**（ファイル/行）を保持。
-* エッジ重複を除去し、関数定義辞書も併置。
-
-**3.3: 関数列チェーン（データ依存考慮）**
-
-* VD を含む関数を検出し、**シンク引数に影響するパラメータ**を逆方向データフローで推定。
-* 呼び出しグラフを **被呼→呼出** のインデックス化で辿り、**エントリへ向かうチェーン**を構築。
-* チェーン末尾には **シンク関数名**を付与。重複チェーンは集合化。
-* 完全版/簡易版の切替（フォールバック）に対応。
-
-**3.7: シンク呼び出しとチェーンのマージ**
-
-* `*_chains.json` を読み、**同一VDキー**（`file,line,sink,param_index`）でチェーンを合体。
-
-### Phase4: CDF（候補フロー）生成
-
-* 入力: `*_chains.json`（VDごとの関数列）
-* オプション: `--sources "TA_InvokeCommandEntryPoint;TA_OpenSessionEntryPoint"` のように **ソース関数**を指定（セミコロン区切り推奨）。
-* 処理ステップ:
-
-  1. 各チェーンの**最初に現れるソース**から末尾までの **サフィックス**を CDF として抽出。
-  2. 同一 **(file,line,sink,param\_index,source\_func)** 群では **最長サフィックス**のみ採用。
-  3. 同一VD内で他CDFの**サブシーケンス**になっているチェーンを削除。
-  4. **`param_indices` を統合**（同じ脆弱性を表す複数 `param_index` をまとめる）。
-* 出力: `*_candidate_flows.json`
-
-**実行例**
+1. **コンテナ準備**（必要なら）
 
 ```bash
-python src/identify_flows/generate_candidate_flows.py \
-  --chains ta/results/<TA>_chains.json \
-  --sources "TA_InvokeCommandEntryPoint;TA_OpenSessionEntryPoint" \
-  --output ta/results/<TA>_candidate_flows.json \
-  --debug
+chmod +x docker/entrypoint.sh
+# （環境により）docker compose -f .devcontainer/docker-compose.yml build
+```
+
+2. **LLM初期設定（ラッパスクリプト）**
+
+```bash
+# 設定ガイド表示 → APIキー設定 → 接続テスト
+llm-setup
+llm_config status
+llm_config configure openai
+llm_config test
+```
+
+3. **解析実行（例: 単体/一括）**
+
+```bash
+# 単体
+python3 ./src/main.py -p benchmark/acipher --verbose
+
+# 一括（ログも保存）
+python3 ./src/main.py \
+  -p benchmark/acipher \
+  -p benchmark/aes \
+  -p benchmark/hotp \
+  -p benchmark/random \
+  -p benchmark/secure_storage \
+  -p benchmark/secvideo_demo \
+  -p benchmark/optee-fiovb \
+  -p benchmark/optee-sdp \
+  -p benchmark/Lenet5_in_OPTEE \
+  --verbose 2>&1 | tee log.txt
+```
+
+> 解析完了後、`<TA>/ta/results/` にフェーズ毎の成果物、`*_vulnerability_report.html` が出力されます。LLM対話ログは `llm_logs/` に保持されます。
+
+---
+
+## 実行環境 / Docker イメージ（最小仕様）
+
+> 解析の再現性に関わる **OS / ツールチェーン / LLM 周辺**の前提。実体は `docker/` 配下（`Dockerfile`, `requirements.txt`, `scripts/`）に準拠。
+
+* **ベース**: Ubuntu 22.04（multi-arch; `--platform=${TARGETPLATFORM}`）
+* **LLVM/Clang**: LLVM 18（`clang-18`, `clang-tools-18`, `llvm-18-dev`, `lld-18`, `libclang-18-dev`, `python3-clang-18`）
+
+  * 互換リンク: `/usr/lib/llvm-18/lib/libclang.so` を作成
+  * `LD_LIBRARY_PATH=/usr/lib/llvm-18/lib:$LD_LIBRARY_PATH`
+* **交差コンパイル**: `gcc-arm-linux-gnueabihf`, `g++-arm-linux-gnueabihf`, `binutils-arm-linux-gnueabihf`, `libc6-dev-armhf-cross`, `libstdc++-11-dev-armhf-cross`
+
+  * `TA_DEV_KIT_DIR=/workspace/optee_os/out/arm/export-ta_arm32`
+  * `CROSS_COMPILE=arm-linux-gnueabihf-`, `CC=${CROSS_COMPILE}gcc`
+* **ビルド支援**: `cmake`, `bear`, `pkg-config`
+* **Python**: system Python3（`python-is-python3`）+ `pip`
+  代表的 pip 依存（`docker/requirements.txt`）:
+  `openai`, `anthropic`, `google-generativeai`, `ollama`, `langchain`, `langchain-community`, `chromadb`, `faiss-cpu`, `sentence-transformers`,
+  `PyPDF2`, `pdfplumber`, `tiktoken`, `pandas`, `openpyxl`, `xlsxwriter`
+  （ベース追加で `llvmlite`, `networkx` も導入）
+* **作業ディレクトリ**: `/workspace`（`PYTHONPATH=/workspace/src:$PYTHONPATH` を設定）
+* **エントリポイント**: `/usr/local/bin/entrypoint`
+
+  * VS Code ラッパが付ける余計な引数を除去し、**引数なし時は待機**（`sleep infinity`）
+* **LLM 操作用ラッパ**: `/usr/local/bin/llm_config`, `/usr/local/bin/llm_setup`
+
+  * 内部で `python -m llm_settings.llm_cli` を呼び出し
+* **ネットワーク前提**: 外部 LLM（OpenAI/Anthropic 等）を使う場合は**アウトバウンド通信**が必要。ローカル LLM（Ollama）は \`\`（コンテナ内）を想定。
+
+### 主要な環境変数
+
+* `TA_DEV_KIT_DIR=/workspace/optee_os/out/arm/export-ta_arm32`
+* `CROSS_COMPILE=arm-linux-gnueabihf-`, `CC=${CROSS_COMPILE}gcc`
+* `PYTHONPATH=/workspace/src:$PYTHONPATH`
+* `LD_LIBRARY_PATH=/usr/lib/llvm-18/lib:$LD_LIBRARY_PATH`
+
+### 備考
+
+* **Phase0** では `bear` を利用して `compile_commands.json` を生成します（`src/build.py`）。
+* RAG は既定で **CPU 推論**（`faiss-cpu`/`chromadb`、埋め込みは `sentence-transformers/all-MiniLM-L6-v2`）。GPU を使う場合は別途設定が必要です。
+
+---
+
+## LLM / RAG 概要
+
+### LLM設定レイヤ（`src/llm_settings/`）
+
+* **CLI**: `llm_config status|set|configure|test|export|import|migrate`
+* **プロバイダ**: OpenAI / Claude / DeepSeek / Local(Ollama) / OpenRouter / Gemini
+* **リトライ&診断**: 連続呼出しの最短間隔、指数バックオフ、空応答診断、詳細ログ
+* **プログラム利用**: `UnifiedLLMClient.chat_completion(messages)`／OpenAI互換ラッパ
+
+> 詳細は `Document/LLM.md` を参照（プロバイダごとの差異、システムメッセージの扱い、移行スクリプト など）。
+
+### RAG（任意）
+
+* **文書**: `src/rag/documents/`（例: GlobalPlatform/TEE API 仕様）
+* **ストア**: Chroma（既定）/ FAISS、埋め込み: `all‑MiniLM‑L6‑v2`
+* **用途**: Phase3のシンク同定、Phase5のテイント解析に **根拠片** を添付
+
+> 詳細は `Document/RAG.md` を参照（インデックス構築、検索/再ランク、LLMコンテキスト生成）。
+
+\--
+
+## 出力ディレクトリ（例）
+
+```
+<TA>/ta/results/
+├── <TA>_phase12.json
+├── <TA>_sinks.json
+├── <TA>_vulnerable_destinations.json
+├── <TA>_call_graph.json
+├── <TA>_chains.json
+├── <TA>_candidate_flows.json
+├── <TA>_vulnerabilities.json
+├── <TA>_vulnerability_report.html
+├── prompts_and_responses.txt      # Phase3 LLMログ（環境により）
+└── taint_analysis_log.txt         # Phase5/6 LLMログ
 ```
 
 ---
 
-## LLM / RAG / ルールエンジン（予告・別ドキュメント）
+## ディレクトリ構成（要点）
 
-* **LLM**: プロンプト設計、リトライ/エラーハンドリング、トークン追跡、システム/ユーザプロンプトテンプレート
-* **RAG**: OP‑TEE API 仕様 PDF をベクトル化し、外部知識として根拠提示
-* **ルールエンジン**: DITING/CodeQL 由来のシンク定義とパターンマッチの統合
-
-> これらは `docs/LLM.md` / `docs/RAG.md` / `docs/Rules.md` へ分離予定。README からリンクします。
-
----
-
-## トラブルシュート
-
-* **libclang のパース失敗**: `TA_DEV_KIT_DIR` を設定、`include` の存在確認（解析ログの ✓/✗ を参照）。
-* **`compile_commands.json` が生成されない**: `bear` の導入、`make -C ta` など最小コマンドを追加。最終手段として **ダミーDB** が生成されます。
-* **結果が空/少ない**: `--verbose` で解析ログを確認。ソース関数指定（Phase4 `--sources`）を見直し。
+* `src/build.py` … 事前処理（TA限定 `compile_commands.json` 生成）
+* `src/classify/` … Phase1–2（関数/マクロ抽出・分類）
+* `src/identify_sinks/` … Phase3（シンク同定）
+* `src/identify_flows/` … Phase4（呼出抽出→グラフ→チェーン→VD結合→ソース起点の候補フロー最小化）
+* `src/analyze_vulnerabilities/` … Phase5（LLMテイント解析・判定）
+* `src/report/` … Phase6（HTMLレポート）
+* `src/rag/` … RAG（ドキュメント→チャンク→ベクトル化→検索）
+* `rules/` … DITING/CodeQLルール、生成シンク定義
+* `prompts/` … LLMプロンプト（Hybrid/LLM-only × with/without RAG）
+* `docker/` … Dockerfile・依存・ラッパスクリプト（`llm-setup`/`llm_config`）
+* `Document/` … 詳細設計（System/RAG/LLM）
 
 ---
 
-## ディレクトリ概要
+## トラブルシューティング（抜粋）
 
-* `src/build.py` … DB 生成/クリーニング
-* `src/classify/` … 関数/マクロ抽出と分類（Phase1–2）
-* `src/identify_sinks/` … シンク判定・呼び出し位置抽出・呼び出しグラフ・チェーン生成（Phase3）
-* `src/identify_flows/` … CDF 生成（Phase4）
-* `src/analyze_vulnerabilities/` … テイント解析・脆弱性検査（Phase5, 予定）
-* `src/report/` … HTML レポート（Phase6, 予定）
-* `src/rag/` … ドキュメントロード/ベクトルストア/リトリーバ（別docs 予定）
-* `rules/` … DITING/CodeQL ルール、生成済みシンク定義
-* `prompts/` … LLM 用プロンプト集（LLM/RAG で利用）
+* **APIキー/接続エラー**: `llm_config configure <provider>` → `llm_config test`
+* **Rate Limit**: 連続実行間隔・リトライ設定を見直し（プロバイダ設定参照）
+* **RAGエラー**: `src/rag/vector_stores/` を再構築、メタデータ型（文字列/数値）を確認
+* **解析が進まない**: `ta/compile_commands.json` の有無、`ta` 以下の `.d`/`.o` を掃除（`src/build.py`）
 
 ---
 
-## 今後のTODO（README拡張点）
+## 参考: 実行上のヒント
 
-* [ ] Phase5 の入出力スキーマと判定ロジックの要約
-* [ ] LLM/RAG の設定フラグ、プロンプト、RAG コーパスの管理方法
-* [ ] 代表的な検出例（OP‑TEE API まわり）の載せ方
-* [ ] CI 用の最小サンプル（小さな TA）
+* **接頭辞キャッシュ**で同一チェーン接頭部の再計算を回避（高速化）
+* **`--no-rag`********/************\*\*\*\*****\*\*\*\*`--no-diting-rules`** で LLMのみ／Hybrid を切替（Phase5）
+* **`--sources`**（Phase4）で起点関数を調整（例: `TA_InvokeCommandEntryPoint,TA_OpenSessionEntryPoint`）
 
 ---
 
-**Maintainers**: （共同研究メンバー記入予定）
+本READMEは研究開発の進捗に合わせて更新します。運用・発展的な話題（評価指標、検知サンプル集、CI連携）は別紙として追加予定です。
+
+

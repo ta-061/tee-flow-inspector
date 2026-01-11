@@ -1,0 +1,35 @@
+checkpoint_id,function,line,var,role,origin,note
+EP,TA_InvokeCommandEntryPoint,500,param_types,source,REE,コマンド種別とパラメータ型
+EP,TA_InvokeCommandEntryPoint,500,params[0].value.a,source,REE,サイズパラメータ (配列長など) - IVW の主要サイズテイント
+EP,TA_InvokeCommandEntryPoint,500,params[1].memref.size,source,REE,第2引数バッファのサイズ (IVW で b に伝播)
+EP,TA_InvokeCommandEntryPoint,500,params[2].memref.size,source,REE,第3引数バッファのサイズ (IVW で size2 に伝播)
+EP,TA_InvokeCommandEntryPoint,500,params[3].memref.size,source,REE,第4引数バッファのサイズ (IVW で size3 に伝播)
+EP,TA_InvokeCommandEntryPoint,500,params[2].memref.buffer / params[3].memref.buffer,source,REE,コピー元・コピー先バッファ
+
+input_entry,input,267,param_types,propagated,REE,エントリポイントからそのまま
+input_entry,input,267,params[0].value.a,propagated,REE,TEE_Malloc(params[0].value.a) のサイズなどに使用
+input_entry,input,267,params[1].memref.size,propagated,REE,TEE_Malloc(params[1].memref.size) 等に使用
+input_entry,input,267,params[2].memref.size,propagated,REE,ループ上限や memmove サイズに使用
+input_entry,input,267,params[3].memref.size,propagated,REE,memmove サイズやインデックスに使用
+
+before_produce_i0_call,input,311,a=params[0].value.a,propagated,REE,produce_i0 第1引数: サイズテイント
+before_produce_i0_call,input,311,b=params[1].memref.size,propagated,REE,produce_i0 第2引数: サイズテイント
+before_produce_i0_call,input,311,buf2=params[2].memref.buffer,propagated,REE,コピー対象バッファ
+before_produce_i0_call,input,311,size2=params[2].memref.size,propagated,REE,コピーサイズ
+before_produce_i0_call,input,311,buf3=params[3].memref.buffer,propagated,REE,コピー源バッファ
+before_produce_i0_call,input,311,size3=params[3].memref.size,propagated,REE,コピーサイズ
+
+produce_i0_entry,produce_i0,215,a,propagated,REE,params[0].value.a 由来のサイズテイント
+produce_i0_entry,produce_i0,215,b,propagated,REE,params[1].memref.size 由来
+produce_i0_entry,produce_i0,215,buf2,propagated,REE,params[2].memref.buffer 由来
+produce_i0_entry,produce_i0,215,size2,propagated,REE,params[2].memref.size 由来
+produce_i0_entry,produce_i0,215,buf3,propagated,REE,params[3].memref.buffer 由来
+produce_i0_entry,produce_i0,215,size3,propagated,REE,params[3].memref.size 由来
+
+sink_malloc_220,produce_i0,220,size=a,sink_arg,REE,"TEE_Malloc(a, 0) のサイズ引数が REE 制御 (境界チェック無し)"
+sink_malloc_220,produce_i0,220,arr_a,result,TA,arr_a が a バイト確保される (OOB の潜在的起点)
+
+memmove_227,produce_i0,227,size=size3,sink_arg,REE,"最初の TEE_MemMove(str, buf3, size3) (行233のチェックより前)"
+memmove_238,produce_i0,238,size=size2,sink_arg,REE,"TEE_MemMove(str, buf2, size2)"
+sink_memmove_239,produce_i0,239,size=size3,sink_arg,REE,"2回目の TEE_MemMove(str, buf3, size3) (size3>1000 チェックの後)"
+sink_memmove_239,produce_i0,239,src=buf3,sink_arg,REE,REE 由来のバッファ内容

@@ -1,0 +1,25 @@
+checkpoint_id,function,line,var,role,origin,note
+EP,TA_InvokeCommandEntryPoint,500,param_types,source,REE,コマンド・パラメータ型
+EP,TA_InvokeCommandEntryPoint,500,params[0].memref.buffer,source,REE,共有メモリ上のデータ (攻撃者が変更可能)
+EP,TA_InvokeCommandEntryPoint,500,params[0].memref.size,source,REE,共有メモリのサイズ (sz に伝播)
+
+shared_memory_entry,shared_memory,411,param_types,propagated,REE,エントリポイントからそのまま
+shared_memory_entry,shared_memory,423,buf=params[0].memref.buffer,propagated,REE,共有メモリのポインタ
+shared_memory_entry,shared_memory,424,sz=params[0].memref.size,propagated,REE,共有メモリのサイズ
+
+shared_memory_checks,shared_memory,425,buf,propagated,REE,複数の strcmp/TEE_MemCompare で内容検査 (sanitizer 候補)
+shared_memory_checks,shared_memory,476,sz,propagated,REE,if (sz > 1000) ... のサイズチェック対象
+
+before_produce_s_call,shared_memory,472,buf,propagated,REE,"produce_s(buf, sz) に渡される引数"
+before_produce_s_call,shared_memory,472,sz,propagated,REE,同上
+
+produce_s_entry,produce_s,332,buf,propagated,REE,shared_memory から渡された共有メモリ
+produce_s_entry,produce_s,332,size,propagated,REE,共有メモリサイズ
+
+sink_strcmp_334,produce_s,334,buf,sink_arg,REE,"if (strcmp(\""123456\"," buf) == 0) の比較対象。DUS の文脈では 'サニタイザ (内容検査)' とみなす"""
+
+after_strcmp,produce_s,338,buf,propagated,REE,dec(buf) による内容の再書き換え後もテイントを保持
+
+sink_memmove_350,produce_s,350,src=buf,sink_arg,REE,"TEE_MemMove(str, buf, size); のコピー元。共有メモリからの読み出し"
+sink_memmove_350,produce_s,350,size,size,sink_arg,REE,TEE_MemMove の長さ引数。sz 由来
+sink_memmove_350,produce_s,350,dest=str,propagated,TA,ローカルバッファ str に共有メモリの内容がコピーされる
