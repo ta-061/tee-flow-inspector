@@ -208,21 +208,6 @@ tee-flow-inspector/
 
 ---
 
-## 引用
-
-本システムを研究で使用する場合は、以下の論文を引用してください:
-
-```bibtex
-@inproceedings{yoshinaga2026tee,
-  title={テイント解析とLLMの文脈理解に基づくTrusted Applicationの脆弱性検出手法の提案と評価},
-  author={吉永 達哉 and 依田 みなみ and 松野 裕},
-  booktitle={2026 Symposium on Cryptography and Information Security (SCIS 2026)},
-  year={2026},
-  organization={IEICE}
-}
-```
-
----
 
 ## ライセンス
 
@@ -246,3 +231,4 @@ tee-flow-inspector/
 ## 補足: 旧READMEについて
 
 より詳細なシステム説明（Docker構成、環境変数、トラブルシューティング等）は [tmpREADME.md](tmpREADME.md) を参照してください。
+
