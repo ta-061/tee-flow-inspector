@@ -1,0 +1,529 @@
+{
+  "analysis_date": "2026-02-18T09:21:54.723960",
+  "analysis_time_seconds": 334.3958475589752,
+  "analysis_time_formatted": "5.6 minutes",
+  "llm_provider": "openai",
+  "analysis_mode": "hybrid",
+  "rag_enabled": false,
+  "statistics": {
+    "total_flows_analyzed": 2,
+    "flows_with_vulnerabilities": 2,
+    "total_vulnerability_lines": 2,
+    "total_structural_risk_lines": 7,
+    "total_detections_before_consolidation": 10,
+    "total_lines_after_consolidation": 9,
+    "consolidation_rate": "10.0%",
+    "severity_distribution": {
+      "critical": 0,
+      "high": 1,
+      "medium": 1,
+      "low": 0
+    },
+    "cwe_distribution": {
+      "CWE-125": 1,
+      "CWE-200": 1
+    },
+    "rule_distribution": {
+      "other": 7,
+      "unencrypted_output": 1
+    },
+    "execution_time_seconds": 334.3958475589752,
+    "llm_calls": 8,
+    "cache_hits": 1,
+    "cache_partial_hits": 1,
+    "cache_misses": 1,
+    "cache_hit_rate": "50.0%",
+    "token_usage": {},
+    "retries": 0,
+    "retry_successes": 0
+  },
+  "total_vulnerability_lines": 2,
+  "vulnerabilities": [
+    {
+      "vulnerability_id": "VULN-0001",
+      "file": "/workspace/benchmark/teesec-heap-ta/ta/heap_ta.c",
+      "line": 103,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "medium",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-125",
+      "functions": [
+        "memdup"
+      ],
+      "sink_functions": [
+        "memcpy"
+      ],
+      "vulnerability_types": [
+        "CWE-125"
+      ],
+      "rule_ids": [
+        "weak_input_validation"
+      ],
+      "descriptions": [
+        "memcpy reads size bytes from REE-visible src using an unvalidated size derived from REE input, risking an out-of-bounds read of the shared buffer."
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "call_open_session",
+          "memdup",
+          "memcpy"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "params[0].memref.size provided by REE in call_open_session",
+          "propagation_path": [
+            "params[0].memref.size -> usernameLen @ /workspace/benchmark/teesec-heap-ta/ta/heap_ta.c:144",
+            "usernameLen -> size (arg) @ /workspace/benchmark/teesec-heap-ta/ta/heap_ta.c:145 (call to memdup)",
+            "size -> n (arg) @ unknown:0 (memcpy signature)",
+            "mem -> src (arg from params[0].memref.buffer) @ /workspace/benchmark/teesec-heap-ta/ta/heap_ta.c:145 and unknown:0",
+            "memcpy(out, mem, size) copies size bytes from REE-visible src into TEE-private dst @ /workspace/benchmark/teesec-heap-ta/ta/heap_ta.c:103"
+          ],
+          "sink": "memcpy at line 103 uses REE-controlled size to read from REE-visible src without validating source bounds"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker controls params[0].memref.buffer and params[0].memref.size in Normal World.",
+            "Underlying REE-shared buffer may be smaller than the provided size value."
+          ],
+          "attack_scenario": "A malicious REE client supplies a memref buffer of limited size but sets params[0].memref.size to a much larger value, causing memcpy in memdup to read past the end of the shared buffer when copying into TEE-private memory.",
+          "impact": "Out-of-bounds read on a shared buffer, potentially causing TEE faults or undefined behavior and enabling denial of service or information disclosure about adjacent memory regions."
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "bounds_check",
+          "location": "memdup:98",
+          "recommendation": "Validate that the requested copy size is within the actual bounds of the source buffer before calling memcpy, or enforce a maximum allowed size."
+        },
+        {
+          "type": "range_check",
+          "location": "call_open_session:144",
+          "recommendation": "Constrain usernameLen derived from params[0].memref.size to a safe upper bound before using it for allocation and copying."
+        }
+      ],
+      "decision_rationales": [
+        "The memcpy at line 103 uses a REE-controlled size to read from a REE-visible buffer without any validation of the source bounds in the TEE, which constitutes a classic out-of-bounds read risk prioritized as a memory-safety issue."
+      ],
+      "severity_distribution": {
+        "medium": 1
+      },
+      "rule_distribution": {
+        "weak_input_validation": 1
+      }
+    },
+    {
+      "vulnerability_id": "VULN-0002",
+      "file": "/workspace/benchmark/teesec-heap-ta/ta/heap_ta.c",
+      "line": 240,
+      "consolidated": true,
+      "detection_count": 1,
+      "severity": "high",
+      "confidence_level": "high",
+      "primary_vulnerability_type": "CWE-200",
+      "functions": [
+        "call_tell_me"
+      ],
+      "sink_functions": [
+        "memcpy"
+      ],
+      "vulnerability_types": [
+        "CWE-200"
+      ],
+      "rule_ids": [
+        "unencrypted_output"
+      ],
+      "descriptions": [
+        "memcpy copies TA-private SECRET directly into a REE-visible MEMREF_OUTPUT buffer, exposing the secret to the Normal World."
+      ],
+      "chains": [
+        [
+          "TA_InvokeCommandEntryPoint",
+          "call_tell_me",
+          "memcpy"
+        ]
+      ],
+      "taint_flow_summaries": [
+        {
+          "source": "TA-private constant SECRET treated as sensitive data within the TA",
+          "propagation_path": [
+            "SECRET (TEE-private global/constant) -> memcpy(src=SECRET, dst=params[1].memref.buffer, n=strlen(SECRET)+1) @ /workspace/benchmark/teesec-heap-ta/ta/heap_ta.c:240"
+          ],
+          "sink": "Plaintext SECRET is written to REE-shared buffer params[1].memref.buffer via memcpy at line 240"
+        }
+      ],
+      "exploitation_analyses": [
+        {
+          "preconditions": [
+            "Attacker can invoke TA command TA_HEAP_CMD_TELL_ME with a valid, logged-in session and provide a MEMREF_OUTPUT buffer for params[1]"
+          ],
+          "attack_scenario": "A malicious REE client establishes or hijacks a valid session, calls TA_HEAP_CMD_TELL_ME, and receives the SECRET string in its provided shared-memory buffer.",
+          "impact": "Disclosure of a TA-internal secret value to the Normal World, potentially breaking authentication or integrity assumptions tied to that secret."
+        }
+      ],
+      "missing_mitigations": [
+        {
+          "type": "encryption",
+          "location": "call_tell_me:240",
+          "recommendation": "Avoid returning SECRET directly; if it must cross the boundary, encrypt or otherwise transform it so REE cannot learn the raw value."
+        },
+        {
+          "type": "access_control",
+          "location": "call_tell_me:231",
+          "recommendation": "Reassess whether any external caller, even with a logged-in session, should be allowed to read SECRET; enforce stricter authorization or never export it."
+        }
+      ],
+      "decision_rationales": [
+        "The code deliberately copies a TA-private SECRET string into a REE-visible MEMREF_OUTPUT buffer using memcpy after only size and session-validity checks; there is no encryption or masking, so this constitutes a clear confidential information exposure (CWE-200) rather than a memory-safety bug."
+      ],
+      "severity_distribution": {
+        "high": 1
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1
+      }
+    }
+  ],
+  "total_finding_lines": 7,
+  "structural_risks": [
+    {
+      "finding_id": "RISK-0001",
+      "file": "/workspace/benchmark/teesec-heap-ta/ta/heap_ta.c",
+      "line": 103,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "memdup",
+        "memcpy"
+      ],
+      "sink_functions": [
+        "memcpy",
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Untrusted size controls memcpy from REE-visible source mem into TEE-private heap buffer without local bounds checks",
+        "Callee dst parameter aliases TEE-private heap buffer `out` allocated in memdup",
+        "Callee src parameter aliases REE-visible buffer `mem` passed from call_open_session via memdup",
+        "Untrusted length `size` from REE controls memcpy from REE-visible src into TEE-private dst without local bounds checking in memcpy"
+      ],
+      "code_excerpts": [
+        "memcpy(out, mem, size);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:public",
+          "size_triplet:copy_len:size,src_sz:?,dst_sz:size",
+          "flow_dir:unknown",
+          "src_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len:size,src_sz:size,dst_sz:size"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0002",
+      "file": "/workspace/benchmark/teesec-heap-ta/ta/heap_ta.c",
+      "line": 160,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "call_open_session"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "TEE session struct field user->username aliases buffer ultimately sourced from REE input username"
+      ],
+      "code_excerpts": [
+        "user->username = username;"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len:usernameLen,src_sz:?,dst_sz:?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0003",
+      "file": "/workspace/benchmark/teesec-heap-ta/ta/heap_ta.c",
+      "line": 165,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "call_open_session"
+      ],
+      "sink_functions": [
+        "reg_pair_from_64"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Session index i from TEE is written into REE-visible output values without additional checks on range besides loop bound"
+      ],
+      "code_excerpts": [
+        "reg_pair_from_64(i, &params[1].value.a, &params[1].value.b);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:public",
+          "size_triplet:copy_len:64,src_sz:?,dst_sz:?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0004",
+      "file": "/workspace/benchmark/teesec-heap-ta/ta/heap_ta.c",
+      "line": 231,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "call_tell_me"
+      ],
+      "sink_functions": [
+        "unknown"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Tainted sessId from REE used to index sessions array before bounds check in compound condition, risking OOB access",
+        "Tainted sessId derived from REE-controlled input is used to index sessions[] within a compound condition, creating a structural risk of out-of-bounds access depending on evaluation semantics."
+      ],
+      "code_excerpts": [
+        "if(sessions[sessId] == NULL || sessId >= MAX_SESSION_COUNT || !sessions[sessId]->isValid || !sessions[sessId]->isLoggedIn)"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:TEE-private",
+          "sensitivity_label:public",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0005",
+      "file": "/workspace/benchmark/teesec-heap-ta/ta/heap_ta.c",
+      "line": 237,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "call_tell_me"
+      ],
+      "sink_functions": [
+        "="
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Alias of REE-shared output buffer params[1].memref.buffer used for subsequent write after only a size check",
+        "Alias of REE-shared MEMREF_OUTPUT buffer params[1].memref.buffer is prepared for writing; safety relies entirely on the preceding size check and correct strlen(SECRET)+1 usage."
+      ],
+      "code_excerpts": [
+        "if (params[1].memref.size < strlen(SECRET)+1)"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:REE-visible",
+          "sensitivity_label:public",
+          "size_triplet:copy_len=strlen(SECRET)+1,src_sz=?,dst_sz=params[1].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0006",
+      "file": "/workspace/benchmark/teesec-heap-ta/ta/heap_ta.c",
+      "line": 240,
+      "consolidated": true,
+      "detection_count": 2,
+      "primary_rule": "other",
+      "functions": [
+        "memcpy",
+        "call_tell_me"
+      ],
+      "sink_functions": [
+        "=",
+        "memcpy"
+      ],
+      "rules": [
+        "other",
+        "unencrypted_output"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Callee dst parameter aliases REE-visible buffer params[1].memref.buffer used as shared output",
+        "Callee src parameter aliases TEE-private constant SECRET, treated as sensitive data",
+        "Sensitive SECRET from TEE-private memory is copied in clear into REE-visible params[1].memref.buffer",
+        "TEE-private SECRET is copied in clear into REE-visible params[1].memref.buffer, constituting unencrypted output of sensitive data.",
+        "TEE-private SECRET is copied in plaintext into REE-visible output buffer params[1].memref.buffer",
+        "Call-site binding of dst to REE-shared output buffer params[1].memref.buffer for memcpy write",
+        "Call-site binding of src to TEE-private SECRET passed into memcpy destined for REE-visible buffer"
+      ],
+      "code_excerpts": [
+        "memcpy(params[1].memref.buffer, SECRET, strlen(SECRET)+1);"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other",
+          "unencrypted_output"
+        ],
+        "others": [
+          "flow_dir:TA->REE",
+          "src_region:TEE-private",
+          "dst_region:REE-visible",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len:strlen(SECRET)+1,src_sz:strlen(SECRET)+1,dst_sz:?",
+          "sensitivity_label:secret",
+          "size_triplet:copy_len=strlen(SECRET)+1,src_sz=strlen(SECRET)+1,dst_sz=params[1].memref.size",
+          "src_region:REE-visible",
+          "sensitivity_label:public",
+          "size_triplet:copy_len=strlen(SECRET)+1,src_sz=?,dst_sz=params[1].memref.size"
+        ]
+      },
+      "rule_distribution": {
+        "unencrypted_output": 1,
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    },
+    {
+      "finding_id": "RISK-0007",
+      "file": "/workspace/benchmark/teesec-heap-ta/ta/heap_ta.c",
+      "line": 298,
+      "consolidated": true,
+      "detection_count": 1,
+      "primary_rule": "other",
+      "functions": [
+        "TA_InvokeCommandEntryPoint"
+      ],
+      "sink_functions": [
+        "unknown"
+      ],
+      "rules": [
+        "other"
+      ],
+      "phases": [
+        "unknown"
+      ],
+      "descriptions": [
+        "Untrusted cmd_id from REE controls switch-based dispatch without validation"
+      ],
+      "code_excerpts": [
+        "switch (cmd_id) {"
+      ],
+      "rule_matches": {
+        "rule_id": [
+          "other"
+        ],
+        "others": [
+          "flow_dir:REE->TA",
+          "src_region:REE-visible",
+          "dst_region:unknown",
+          "sensitivity_label:unknown",
+          "size_triplet:copy_len=?,src_sz=?,dst_sz=?"
+        ]
+      },
+      "rule_distribution": {
+        "other": 1
+      },
+      "phase_distribution": {
+        "unknown": 1
+      }
+    }
+  ]
+}
